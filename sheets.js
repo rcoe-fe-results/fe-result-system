@@ -1,0 +1,149 @@
+// ============================================================
+// sheets.js — Google Sheets API wrapper
+// All reads are batched. Writes append only (never edit/delete).
+// ============================================================
+
+const Sheets = (() => {
+  const BASE = 'https://sheets.googleapis.com/v4/spreadsheets';
+
+  // ── Auth header ──────────────────────────────────────────
+  async function _headers() {
+    const token = await Auth.requestToken();
+    return { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' };
+  }
+
+  // ── Low-level GET ────────────────────────────────────────
+  async function getRange(tab, range) {
+    const url = `${BASE}/${CONFIG.SHEET_ID}/values/${encodeURIComponent(tab + '!' + range)}`;
+    const r = await fetch(url, { headers: await _headers() });
+    if (!r.ok) throw new Error(`Sheets GET failed: ${r.status}`);
+    const d = await r.json();
+    return d.values || [];
+  }
+
+  // ── Low-level APPEND ────────────────────────────────────
+  async function appendRows(tab, rows) {
+    const url = `${BASE}/${CONFIG.SHEET_ID}/values/${encodeURIComponent(tab + '!A1')}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`;
+    const body = { values: rows };
+    const r = await fetch(url, { method:'POST', headers: await _headers(), body: JSON.stringify(body) });
+    if (!r.ok) throw new Error(`Sheets APPEND failed: ${r.status}`);
+    return r.json();
+  }
+
+  // ── STUDENT_MASTER ───────────────────────────────────────
+  async function getStudents() {
+    const rows = await getRange(CONFIG.TABS.STUDENT, 'A2:G');
+    return rows.map(r => ({
+      uin:       r[0] || '',
+      prn:       r[1] || '',
+      name:      r[2] || '',
+      branch:    r[3] || '',
+      division:  r[4] || '',
+      batchYear: r[5] || '',
+    })).filter(s => s.uin);
+  }
+
+  async function uploadStudents(students) {
+    // Header row assumed already present; just appends
+    const rows = students.map(s => [s.uin, s.prn, s.name, s.branch, s.division, s.batchYear]);
+    return appendRows(CONFIG.TABS.STUDENT, rows);
+  }
+
+  // ── EXAM_MASTER ──────────────────────────────────────────
+  async function getSessions() {
+    const rows = await getRange(CONFIG.TABS.EXAM, 'A2:F');
+    return rows.map(r => ({
+      id:        r[0] || '',
+      name:      r[1] || '',
+      semester:  Number(r[2]) || 1,
+      batchYear: r[3] || '',
+      status:    r[4] || 'Active',   // Active | Locked
+      createdBy: r[5] || '',
+    })).filter(s => s.id);
+  }
+
+  async function addSession(session) {
+    return appendRows(CONFIG.TABS.EXAM, [[
+      session.id, session.name, session.semester,
+      session.batchYear, session.status, session.createdBy
+    ]]);
+  }
+
+  async function updateSessionStatus(sessionId, newStatus) {
+    // Find row, then update cell — one exception to append-only (session lock is metadata)
+    const rows = await getRange(CONFIG.TABS.EXAM, 'A:F');
+    for (let i = 1; i < rows.length; i++) {
+      if (rows[i][0] === sessionId) {
+        const rowNum = i + 1;
+        const url = `${BASE}/${CONFIG.SHEET_ID}/values/${encodeURIComponent(CONFIG.TABS.EXAM + '!E' + rowNum)}?valueInputOption=USER_ENTERED`;
+        const body = { values: [[newStatus]] };
+        const r = await fetch(url, { method:'PUT', headers: await _headers(), body: JSON.stringify(body) });
+        if (!r.ok) throw new Error(`Session lock failed: ${r.status}`);
+        return r.json();
+      }
+    }
+    throw new Error('Session not found: ' + sessionId);
+  }
+
+  // ── MASTER_LEDGER ────────────────────────────────────────
+  async function getLedger() {
+    const rows = await getRange(CONFIG.TABS.LEDGER, 'A2:Y');
+    return rows.map(r => ({
+      entryId:       r[0]  || '',
+      uin:           r[1]  || '',
+      prn:           r[2]  || '',
+      name:          r[3]  || '',
+      branch:        r[4]  || '',
+      division:      r[5]  || '',
+      batchYear:     r[6]  || '',
+      examSession:   r[7]  || '',
+      semester:      r[8]  || '',
+      subjectCode:   r[9]  || '',
+      subjectName:   r[10] || '',
+      subjectType:   r[11] || '',
+      creditsAssigned:r[12]|| '',
+      attemptType:   r[13] || '',
+      iatMarks:      r[14] || '',
+      eseMarks:      r[15] || '',
+      twMarks:       r[16] || '',
+      oralMarks:     r[17] || '',
+      totalMarks:    r[18] || '',
+      grade:         r[19] || '',
+      creditsEarned: r[20] || '',
+      result:        r[21] || '',
+      source:        r[22] || '',
+      enteredBy:     r[23] || '',
+      entryDateTime: r[24] || '',
+    })).filter(r => r.entryId);
+  }
+
+  async function appendLedgerRows(entries) {
+    const rows = entries.map(e => [
+      e.entryId, e.uin, e.prn, e.name, e.branch, e.division, e.batchYear,
+      e.examSession, e.semester, e.subjectCode, e.subjectName, e.subjectType,
+      e.creditsAssigned, e.attemptType, e.iatMarks, e.eseMarks, e.twMarks,
+      e.oralMarks, e.totalMarks, e.grade, e.creditsEarned, e.result,
+      e.source, e.enteredBy, e.entryDateTime
+    ]);
+    return appendRows(CONFIG.TABS.LEDGER, rows);
+  }
+
+  // ── SUBJECT_MASTER (optional sync — curriculum can be hardcoded) ──
+  async function getSubjectMaster() {
+    const rows = await getRange(CONFIG.TABS.SUBJECT, 'A2:L');
+    return rows; // raw — used for admin verification only
+  }
+
+  // ── Utility: generate Entry ID ────────────────────────────
+  function newEntryId() {
+    return 'RCE-' + Date.now() + '-' + Math.random().toString(36).slice(2,6).toUpperCase();
+  }
+
+  return {
+    getStudents, uploadStudents,
+    getSessions, addSession, updateSessionStatus,
+    getLedger, appendLedgerRows,
+    getSubjectMaster,
+    newEntryId,
+  };
+})();

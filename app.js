@@ -1,0 +1,868 @@
+// ============================================================
+// app.js — MU FYE Result Management System
+// Main controller — all screen logic
+// ============================================================
+
+// ── App bootstrap ────────────────────────────────────────────
+window.addEventListener('DOMContentLoaded', () => {
+  Auth.init(_onAuthChange);
+  _bindModalClose();
+  _bindNav();
+});
+
+function _onAuthChange(user) {
+  if (!user) {
+    _showScreen('login');
+    return;
+  }
+  _showScreen('loading');
+  UI.showSpinner('Loading student and session data…');
+  State.loadAll().then(() => {
+    UI.hideSpinner();
+    _buildNav(user);
+    _showScreen('app');
+    showTab('bulk-entry');
+  }).catch(err => {
+    UI.hideSpinner();
+    UI.toast('Failed to load data: ' + err.message, 'error', 8000);
+    _showScreen('app');
+  });
+}
+
+function _showScreen(name) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.toggle('hidden', s.id !== 'screen-' + name));
+}
+
+// ── Navigation ────────────────────────────────────────────────
+function _buildNav(user) {
+  const info = document.getElementById('user-info');
+  if (info) {
+    info.innerHTML = `
+      <img src="${UI.esc(user.picture)}" class="avatar" alt="">
+      <span class="user-name">${UI.esc(user.name)}</span>
+      <span class="user-role role-${user.role}">${user.role === 'admin' ? 'Admin' : 'Faculty'}</span>
+    `;
+  }
+
+  // Show admin-only tabs
+  document.querySelectorAll('[data-admin-only]').forEach(el => {
+    el.style.display = Auth.isAdmin() ? '' : 'none';
+  });
+}
+
+function _bindNav() {
+  document.querySelectorAll('[data-tab]').forEach(btn => {
+    btn.addEventListener('click', () => showTab(btn.dataset.tab));
+  });
+  document.getElementById('sign-out-btn')?.addEventListener('click', () => {
+    UI.showModal('Sign out', 'Sign out of the Result Management System?', {
+      confirmLabel: 'Sign out', onConfirm: Auth.signOut
+    });
+  });
+}
+
+function showTab(tabId) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tabId));
+  document.querySelectorAll('.tab-pane').forEach(p => p.classList.toggle('hidden', p.id !== 'tab-' + tabId));
+  const init = TAB_INIT[tabId];
+  if (init) init();
+}
+
+const TAB_INIT = {
+  'bulk-entry':    initBulkEntry,
+  'single-entry':  initSingleEntry,
+  'progress':      initProgress,
+  'reports':       initReports,
+  'admin':         initAdmin,
+};
+
+function _bindModalClose() {
+  document.getElementById('modal-cancel')?.addEventListener('click', UI.hideModal);
+  document.getElementById('modal')?.addEventListener('click', e => {
+    if (e.target.id === 'modal') UI.hideModal();
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════
+// TAB 1 — BULK ENTRY
+// ═══════════════════════════════════════════════════════════════
+let bulkState = {
+  session: null, semester: null, branch: null, division: null,
+  attemptType: null, subjects: [], students: [],
+};
+
+function initBulkEntry() {
+  const sessions = State.getSessions().filter(s => s.status === 'Active');
+  UI.buildSelect('be-session', sessions, '— select session —', 'id', 'name');
+  document.getElementById('be-session').onchange = _beOnSessionChange;
+  document.getElementById('be-semester').onchange = _beOnSemesterChange;
+  document.getElementById('be-branch').onchange   = _beOnBranchChange;
+  document.getElementById('be-division').onchange = _beOnDivisionChange;
+  document.getElementById('be-attempt').onchange  = _beOnAttemptChange;
+  document.getElementById('be-load-btn').onclick  = _beLoadGrid;
+  document.getElementById('be-submit-btn').onclick = _beSubmit;
+  document.getElementById('be-grid-area').innerHTML = '';
+  _beResetFilters();
+}
+
+function _beResetFilters() {
+  ['be-semester','be-branch','be-division','be-attempt'].forEach(id => {
+    document.getElementById(id).disabled = true;
+    document.getElementById(id).value = '';
+  });
+  document.getElementById('be-load-btn').disabled = true;
+  document.getElementById('be-submit-btn').disabled = true;
+  document.getElementById('be-grid-area').innerHTML = '';
+}
+
+function _beOnSessionChange() {
+  const sessionId = document.getElementById('be-session').value;
+  bulkState.session = State.getSession(sessionId);
+  if (!bulkState.session) return;
+  // Pre-fill semester from session
+  const semEl = document.getElementById('be-semester');
+  semEl.disabled = false;
+  semEl.value = bulkState.session.semester;
+  bulkState.semester = bulkState.session.semester;
+  _beEnableBranch();
+}
+
+function _beOnSemesterChange() {
+  bulkState.semester = Number(document.getElementById('be-semester').value);
+  _beEnableBranch();
+}
+
+function _beEnableBranch() {
+  const branchEl = document.getElementById('be-branch');
+  branchEl.disabled = false;
+  UI.buildSelect('be-branch', BRANCHES, '— select branch —');
+}
+
+function _beOnBranchChange() {
+  bulkState.branch = document.getElementById('be-branch').value;
+  const divs = State.getDivisions(bulkState.branch);
+  UI.buildSelect('be-division', divs, '— all divisions —');
+  document.getElementById('be-division').disabled = false;
+  _beEnableAttempt();
+}
+
+function _beOnDivisionChange() {
+  bulkState.division = document.getElementById('be-division').value || null;
+}
+
+function _beEnableAttempt() {
+  document.getElementById('be-attempt').disabled = false;
+  UI.buildSelect('be-attempt', ATTEMPT_TYPES, '— select attempt type —');
+}
+
+function _beOnAttemptChange() {
+  bulkState.attemptType = document.getElementById('be-attempt').value;
+  document.getElementById('be-load-btn').disabled = !bulkState.attemptType;
+}
+
+function _beLoadGrid() {
+  const { session, semester, branch, division, attemptType } = bulkState;
+  if (!session || !branch || !attemptType) {
+    UI.toast('Select session, branch, and attempt type first.', 'error'); return;
+  }
+
+  // Get subjects
+  bulkState.subjects = getSubjectsForSem(semester, branch);
+
+  // Get students
+  let students;
+  if (attemptType === 'KT') {
+    const ktData = State.getKTEligibleStudents(semester, branch);
+    students = ktData
+      .filter(d => !division || d.student.division === division)
+      .map(d => ({ ...d.student, _ktSubjects: d.ktSubjects.map(s => s.code) }));
+  } else {
+    students = State.getStudents({ branch, division: division || undefined });
+    if (session.batchYear) {
+      students = students.filter(s => s.batchYear === session.batchYear);
+    }
+  }
+
+  if (students.length === 0) {
+    document.getElementById('be-grid-area').innerHTML = '<div class="empty-state">No students found for this selection.</div>';
+    return;
+  }
+
+  bulkState.students = students;
+  _beRenderGrid();
+  document.getElementById('be-submit-btn').disabled = false;
+}
+
+function _beRenderGrid() {
+  const { subjects, students, attemptType } = bulkState;
+  const container = document.getElementById('be-grid-area');
+
+  // Determine which components exist across all subjects
+  const allComps = ['IAT','ESE','TW','Oral'];
+
+  let html = `
+  <div class="grid-info">
+    <span>${students.length} students · ${subjects.length} subjects</span>
+    <span class="grid-legend">
+      <span class="dot dot-grace"></span> Grace (21*)
+      <span class="dot dot-absent"></span> AB
+      <span class="dot dot-error"></span> Required
+    </span>
+  </div>
+  <div class="grid-scroll">
+  <table class="entry-grid" id="entry-table">
+    <thead>
+      <tr>
+        <th class="col-student sticky-col">Student</th>
+        <th class="col-branch">Branch</th>`;
+
+  for (const subj of subjects) {
+    const comps = Object.keys(subj.marks);
+    const span  = comps.length;
+    html += `<th colspan="${span}" class="subj-header" title="${UI.esc(subj.name)}">${UI.esc(subj.code)}<br><small>${UI.esc(subj.name.length>20 ? subj.name.slice(0,18)+'…' : subj.name)}</small></th>`;
+  }
+
+  html += `</tr><tr><th class="sticky-col"></th><th></th>`;
+  for (const subj of subjects) {
+    const comps = Object.keys(subj.marks);
+    for (const comp of comps) {
+      const isRevalLocked = attemptType === 'Reval' && comp !== 'ESE';
+      html += `<th class="comp-header${isRevalLocked?' locked':''}">${comp}<br><small>/${subj.marks[comp]}</small></th>`;
+    }
+  }
+  html += `</tr></thead><tbody>`;
+
+  for (const student of students) {
+    const isKT = attemptType === 'KT';
+    html += `<tr data-uin="${UI.esc(student.uin)}">
+      <td class="sticky-col student-cell">
+        <div class="student-name">${UI.esc(student.name)}</div>
+        <div class="student-ids">${UI.esc(student.uin)}${student.prn ? ' · ' + UI.esc(student.prn) : ''}</div>
+        ${student.batchYear ? `<div class="student-batch">Batch ${UI.esc(student.batchYear)}</div>` : ''}
+      </td>
+      <td class="branch-cell">${UI.esc(student.branch)}</td>`;
+
+    for (const subj of subjects) {
+      const comps = Object.keys(subj.marks);
+      const isKTSubject = isKT && student._ktSubjects && !student._ktSubjects.includes(subj.code);
+
+      // Pre-fill from ledger for reval
+      let prevEntry = null;
+      if (attemptType === 'Reval' || attemptType === 'KT') {
+        prevEntry = State.getLatestEntryForSubject(student.uin, subj.code, bulkState.session.id);
+      }
+
+      for (const comp of comps) {
+        const isRevalLocked = attemptType === 'Reval' && comp !== 'ESE';
+        const isKTLocked    = isKTSubject;
+        const locked = isRevalLocked || isKTLocked;
+        const prevVal = prevEntry ? prevEntry[comp.toLowerCase() + 'Marks'] : '';
+        const cellId  = `cell-${student.uin}-${subj.code}-${comp}`;
+
+        if (locked) {
+          html += `<td class="cell-locked"><span class="locked-val">${UI.esc(prevVal || '—')}</span></td>`;
+        } else {
+          html += `<td>
+            <input type="text" 
+              class="mark-input" 
+              id="${cellId}"
+              data-uin="${UI.esc(student.uin)}"
+              data-code="${UI.esc(subj.code)}"
+              data-comp="${comp}"
+              data-max="${subj.marks[comp]}"
+              placeholder="${comp==='ESE'&&attemptType==='Reval' ? 'new' : ''}"
+              value="${UI.esc(isRevalLocked ? prevVal : '')}"
+              ${locked ? 'disabled' : ''}
+              autocomplete="off"
+              spellcheck="false"
+            >
+          </td>`;
+        }
+      }
+    }
+    html += `</tr>`;
+  }
+
+  html += `</tbody></table></div>`;
+  container.innerHTML = html;
+
+  // Bind input events
+  container.querySelectorAll('.mark-input').forEach(input => {
+    input.addEventListener('input', _beOnCellInput);
+    input.addEventListener('keydown', _beOnCellKeydown);
+  });
+}
+
+function _beOnCellInput(e) {
+  const input  = e.target;
+  const raw    = input.value.trim();
+  const parsed = parseMarkValue(raw);
+  const max    = Number(input.dataset.max);
+
+  input.classList.remove('cell-grace', 'cell-absent', 'cell-error', 'cell-ok');
+  if (!raw) { input.classList.add('cell-error'); return; }
+
+  if (!parsed.valid) { input.classList.add('cell-error'); return; }
+  if (parsed.absent) { input.classList.add('cell-absent'); return; }
+  if (parsed.grace)  { input.classList.add('cell-grace'); return; }
+  if (parsed.value > max) { input.classList.add('cell-error'); return; }
+  input.classList.add('cell-ok');
+}
+
+function _beOnCellKeydown(e) {
+  // Arrow navigation between cells
+  if (!['ArrowRight','ArrowLeft','ArrowUp','ArrowDown','Tab','Enter'].includes(e.key)) return;
+
+  const allInputs = [...document.querySelectorAll('#entry-table .mark-input:not([disabled])')];
+  const idx = allInputs.indexOf(e.target);
+  if (idx < 0) return;
+
+  let next = null;
+  if (e.key === 'ArrowRight' || e.key === 'Tab') {
+    e.preventDefault(); next = allInputs[idx + 1];
+  } else if (e.key === 'ArrowLeft') {
+    e.preventDefault(); next = allInputs[idx - 1];
+  } else if (e.key === 'ArrowDown' || e.key === 'Enter') {
+    e.preventDefault();
+    // Find same column next row
+    const row = e.target.closest('tr');
+    const nextRow = row?.nextElementSibling;
+    if (nextRow) {
+      const sameComp = nextRow.querySelector(`input[data-code="${e.target.dataset.code}"][data-comp="${e.target.dataset.comp}"]`);
+      next = sameComp;
+    }
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    const row = e.target.closest('tr');
+    const prevRow = row?.previousElementSibling;
+    if (prevRow) {
+      const sameComp = prevRow.querySelector(`input[data-code="${e.target.dataset.code}"][data-comp="${e.target.dataset.comp}"]`);
+      next = sameComp;
+    }
+  }
+  if (next) { next.focus(); next.select(); }
+}
+
+async function _beSubmit() {
+  const { session, subjects, students, attemptType } = bulkState;
+
+  // Validate all cells
+  const inputs = [...document.querySelectorAll('#entry-table .mark-input:not([disabled])')];
+  let hasErrors = false;
+  inputs.forEach(i => {
+    if (!i.value.trim()) { i.classList.add('cell-error'); hasErrors = true; }
+  });
+
+  if (hasErrors) {
+    UI.toast('Fill in all cells or enter AB for absent students.', 'error');
+    return;
+  }
+
+  // Build entries
+  const entriesByStudent = {};
+  for (const input of inputs) {
+    const { uin, code, comp } = input.dataset;
+    if (!entriesByStudent[uin]) entriesByStudent[uin] = {};
+    if (!entriesByStudent[uin][code]) entriesByStudent[uin][code] = {};
+    entriesByStudent[uin][code][comp] = parseMarkValue(input.value.trim());
+  }
+
+  const entries = [];
+  for (const [uin, subjectMap] of Object.entries(entriesByStudent)) {
+    for (const [code, marks] of Object.entries(subjectMap)) {
+      entries.push({ uin, subjectCode: code, attemptType, marks });
+    }
+  }
+
+  UI.showModal(
+    'Confirm submission',
+    `Submit marks for <strong>${students.length} students</strong> × <strong>${subjects.length} subjects</strong>?<br>
+    <small>Only changed/new entries will be written to the ledger.</small>`,
+    {
+      confirmLabel: 'Submit marks',
+      onConfirm: async () => {
+        UI.showSpinner('Writing to ledger…');
+        try {
+          const count = await State.submitEntries(session, entries);
+          UI.hideSpinner();
+          UI.toast(`✓ ${count} new ledger entries saved.`, 'success');
+        } catch (err) {
+          UI.hideSpinner();
+          UI.toast('Error saving: ' + err.message, 'error', 8000);
+        }
+      }
+    }
+  );
+}
+
+
+// ═══════════════════════════════════════════════════════════════
+// TAB 2 — SINGLE STUDENT ENTRY
+// ═══════════════════════════════════════════════════════════════
+let singleState = { student: null, session: null, subjects: [] };
+
+function initSingleEntry() {
+  const searchInput = document.getElementById('se-search');
+  const resultsBox  = document.getElementById('se-results');
+  searchInput.value = '';
+  resultsBox.innerHTML = '';
+  document.getElementById('se-student-panel').classList.add('hidden');
+
+  searchInput.addEventListener('input', _debounce(() => {
+    const q = searchInput.value.trim();
+    if (q.length < 2) { resultsBox.innerHTML = ''; return; }
+    const matches = State.searchStudents(q).slice(0, 10);
+    resultsBox.innerHTML = matches.length ? matches.map(s =>
+      `<div class="search-result" data-uin="${UI.esc(s.uin)}">
+        <strong>${UI.esc(s.name)}</strong>
+        <span>${UI.esc(s.uin)} · ${UI.esc(s.branch)} · Batch ${UI.esc(s.batchYear)}</span>
+      </div>`
+    ).join('') : '<div class="search-result muted">No students found.</div>';
+
+    resultsBox.querySelectorAll('.search-result[data-uin]').forEach(el => {
+      el.onclick = () => _seSelectStudent(el.dataset.uin);
+    });
+  }, 250));
+
+  // Session selectors
+  const sessions = State.getSessions().filter(s => s.status === 'Active');
+  UI.buildSelect('se-session', sessions, '— select session —', 'id', 'name');
+  document.getElementById('se-session').onchange = () => {
+    singleState.session = State.getSession(document.getElementById('se-session').value);
+    if (singleState.student) _seRenderGrid();
+  };
+  document.getElementById('se-attempt').onchange = () => {
+    if (singleState.student) _seRenderGrid();
+  };
+  document.getElementById('se-submit-btn').onclick = _seSubmit;
+}
+
+function _seSelectStudent(uin) {
+  singleState.student = State.getStudent(uin);
+  document.getElementById('se-results').innerHTML = '';
+  document.getElementById('se-search').value = singleState.student.name;
+
+  if (!singleState.session) {
+    UI.toast('Select a session first.', 'info'); return;
+  }
+  _seRenderGrid();
+  document.getElementById('se-student-panel').classList.remove('hidden');
+}
+
+function _seRenderGrid() {
+  const { student, session } = singleState;
+  if (!student || !session) return;
+
+  const attemptType = document.getElementById('se-attempt').value || 'Regular';
+  const subjects    = getSubjectsForSem(session.semester, student.branch);
+  singleState.subjects = subjects;
+
+  const info = document.getElementById('se-student-info');
+  info.innerHTML = `
+    <div class="student-card">
+      <div class="sc-name">${UI.esc(student.name)}</div>
+      <div class="sc-meta">UIN: ${UI.esc(student.uin)} · PRN: ${UI.esc(student.prn || '—')} · ${UI.esc(student.branch)} · Div ${UI.esc(student.division)} · Batch ${UI.esc(student.batchYear)}</div>
+    </div>`;
+
+  let html = `<div class="single-grid">`;
+  for (const subj of subjects) {
+    const comps    = Object.keys(subj.marks);
+    const prevEntry = State.getLatestEntryForSubject(student.uin, subj.code, session.id);
+
+    html += `
+    <div class="subj-card">
+      <div class="subj-card-header">
+        <span class="subj-code">${UI.esc(subj.code)}</span>
+        <span class="subj-name">${UI.esc(subj.name)}</span>
+        <span class="subj-credits">${subj.credits} cr</span>
+      </div>
+      <div class="subj-inputs">`;
+
+    for (const comp of comps) {
+      const locked = attemptType === 'Reval' && comp !== 'ESE';
+      const prevVal = prevEntry ? prevEntry[comp.toLowerCase() + 'Marks'] : '';
+      html += `
+        <label class="comp-label${locked ? ' locked' : ''}">
+          <span>${comp}<small>/${subj.marks[comp]}</small></span>
+          <input type="text"
+            class="mark-input-single"
+            data-code="${UI.esc(subj.code)}"
+            data-comp="${comp}"
+            data-max="${subj.marks[comp]}"
+            value="${UI.esc(locked ? prevVal : '')}"
+            ${locked ? 'disabled' : ''}
+            autocomplete="off"
+          >
+        </label>`;
+    }
+    html += `</div></div>`;
+  }
+  html += `</div>`;
+  document.getElementById('se-grid').innerHTML = html;
+
+  document.querySelectorAll('.mark-input-single').forEach(i => {
+    i.addEventListener('input', _beOnCellInput);
+  });
+}
+
+async function _seSubmit() {
+  const { student, session, subjects } = singleState;
+  if (!student || !session) { UI.toast('Select a student and session.', 'error'); return; }
+
+  const attemptType = document.getElementById('se-attempt').value || 'Regular';
+  const inputs = [...document.querySelectorAll('.mark-input-single:not([disabled])')];
+
+  const subjectMap = {};
+  for (const input of inputs) {
+    const { code, comp } = input.dataset;
+    if (!subjectMap[code]) subjectMap[code] = {};
+    subjectMap[code][comp] = parseMarkValue(input.value.trim());
+  }
+
+  const entries = Object.entries(subjectMap).map(([code, marks]) => ({ uin: student.uin, subjectCode: code, attemptType, marks }));
+
+  UI.showSpinner('Saving…');
+  try {
+    const count = await State.submitEntries(session, entries);
+    UI.hideSpinner();
+    UI.toast(`✓ ${count} entries saved for ${student.name}.`, 'success');
+  } catch (err) {
+    UI.hideSpinner();
+    UI.toast('Error: ' + err.message, 'error', 8000);
+  }
+}
+
+
+// ═══════════════════════════════════════════════════════════════
+// TAB 3 — STUDENT PROGRESS VIEW
+// ═══════════════════════════════════════════════════════════════
+function initProgress() {
+  const searchInput = document.getElementById('pv-search');
+  const resultsBox  = document.getElementById('pv-results');
+  searchInput.value = '';
+  resultsBox.innerHTML = '';
+  document.getElementById('pv-timeline').innerHTML = '';
+  document.getElementById('pv-student-info').innerHTML = '';
+
+  searchInput.addEventListener('input', _debounce(() => {
+    const q = searchInput.value.trim();
+    if (q.length < 2) { resultsBox.innerHTML = ''; return; }
+
+    let students;
+    const ql = q.toLowerCase();
+    if (ql === 'reval') {
+      // Students with at least one REVAL row
+      const revalUINs = new Set(State.ledger.filter(r => r.attemptType === 'Reval').map(r => r.uin));
+      students = State.getStudents().filter(s => revalUINs.has(s.uin));
+    } else if (ql === 'kt' || ql === 'failed' || ql === 'fail') {
+      const ktUINs = new Set(State.ledger.filter(r => r.result === 'Fail' || r.result === 'AB').map(r => r.uin));
+      students = State.getStudents().filter(s => ktUINs.has(s.uin));
+    } else {
+      students = State.searchStudents(q).slice(0, 10);
+    }
+
+    resultsBox.innerHTML = students.length ? students.slice(0,10).map(s =>
+      `<div class="search-result" data-uin="${UI.esc(s.uin)}">
+        <strong>${UI.esc(s.name)}</strong>
+        <span>${UI.esc(s.uin)} · ${UI.esc(s.branch)} · Batch ${UI.esc(s.batchYear)}</span>
+      </div>`
+    ).join('') : '<div class="search-result muted">No students found.</div>';
+
+    resultsBox.querySelectorAll('.search-result[data-uin]').forEach(el => {
+      el.onclick = () => _pvShowStudent(el.dataset.uin);
+    });
+  }, 250));
+}
+
+function _pvShowStudent(uin) {
+  const student  = State.getStudent(uin);
+  const ledger   = State.getLedgerForStudent(uin);
+  document.getElementById('pv-results').innerHTML = '';
+  document.getElementById('pv-search').value = student.name;
+
+  document.getElementById('pv-student-info').innerHTML = `
+    <div class="student-card">
+      <div class="sc-name">${UI.esc(student.name)}</div>
+      <div class="sc-meta">UIN: ${UI.esc(student.uin)} · PRN: ${UI.esc(student.prn || '—')} · ${UI.esc(student.branch)} · Div ${UI.esc(student.division)} · Batch ${UI.esc(student.batchYear)}</div>
+    </div>`;
+
+  if (ledger.length === 0) {
+    document.getElementById('pv-timeline').innerHTML = '<div class="empty-state">No entries found for this student.</div>';
+    return;
+  }
+
+  // Group by session → semester
+  const bySession = {};
+  for (const row of ledger) {
+    const key = row.examSession + '|' + row.semester;
+    if (!bySession[key]) bySession[key] = { sessionName: row.examSession, semester: row.semester, rows: [] };
+    bySession[key].rows.push(row);
+  }
+
+  // Compute credits per session
+  let html = '';
+  for (const [, group] of Object.entries(bySession)) {
+    // Latest row per subject
+    const latestBySubject = {};
+    for (const r of group.rows) {
+      if (!latestBySubject[r.subjectCode] || r.entryDateTime > latestBySubject[r.subjectCode].entryDateTime) {
+        latestBySubject[r.subjectCode] = r;
+      }
+    }
+    const totalCredits  = Object.values(latestBySubject).reduce((a,r) => a + (Number(r.creditsEarned)||0), 0);
+    const totalAssigned = Object.values(latestBySubject).reduce((a,r) => a + (Number(r.creditsAssigned)||0), 0);
+
+    html += `
+    <div class="session-block">
+      <div class="session-header">
+        <span class="session-name">${UI.esc(group.sessionName)}</span>
+        <span class="session-sem">Sem ${UI.esc(group.semester)}</span>
+        <span class="credit-pill">${totalCredits} / ${totalAssigned} credits</span>
+      </div>
+      <table class="progress-table">
+        <thead><tr>
+          <th>Subject</th><th>Type</th><th>Attempt</th>
+          <th>IAT</th><th>ESE</th><th>TW</th><th>Oral</th>
+          <th>Total</th><th>Result</th><th>Credits</th>
+        </tr></thead>
+        <tbody>`;
+
+    // Show all rows (timeline), latest highlighted
+    for (const r of group.rows) {
+      const isLatest = latestBySubject[r.subjectCode]?.entryId === r.entryId;
+      html += `
+        <tr class="${isLatest ? '' : 'row-superseded'}" title="${isLatest ? 'Latest entry' : 'Superseded by later entry'}">
+          <td><span class="subj-code-small">${UI.esc(r.subjectCode)}</span> ${UI.esc(r.subjectName)}</td>
+          <td>${UI.esc(r.subjectType)}</td>
+          <td>${UI.attemptBadge(r.attemptType)}</td>
+          <td>${UI.esc(r.iatMarks  || '—')}</td>
+          <td>${UI.esc(r.eseMarks  || '—')}</td>
+          <td>${UI.esc(r.twMarks   || '—')}</td>
+          <td>${UI.esc(r.oralMarks || '—')}</td>
+          <td>${UI.esc(r.totalMarks|| '—')}</td>
+          <td>${UI.resultBadge(r.result)}</td>
+          <td class="${r.creditsEarned > 0 ? 'credit-earned' : 'credit-zero'}">${UI.esc(r.creditsEarned)}</td>
+        </tr>`;
+    }
+    html += `</tbody></table></div>`;
+  }
+
+  document.getElementById('pv-timeline').innerHTML = html;
+}
+
+
+// ═══════════════════════════════════════════════════════════════
+// TAB 4 — REPORTS
+// ═══════════════════════════════════════════════════════════════
+function initReports() {
+  const sessions = State.getSessions();
+  UI.buildSelect('rpt-session', sessions, '— select session —', 'id', 'name');
+
+  document.getElementById('rpt-result-summary').onclick   = _rptResultSummary;
+  document.getElementById('rpt-reval-impact').onclick     = _rptRevalImpact;
+  document.getElementById('rpt-toppers').onclick          = _rptToppers;
+  document.getElementById('rpt-credit-filter').onclick    = _rptCreditFilter;
+  document.getElementById('rpt-kt-filter').onclick        = _rptKTFilter;
+  document.getElementById('rpt-my-entries').onclick       = _rptMyEntries;
+}
+
+function _rptSession() {
+  const id = document.getElementById('rpt-session').value;
+  if (!id) { UI.toast('Select a session.', 'error'); return null; }
+  return State.getSession(id);
+}
+
+function _rptResultSummary() {
+  const session = _rptSession(); if (!session) return;
+  const data = State.reportResultSummary(session.id);
+  UI.exportCSV(`ResultSummary_${session.name}`,
+    ['Subject Code','Subject Name','Total','Pass','Fail','AB','Pass %'],
+    data.map(d => [d.code, d.name, d.total, d.pass, d.fail, d.ab, d.passPct + '%'])
+  );
+  UI.toast(`Exported result summary for ${session.name}.`, 'success');
+}
+
+function _rptRevalImpact() {
+  const session = _rptSession(); if (!session) return;
+  const data = State.reportRevalImpact(session.id);
+  UI.exportCSV(`RevalImpact_${session.name}`,
+    ['UIN','PRN','Name','Branch','Subject Code','Subject Name','Prev Result','New Result','Entry Date'],
+    data.map(d => [d.uin, d.prn, d.name, d.branch, d.subjectCode, d.subjectName, d.prevResult, d.result, d.entryDateTime])
+  );
+  UI.toast(`Exported reval impact for ${session.name}.`, 'success');
+}
+
+function _rptToppers() {
+  const session = _rptSession(); if (!session) return;
+  const n = Number(document.getElementById('rpt-toppers-n').value || 10);
+  const data = State.reportToppers(session.id, n);
+  UI.exportCSV(`Toppers_${session.name}`,
+    ['Rank','UIN','Name','Branch','Credits Earned','Total Marks'],
+    data.map((d,i) => [i+1, d.uin, d.name, d.branch, d.totalCredits, d.totalMarks])
+  );
+  UI.toast(`Exported top ${n} students.`, 'success');
+}
+
+function _rptCreditFilter() {
+  const session = _rptSession(); if (!session) return;
+  const x = Number(document.getElementById('rpt-credit-x').value);
+  if (!x) { UI.toast('Enter minimum credits.', 'error'); return; }
+  const data = State.reportCreditFilter(x, session.id);
+  UI.exportCSV(`CreditFilter_lt${x}_${session.name}`,
+    ['UIN','PRN','Name','Branch','Credits Earned'],
+    data.map(d => [d.uin, d.prn, d.name, d.branch, d.credits])
+  );
+  UI.toast(`Exported ${data.length} students with < ${x} credits.`, 'success');
+}
+
+function _rptKTFilter() {
+  const n     = Number(document.getElementById('rpt-kt-n').value || 1);
+  const mode  = document.getElementById('rpt-kt-mode').value  || 'At least';
+  const scope = document.getElementById('rpt-kt-scope').value || 'Active';
+  const data = State.reportKTFilter(n, mode, scope);
+  UI.exportCSV(`KTFilter_${mode.replace(' ','')}_${n}_${scope}`,
+    ['PRN','UIN','Name','Branch','Subject Code','Subject Name','Session','Result'],
+    data.map(d => [d.prn, d.uin, d.name, d.branch, d.subjectCode, d.subjectName, d.session, d.result])
+  );
+  UI.toast(`Exported KT filter results.`, 'success');
+}
+
+function _rptMyEntries() {
+  const user = Auth.getUser();
+  const session = document.getElementById('rpt-session').value;
+  const data = State.getMyEntries(user.email, session || null);
+  UI.exportCSV(`MyEntries_${user.email}`,
+    LEDGER_COLS,
+    data.map(d => Object.values(d))
+  );
+  UI.toast(`Exported ${data.length} of your entries.`, 'success');
+}
+
+
+// ═══════════════════════════════════════════════════════════════
+// TAB 5 — ADMIN  (admin-only)
+// ═══════════════════════════════════════════════════════════════
+function initAdmin() {
+  if (!Auth.isAdmin()) {
+    document.getElementById('tab-admin').innerHTML = '<div class="access-denied">Admin access only.</div>';
+    return;
+  }
+
+  // Session management
+  document.getElementById('admin-add-session').onclick = _adminAddSession;
+  document.getElementById('admin-lock-session').onclick = _adminLockSession;
+
+  // Student upload
+  document.getElementById('admin-upload-btn').onclick = _adminUploadStudents;
+  document.getElementById('admin-csv-file').onchange  = _adminPreviewCSV;
+
+  // Populate lock session dropdown
+  const sessions = State.getSessions();
+  UI.buildSelect('admin-session-lock-select', sessions.filter(s=>s.status==='Active'), '— select session to lock —', 'id', 'name');
+
+  // Refresh audit
+  _adminRenderAudit();
+}
+
+async function _adminAddSession() {
+  const name     = document.getElementById('admin-session-name').value.trim();
+  const semester = document.getElementById('admin-session-sem').value;
+  const batch    = document.getElementById('admin-session-batch').value.trim();
+  if (!name || !semester || !batch) { UI.toast('Fill in all session fields.', 'error'); return; }
+
+  UI.showSpinner('Creating session…');
+  try {
+    const s = await State.addSession(name, semester, batch);
+    UI.hideSpinner();
+    UI.toast(`Session "${s.name}" created.`, 'success');
+    initAdmin(); // refresh
+  } catch(e) {
+    UI.hideSpinner();
+    UI.toast('Error: ' + e.message, 'error', 8000);
+  }
+}
+
+async function _adminLockSession() {
+  const id = document.getElementById('admin-session-lock-select').value;
+  if (!id) { UI.toast('Select a session to lock.', 'error'); return; }
+  const session = State.getSession(id);
+  UI.showModal('Lock session', `Lock <strong>${UI.esc(session.name)}</strong>? No further entries will be accepted.`, {
+    confirmLabel: 'Lock session', danger: true,
+    onConfirm: async () => {
+      UI.showSpinner('Locking…');
+      try {
+        await State.lockSession(id);
+        UI.hideSpinner();
+        UI.toast(`Session "${session.name}" locked.`, 'success');
+        initAdmin();
+      } catch(e) {
+        UI.hideSpinner();
+        UI.toast('Error: ' + e.message, 'error');
+      }
+    }
+  });
+}
+
+let _csvStudents = [];
+function _adminPreviewCSV(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    const lines = ev.target.result.split('\n').filter(l => l.trim());
+    _csvStudents = lines.slice(1).map(line => {
+      const cols = line.split(',').map(c => c.trim().replace(/^"|"$/g,''));
+      return { uin:cols[0], prn:cols[1], name:cols[2], branch:cols[3], division:cols[4], batchYear:cols[5] };
+    }).filter(s => s.uin);
+
+    const preview = document.getElementById('admin-csv-preview');
+    preview.innerHTML = `<strong>${_csvStudents.length} students parsed.</strong><br>
+      Preview: ${_csvStudents.slice(0,3).map(s => UI.esc(s.name + ' (' + s.uin + ')')).join(', ')}…`;
+    document.getElementById('admin-upload-btn').disabled = false;
+  };
+  reader.readAsText(file);
+}
+
+async function _adminUploadStudents() {
+  if (_csvStudents.length === 0) return;
+  UI.showModal('Upload students', `Upload <strong>${_csvStudents.length} students</strong> to STUDENT_MASTER?`, {
+    confirmLabel: 'Upload',
+    onConfirm: async () => {
+      UI.showSpinner('Uploading…');
+      try {
+        await Sheets.uploadStudents(_csvStudents);
+        await State.reload();
+        UI.hideSpinner();
+        UI.toast(`${_csvStudents.length} students uploaded.`, 'success');
+      } catch(e) {
+        UI.hideSpinner();
+        UI.toast('Upload failed: ' + e.message, 'error', 8000);
+      }
+    }
+  });
+}
+
+function _adminRenderAudit() {
+  const last50 = [...State.ledger].reverse().slice(0,50);
+  const tbody  = document.getElementById('audit-tbody');
+  if (!tbody) return;
+  tbody.innerHTML = last50.map(r => `
+    <tr>
+      <td>${UI.esc(r.entryDateTime?.slice(0,16).replace('T',' ') || '')}</td>
+      <td>${UI.esc(r.enteredBy)}</td>
+      <td>${UI.esc(r.name)}</td>
+      <td>${UI.esc(r.subjectCode)}</td>
+      <td>${UI.attemptBadge(r.attemptType)}</td>
+      <td>${UI.resultBadge(r.result)}</td>
+    </tr>
+  `).join('');
+}
+
+
+// ═══════════════════════════════════════════════════════════════
+// Utilities
+// ═══════════════════════════════════════════════════════════════
+function _debounce(fn, ms) {
+  let t;
+  return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
+}
