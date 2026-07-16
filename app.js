@@ -89,12 +89,14 @@ function _bindModalClose() {
 let bulkState = {
   session: null, semester: null, branch: null, division: null,
   attemptType: null, subjects: [], students: [],
+  activeComps: new Set(['IAT','ESE','TW','Oral']), // columns selected to enter
+  sortBy: 'default',
 };
 
 function initBulkEntry() {
   const sessions = State.getSessions().filter(s => s.status === 'Active');
   UI.buildSelect('be-session', sessions, '— select session —', 'id', 'name');
-  document.getElementById('be-session').onchange = _beOnSessionChange;
+  document.getElementById('be-session').onchange  = _beOnSessionChange;
   document.getElementById('be-semester').onchange = _beOnSemesterChange;
   document.getElementById('be-branch').onchange   = _beOnBranchChange;
   document.getElementById('be-division').onchange = _beOnDivisionChange;
@@ -102,6 +104,7 @@ function initBulkEntry() {
   document.getElementById('be-load-btn').onclick  = _beLoadGrid;
   document.getElementById('be-submit-btn').onclick = _beSubmit;
   document.getElementById('be-grid-area').innerHTML = '';
+  document.getElementById('be-toolbar').classList.add('hidden');
   _beResetFilters();
 }
 
@@ -119,7 +122,6 @@ function _beOnSessionChange() {
   const sessionId = document.getElementById('be-session').value;
   bulkState.session = State.getSession(sessionId);
   if (!bulkState.session) return;
-  // Pre-fill semester from session
   const semEl = document.getElementById('be-semester');
   semEl.disabled = false;
   semEl.value = bulkState.session.semester;
@@ -165,17 +167,13 @@ function _beLoadGrid() {
   if (!session || !branch || !attemptType) {
     UI.toast('Select session, branch, and attempt type first.', 'error'); return;
   }
-
-  // Sem II sessions must have electives configured
   if (session.semester === 2 && !sessionHasElectives(session)) {
     UI.toast('This Sem II session has no electives configured. Ask an Admin to edit the session.', 'error', 6000);
     return;
   }
 
-  // Get subjects — session carries elective codes for Sem II
   bulkState.subjects = getSubjectsForSem(semester, branch, session);
 
-  // Get students
   let students;
   if (attemptType === 'KT') {
     const ktData = State.getKTEligibleStudents(semester, branch);
@@ -191,31 +189,99 @@ function _beLoadGrid() {
 
   if (students.length === 0) {
     document.getElementById('be-grid-area').innerHTML = '<div class="empty-state">No students found for this selection.</div>';
+    document.getElementById('be-toolbar').classList.add('hidden');
     return;
   }
 
   bulkState.students = students;
+  bulkState.sortBy = 'default';
+  bulkState.activeComps = new Set(['IAT','ESE','TW','Oral']); // reset to all on fresh load
+
+  _beRenderToolbar();
   _beRenderGrid();
   document.getElementById('be-submit-btn').disabled = false;
 }
 
+// ── Toolbar: sort + column picker ────────────────────────────
+function _beRenderToolbar() {
+  const toolbar = document.getElementById('be-toolbar');
+  toolbar.classList.remove('hidden');
+
+  // Sort control
+  const sortEl = document.getElementById('be-sort');
+  sortEl.value = bulkState.sortBy;
+  sortEl.onchange = () => {
+    bulkState.sortBy = sortEl.value;
+    _beSortStudents();
+    _beRenderGrid();
+  };
+
+  // Column picker — figure out which comps actually appear in subjects
+  const allComps = ['IAT','ESE','TW','Oral'];
+  const presentComps = new Set();
+  for (const subj of bulkState.subjects) {
+    Object.keys(subj.marks).forEach(c => presentComps.add(c));
+  }
+
+  const picker = document.getElementById('be-col-picker');
+  picker.innerHTML = '';
+  for (const comp of allComps) {
+    if (!presentComps.has(comp)) continue;
+    const label = document.createElement('label');
+    label.className = 'col-pill' + (bulkState.activeComps.has(comp) ? ' active' : '');
+    label.innerHTML = `<input type="checkbox" value="${comp}" ${bulkState.activeComps.has(comp) ? 'checked' : ''}>${comp}`;
+    label.querySelector('input').addEventListener('change', (e) => {
+      if (e.target.checked) bulkState.activeComps.add(comp);
+      else bulkState.activeComps.delete(comp);
+      label.classList.toggle('active', e.target.checked);
+      _beRenderGrid();
+    });
+    picker.appendChild(label);
+  }
+}
+
+function _beSortStudents() {
+  const by = bulkState.sortBy;
+  if (by === 'default') return; // keep original order
+  bulkState.students = [...bulkState.students].sort((a, b) => {
+    if (by === 'name')  return a.name.localeCompare(b.name);
+    if (by === 'uin')   return a.uin.localeCompare(b.uin);
+    if (by === 'prn')   return (a.prn||'').localeCompare(b.prn||'');
+    if (by === 'batch') return (a.batchYear||'').localeCompare(b.batchYear||'');
+    return 0;
+  });
+}
+
+// ── Grid render ───────────────────────────────────────────────
 function _beRenderGrid() {
-  const { subjects, students, attemptType } = bulkState;
+  const { subjects, students, attemptType, activeComps } = bulkState;
   const container = document.getElementById('be-grid-area');
 
-  // Determine which components exist across all subjects
-  const allComps = ['IAT','ESE','TW','Oral'];
+  // Which comps to actually render (intersection of subject comps + selected)
+  const getVisibleComps = (subj) =>
+    Object.keys(subj.marks).filter(c => activeComps.size === 0 || activeComps.has(c));
+
+  // Count total visible columns
+  const totalVisibleCols = subjects.reduce((n, s) => n + getVisibleComps(s).length, 0);
+
+  if (totalVisibleCols === 0) {
+    container.innerHTML = '<div class="empty-state">Select at least one column type above to show the grid.</div>';
+    _setupMirrorScroll();
+    return;
+  }
 
   let html = `
   <div class="grid-info">
     <span>${students.length} students · ${subjects.length} subjects</span>
     <span class="grid-legend">
-      <span class="dot dot-grace"></span> Grace (21*)
+      <span class="dot dot-grace"></span> Grace (e.g. 21*)
       <span class="dot dot-absent"></span> AB
-      <span class="dot dot-error"></span> Required
+      <span class="dot dot-error"></span> Invalid / over max
     </span>
   </div>
-  <div class="grid-scroll">
+  <div class="grid-scroll-outer">
+  <div class="grid-scroll-mirror" id="be-mirror"><div class="grid-scroll-mirror-inner" id="be-mirror-inner"></div></div>
+  <div class="grid-scroll" id="be-scroll">
   <table class="entry-grid" id="entry-table">
     <thead>
       <tr>
@@ -223,15 +289,15 @@ function _beRenderGrid() {
         <th class="col-branch">Branch</th>`;
 
   for (const subj of subjects) {
-    const comps = Object.keys(subj.marks);
-    const span  = comps.length;
-    html += `<th colspan="${span}" class="subj-header" title="${UI.esc(subj.name)}">${UI.esc(subj.code)}<br><small>${UI.esc(subj.name.length>20 ? subj.name.slice(0,18)+'…' : subj.name)}</small></th>`;
+    const visComps = getVisibleComps(subj);
+    if (visComps.length === 0) continue;
+    html += `<th colspan="${visComps.length}" class="subj-header" title="${UI.esc(subj.name)}">${UI.esc(subj.code)}<br><small>${UI.esc(subj.name.length>20 ? subj.name.slice(0,18)+'…' : subj.name)}</small></th>`;
   }
 
   html += `</tr><tr><th class="sticky-col"></th><th></th>`;
   for (const subj of subjects) {
-    const comps = Object.keys(subj.marks);
-    for (const comp of comps) {
+    const visComps = getVisibleComps(subj);
+    for (const comp of visComps) {
       const isRevalLocked = attemptType === 'Reval' && comp !== 'ESE';
       html += `<th class="comp-header${isRevalLocked?' locked':''}">${comp}<br><small>/${subj.marks[comp]}</small></th>`;
     }
@@ -249,38 +315,33 @@ function _beRenderGrid() {
       <td class="branch-cell">${UI.esc(student.branch)}</td>`;
 
     for (const subj of subjects) {
-      const comps = Object.keys(subj.marks);
-      const isKTSubject = isKT && student._ktSubjects && !student._ktSubjects.includes(subj.code);
+      const visComps = getVisibleComps(subj);
+      if (visComps.length === 0) continue;
 
-      // Pre-fill from ledger for reval
+      const isKTSubject = isKT && student._ktSubjects && !student._ktSubjects.includes(subj.code);
       let prevEntry = null;
       if (attemptType === 'Reval' || attemptType === 'KT') {
         prevEntry = State.getLatestEntryForSubject(student.uin, subj.code, bulkState.session.id);
       }
 
-      for (const comp of comps) {
+      for (const comp of visComps) {
         const isRevalLocked = attemptType === 'Reval' && comp !== 'ESE';
-        const isKTLocked    = isKTSubject;
-        const locked = isRevalLocked || isKTLocked;
+        const locked = isRevalLocked || isKTSubject;
         const prevVal = prevEntry ? prevEntry[comp.toLowerCase() + 'Marks'] : '';
-        const cellId  = `cell-${student.uin}-${subj.code}-${comp}`;
 
         if (locked) {
           html += `<td class="cell-locked"><span class="locked-val">${UI.esc(prevVal || '—')}</span></td>`;
         } else {
           html += `<td>
-            <input type="text" 
-              class="mark-input" 
-              id="${cellId}"
+            <input type="text"
+              class="mark-input"
+              id="cell-${UI.esc(student.uin)}-${UI.esc(subj.code)}-${comp}"
               data-uin="${UI.esc(student.uin)}"
               data-code="${UI.esc(subj.code)}"
               data-comp="${comp}"
               data-max="${subj.marks[comp]}"
-              placeholder="${comp==='ESE'&&attemptType==='Reval' ? 'new' : ''}"
-              value="${UI.esc(isRevalLocked ? prevVal : '')}"
-              ${locked ? 'disabled' : ''}
-              autocomplete="off"
-              spellcheck="false"
+              placeholder=""
+              autocomplete="off" spellcheck="false"
             >
           </td>`;
         }
@@ -289,13 +350,41 @@ function _beRenderGrid() {
     html += `</tr>`;
   }
 
-  html += `</tbody></table></div>`;
+  html += `</tbody></table></div></div>`;
   container.innerHTML = html;
 
   // Bind input events
   container.querySelectorAll('.mark-input').forEach(input => {
     input.addEventListener('input', _beOnCellInput);
     input.addEventListener('keydown', _beOnCellKeydown);
+  });
+
+  // Sync mirror scrollbar width + scroll
+  _setupMirrorScroll();
+}
+
+function _setupMirrorScroll() {
+  const scroll  = document.getElementById('be-scroll');
+  const mirror  = document.getElementById('be-mirror');
+  const inner   = document.getElementById('be-mirror-inner');
+  if (!scroll || !mirror || !inner) return;
+
+  // Set inner width to match scrollable content
+  const syncWidth = () => { inner.style.width = scroll.scrollWidth + 'px'; };
+  syncWidth();
+  new ResizeObserver(syncWidth).observe(scroll);
+
+  // Sync scroll positions bidirectionally
+  let syncing = false;
+  mirror.addEventListener('scroll', () => {
+    if (syncing) return; syncing = true;
+    scroll.scrollLeft = mirror.scrollLeft;
+    syncing = false;
+  });
+  scroll.addEventListener('scroll', () => {
+    if (syncing) return; syncing = true;
+    mirror.scrollLeft = scroll.scrollLeft;
+    syncing = false;
   });
 }
 
@@ -305,18 +394,18 @@ function _beOnCellInput(e) {
   const parsed = parseMarkValue(raw);
   const max    = Number(input.dataset.max);
 
-  input.classList.remove('cell-grace', 'cell-absent', 'cell-error', 'cell-ok');
-  if (!raw) { input.classList.add('cell-error'); return; }
+  input.classList.remove('cell-grace','cell-absent','cell-error','cell-ok','cell-over-max');
+  input.title = '';
 
-  if (!parsed.valid) { input.classList.add('cell-error'); return; }
-  if (parsed.absent) { input.classList.add('cell-absent'); return; }
-  if (parsed.grace)  { input.classList.add('cell-grace'); return; }
-  if (parsed.value > max) { input.classList.add('cell-error'); return; }
+  if (!raw) return; // empty = no highlight (partial entry allowed)
+  if (!parsed.valid)          { input.classList.add('cell-error'); input.title = 'Invalid value'; return; }
+  if (parsed.absent)          { input.classList.add('cell-absent'); return; }
+  if (parsed.grace)           { input.classList.add('cell-grace'); return; }
+  if (parsed.value > max)     { input.classList.add('cell-over-max'); input.title = `Max allowed: ${max}`; return; }
   input.classList.add('cell-ok');
 }
 
 function _beOnCellKeydown(e) {
-  // Arrow navigation between cells
   if (!['ArrowRight','ArrowLeft','ArrowUp','ArrowDown','Tab','Enter'].includes(e.key)) return;
 
   const allInputs = [...document.querySelectorAll('#entry-table .mark-input:not([disabled])')];
@@ -330,62 +419,56 @@ function _beOnCellKeydown(e) {
     e.preventDefault(); next = allInputs[idx - 1];
   } else if (e.key === 'ArrowDown' || e.key === 'Enter') {
     e.preventDefault();
-    // Find same column next row
-    const row = e.target.closest('tr');
-    const nextRow = row?.nextElementSibling;
-    if (nextRow) {
-      const sameComp = nextRow.querySelector(`input[data-code="${e.target.dataset.code}"][data-comp="${e.target.dataset.comp}"]`);
-      next = sameComp;
-    }
+    const nextRow = e.target.closest('tr')?.nextElementSibling;
+    if (nextRow) next = nextRow.querySelector(`input[data-code="${e.target.dataset.code}"][data-comp="${e.target.dataset.comp}"]`);
   } else if (e.key === 'ArrowUp') {
     e.preventDefault();
-    const row = e.target.closest('tr');
-    const prevRow = row?.previousElementSibling;
-    if (prevRow) {
-      const sameComp = prevRow.querySelector(`input[data-code="${e.target.dataset.code}"][data-comp="${e.target.dataset.comp}"]`);
-      next = sameComp;
-    }
+    const prevRow = e.target.closest('tr')?.previousElementSibling;
+    if (prevRow) next = prevRow.querySelector(`input[data-code="${e.target.dataset.code}"][data-comp="${e.target.dataset.comp}"]`);
   }
   if (next) { next.focus(); next.select(); }
 }
 
 async function _beSubmit() {
-  const { session, subjects, students, attemptType } = bulkState;
+  const { session, students, attemptType } = bulkState;
 
-  // Validate all cells
-  const inputs = [...document.querySelectorAll('#entry-table .mark-input:not([disabled])')];
-  let hasErrors = false;
-  inputs.forEach(i => {
-    if (!i.value.trim()) { i.classList.add('cell-error'); hasErrors = true; }
-  });
-
-  if (hasErrors) {
-    UI.toast('Fill in all cells or enter AB for absent students.', 'error');
+  // Block on over-max errors (invalid values are also blocked)
+  const errorInputs = [...document.querySelectorAll('#entry-table .mark-input.cell-error, #entry-table .mark-input.cell-over-max')];
+  if (errorInputs.length > 0) {
+    errorInputs[0].focus();
+    UI.toast(`Fix ${errorInputs.length} invalid cell(s) before submitting. Red = invalid, orange = over max.`, 'error', 5000);
     return;
   }
 
-  // Build entries
-  const entriesByStudent = {};
-  for (const input of inputs) {
-    const { uin, code, comp } = input.dataset;
-    if (!entriesByStudent[uin]) entriesByStudent[uin] = {};
-    if (!entriesByStudent[uin][code]) entriesByStudent[uin][code] = {};
-    entriesByStudent[uin][code][comp] = parseMarkValue(input.value.trim());
+  // Collect only inputs that have a value (partial submit — empty = skip)
+  const inputs = [...document.querySelectorAll('#entry-table .mark-input:not([disabled])')].filter(i => i.value.trim() !== '');
+
+  if (inputs.length === 0) {
+    UI.toast('No marks entered yet.', 'info'); return;
   }
 
-  const entries = [];
-  for (const [uin, subjectMap] of Object.entries(entriesByStudent)) {
-    for (const [code, marks] of Object.entries(subjectMap)) {
-      entries.push({ uin, subjectCode: code, attemptType, marks });
-    }
+  // Build entries — only subjects where at least one comp was filled
+  const entriesByStudentSubject = {};
+  for (const input of inputs) {
+    const { uin, code, comp } = input.dataset;
+    const key = uin + '||' + code;
+    if (!entriesByStudentSubject[key]) entriesByStudentSubject[key] = { uin, code, marks: {} };
+    entriesByStudentSubject[key].marks[comp] = parseMarkValue(input.value.trim());
   }
+
+  const entries = Object.values(entriesByStudentSubject).map(e => ({
+    uin: e.uin, subjectCode: e.code, attemptType, marks: e.marks,
+  }));
+
+  const filledStudents = new Set(entries.map(e => e.uin)).size;
+  const filledSubjects = entries.length;
 
   UI.showModal(
     'Confirm submission',
-    `Submit marks for <strong>${students.length} students</strong> × <strong>${subjects.length} subjects</strong>?<br>
-    <small>Only changed/new entries will be written to the ledger.</small>`,
+    `Save marks for <strong>${filledStudents} students</strong> × <strong>${filledSubjects} subject entries</strong>?<br>
+    <small>Empty cells are skipped — you can fill the rest in a later session.</small>`,
     {
-      confirmLabel: 'Submit marks',
+      confirmLabel: 'Save marks',
       onConfirm: async () => {
         UI.showSpinner('Writing to ledger…');
         try {

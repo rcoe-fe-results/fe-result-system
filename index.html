@@ -10,7 +10,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 
-<!-- Google Identity Services — must be synchronous so button renders reliably -->
+<!-- Google Identity Services — synchronous so button renders reliably -->
 <script src="https://accounts.google.com/gsi/client"></script>
 
 <style>
@@ -406,6 +406,42 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
 .elective-pill.chem-lab  { background:#DCFCE7; color:#15803D; }
 .elective-missing        { font-size:11px; color:var(--grace); font-weight:500; }
 
+/* ─── Bulk entry toolbar (sort + column picker) ─────────── */
+.be-toolbar {
+  display:flex; gap:12px; align-items:center; flex-wrap:wrap;
+  padding:8px 0 4px; border-top:1px solid var(--border); margin-top:10px;
+}
+.be-toolbar label { font-size:12px; font-weight:500; color:var(--ink-3); white-space:nowrap; }
+.be-toolbar select { min-width:unset; width:auto; padding:5px 8px; font-size:12px; }
+.col-picker { display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
+.col-pill {
+  display:inline-flex; align-items:center; gap:4px;
+  padding:3px 10px; border-radius:20px; font-size:11px; font-weight:600;
+  border:1.5px solid var(--border-2); background:var(--surface-2);
+  color:var(--ink-3); cursor:pointer; user-select:none; transition:all .15s;
+}
+.col-pill input { display:none; }
+.col-pill.active { background:var(--brand-light); color:var(--brand); border-color:var(--brand); }
+
+/* ─── Over-max cell error ────────────────────────────────── */
+.mark-input.cell-over-max {
+  border-color:#F97316; background:#FFF7ED; color:#C2410C; font-weight:600;
+}
+
+/* ─── Floating / sticky scrollbar at top of grid ────────── */
+.grid-scroll-outer { position:relative; margin-top:12px; }
+.grid-scroll-mirror {
+  overflow-x:auto; overflow-y:hidden; height:12px;
+  border:1px solid var(--border); border-bottom:none;
+  border-radius:var(--radius) var(--radius) 0 0;
+}
+.grid-scroll-mirror-inner { height:1px; }
+.grid-scroll {
+  overflow-x:auto;
+  border:1px solid var(--border);
+  border-radius:0 0 var(--radius) var(--radius);
+}
+
 /* ─── Responsive ────────────────────────────────────────── */
 @media(max-width:680px) {
   .topbar-nav { overflow-x:auto; }
@@ -503,13 +539,28 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
             <button id="be-load-btn" class="btn btn-secondary" disabled>Load grid</button>
           </div>
         </div>
+
+        <!-- Sort + Column picker — shown after grid loads -->
+        <div id="be-toolbar" class="be-toolbar hidden">
+          <label>Sort by</label>
+          <select id="be-sort">
+            <option value="default">Default (sheet order)</option>
+            <option value="name">Name (A–Z)</option>
+            <option value="uin">UIN</option>
+            <option value="prn">PRN</option>
+            <option value="batch">Batch Year</option>
+          </select>
+          <div style="width:1px; height:20px; background:var(--border); margin:0 4px;"></div>
+          <label>Columns to enter</label>
+          <div id="be-col-picker" class="col-picker"></div>
+        </div>
       </div>
 
       <div id="be-grid-area"></div>
 
-      <div style="margin-top:14px; display:flex; justify-content:flex-end; gap:10px;">
-        <div style="font-size:12px; color:var(--ink-3); align-self:center;">
-          Cells accept: numbers · <strong>AB</strong> (absent) · <strong>21*</strong> (grace)
+      <div style="margin-top:14px; display:flex; justify-content:flex-end; gap:10px; align-items:center;">
+        <div style="font-size:12px; color:var(--ink-3);">
+          Cells: numbers · <strong>AB</strong> (absent) · <strong>N*</strong> (grace e.g. 21*)
         </div>
         <button id="be-submit-btn" class="btn btn-primary" disabled>Submit marks →</button>
       </div>

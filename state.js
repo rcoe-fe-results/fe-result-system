@@ -210,8 +210,11 @@ const State = (() => {
         if (prev && newESE === oldESE) continue; // no change — skip
       }
 
-      // Compute result
-      const result = computeResult(subject, entry.marks);
+      // Compute result — partial entries (missing comps) get blank result
+      // Full result is only computed when all components for the subject are present
+      const allComps = Object.keys(subject.marks);
+      const hasAllComps = allComps.every(c => entry.marks[c] && entry.marks[c].value !== null);
+      const result = hasAllComps ? computeResult(subject, entry.marks) : { total: null, result: '', creditsEarned: 0 };
       const grade  = '—'; // Pending MU gazette
 
       const row = {
