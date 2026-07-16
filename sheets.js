@@ -50,28 +50,40 @@ const Sheets = (() => {
   }
 
   // ── EXAM_MASTER ──────────────────────────────────────────
+  // Columns: A=Session ID, B=Name, C=Semester, D=Batch Year,
+  //          E=Status, F=Created By,
+  //          G=Physics Theory Code, H=Physics Lab Code,
+  //          I=Chem Theory Code,   J=Chem Lab Code
   async function getSessions() {
-    const rows = await getRange(CONFIG.TABS.EXAM, 'A2:F');
+    const rows = await getRange(CONFIG.TABS.EXAM, 'A2:J');
     return rows.map(r => ({
-      id:        r[0] || '',
-      name:      r[1] || '',
-      semester:  Number(r[2]) || 1,
-      batchYear: r[3] || '',
-      status:    r[4] || 'Active',   // Active | Locked
-      createdBy: r[5] || '',
+      id:                 r[0] || '',
+      name:               r[1] || '',
+      semester:           Number(r[2]) || 1,
+      batchYear:          r[3] || '',
+      status:             r[4] || 'Active',   // Active | Locked
+      createdBy:          r[5] || '',
+      physicsTheoryCode:  r[6] || '',   // BSC202X — set for Sem II only
+      physicsLabCode:     r[7] || '',   // BSL201X
+      chemTheoryCode:     r[8] || '',   // BSC203X
+      chemLabCode:        r[9] || '',   // BSL202X
     })).filter(s => s.id);
   }
 
   async function addSession(session) {
     return appendRows(CONFIG.TABS.EXAM, [[
-      session.id, session.name, session.semester,
-      session.batchYear, session.status, session.createdBy
+      session.id, session.name, session.semester, session.batchYear,
+      session.status, session.createdBy,
+      session.physicsTheoryCode || '',
+      session.physicsLabCode    || '',
+      session.chemTheoryCode    || '',
+      session.chemLabCode       || '',
     ]]);
   }
 
   async function updateSessionStatus(sessionId, newStatus) {
-    // Find row, then update cell — one exception to append-only (session lock is metadata)
-    const rows = await getRange(CONFIG.TABS.EXAM, 'A:F');
+    // Find row, then update Status cell (col E) only
+    const rows = await getRange(CONFIG.TABS.EXAM, 'A:J');
     for (let i = 1; i < rows.length; i++) {
       if (rows[i][0] === sessionId) {
         const rowNum = i + 1;

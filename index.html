@@ -345,6 +345,59 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
 /* ─── Access denied ─────────────────────────────────────── */
 .access-denied { padding:48px; text-align:center; color:var(--ink-3); font-size:14px; }
 
+/* ─── Form row (side by side fields) ────────────────────── */
+.form-row { display:flex; gap:10px; }
+.form-row .form-group { flex:1; }
+
+/* ─── Elective section ───────────────────────────────────── */
+.elective-section-header {
+  display:flex; align-items:center; gap:8px;
+  font-size:12px; font-weight:700; color:var(--ink-2);
+  background:var(--surface-2); border:1px solid var(--border);
+  border-radius:var(--radius); padding:8px 12px; margin:12px 0 10px;
+}
+.elective-section-icon { font-size:14px; }
+.elective-section-note {
+  margin-left:auto; font-size:11px; font-weight:400;
+  color:var(--grace); background:var(--grace-bg);
+  padding:2px 8px; border-radius:10px;
+}
+.elective-group { margin-bottom:10px; }
+.elective-group-label {
+  font-size:11px; font-weight:700; letter-spacing:.4px;
+  text-transform:uppercase; padding:4px 8px; border-radius:4px;
+  margin-bottom:6px; display:inline-block;
+}
+.phys-label  { background:#EFF6FF; color:#1D4ED8; }
+.chem-label  { background:#F0FDF4; color:#166534; }
+.auto-fill-note { font-size:10px; font-weight:400; color:var(--ink-4); }
+
+/* ─── Elective confirmation table (inside modal) ─────────── */
+.elective-confirm-table {
+  width:100%; font-size:12px; border-collapse:collapse; margin-top:10px;
+}
+.elective-confirm-table td {
+  padding:5px 8px; border:1px solid var(--border);
+}
+.elective-confirm-table td:first-child {
+  font-weight:500; color:var(--ink-3); background:var(--surface-2); width:40%;
+}
+.elective-lock-note {
+  margin-top:10px; font-size:11px; color:var(--grace);
+  background:var(--grace-bg); padding:6px 10px; border-radius:var(--radius);
+}
+
+/* ─── Elective pills in session list ─────────────────────── */
+.elective-pill {
+  display:inline-block; font-size:10px; font-weight:600;
+  font-family:'DM Mono',monospace; padding:2px 6px; border-radius:4px; margin:1px;
+}
+.elective-pill.phys      { background:#EFF6FF; color:#1D4ED8; }
+.elective-pill.phys-lab  { background:#DBEAFE; color:#1E40AF; }
+.elective-pill.chem      { background:#F0FDF4; color:#166534; }
+.elective-pill.chem-lab  { background:#DCFCE7; color:#15803D; }
+.elective-missing        { font-size:11px; color:var(--grace); font-weight:500; }
+
 /* ─── Responsive ────────────────────────────────────────── */
 @media(max-width:680px) {
   .topbar-nav { overflow-x:auto; }
@@ -595,27 +648,68 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
 
         <!-- Session management -->
         <div class="admin-section">
-          <h3>Session Management</h3>
+          <h3>Create New Session</h3>
+
           <div class="form-group">
             <label>Session name</label>
             <input type="text" id="admin-session-name" placeholder="e.g. May 2025">
           </div>
-          <div class="form-group">
-            <label>Semester</label>
-            <select id="admin-session-sem">
-              <option value="">—</option>
-              <option value="1">Semester I</option>
-              <option value="2">Semester II</option>
-            </select>
+          <div class="form-row">
+            <div class="form-group" style="flex:1;">
+              <label>Semester</label>
+              <select id="admin-session-sem">
+                <option value="">—</option>
+                <option value="1">Semester I</option>
+                <option value="2">Semester II</option>
+              </select>
+            </div>
+            <div class="form-group" style="flex:1;">
+              <label>Batch year</label>
+              <input type="text" id="admin-session-batch" placeholder="e.g. 2024">
+            </div>
           </div>
-          <div class="form-group">
-            <label>Batch year</label>
-            <input type="text" id="admin-session-batch" placeholder="e.g. 2024">
+
+          <!-- Elective dropdowns — shown only for Sem II -->
+          <div id="admin-electives-section" class="hidden">
+            <div class="elective-section-header">
+              <span class="elective-section-icon">⚗</span>
+              Sem II Electives
+              <span class="elective-section-note">Locked permanently once session is created</span>
+            </div>
+
+            <div class="elective-group">
+              <div class="elective-group-label phys-label">Physics (BSC202X / BSL201X)</div>
+              <div class="form-row">
+                <div class="form-group" style="flex:1;">
+                  <label>Theory</label>
+                  <select id="admin-phys-theory"><option value="">— select —</option></select>
+                </div>
+                <div class="form-group" style="flex:1;">
+                  <label>Lab <span class="auto-fill-note">(auto-filled)</span></label>
+                  <select id="admin-phys-lab"><option value="">— select —</option></select>
+                </div>
+              </div>
+            </div>
+
+            <div class="elective-group">
+              <div class="elective-group-label chem-label">Chemistry (BSC203X / BSL202X)</div>
+              <div class="form-row">
+                <div class="form-group" style="flex:1;">
+                  <label>Theory</label>
+                  <select id="admin-chem-theory"><option value="">— select —</option></select>
+                </div>
+                <div class="form-group" style="flex:1;">
+                  <label>Lab <span class="auto-fill-note">(auto-filled)</span></label>
+                  <select id="admin-chem-lab"><option value="">— select —</option></select>
+                </div>
+              </div>
+            </div>
           </div>
-          <button id="admin-add-session" class="btn btn-primary btn-sm">Create session</button>
+
+          <button id="admin-add-session" class="btn btn-primary btn-sm" style="margin-top:4px;">Create session</button>
 
           <div style="margin-top:20px; padding-top:16px; border-top:1px solid var(--border);">
-            <h3 style="font-size:12px; color:var(--ink-3); margin-bottom:8px;">Lock a session</h3>
+            <div style="font-size:12px; font-weight:600; color:var(--ink-3); margin-bottom:8px;">Lock a session</div>
             <div style="display:flex; gap:8px; align-items:center;">
               <select id="admin-session-lock-select" style="flex:1;"></select>
               <button id="admin-lock-session" class="btn btn-danger btn-sm">Lock</button>
@@ -637,6 +731,22 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
           </div>
           <div id="admin-csv-preview" style="font-size:12px; color:var(--ink-3); margin-bottom:10px;"></div>
           <button id="admin-upload-btn" class="btn btn-primary btn-sm" disabled>Upload to Sheet</button>
+        </div>
+
+        <!-- Session list -->
+        <div class="admin-section" style="grid-column:1/-1;">
+          <h3>All Sessions</h3>
+          <div style="overflow-x:auto;">
+            <table class="audit-table">
+              <thead>
+                <tr>
+                  <th>Name</th><th>Semester</th><th>Batch</th>
+                  <th>Electives</th><th>Status</th><th>Created By</th>
+                </tr>
+              </thead>
+              <tbody id="admin-session-tbody"></tbody>
+            </table>
+          </div>
         </div>
 
         <!-- Audit log -->

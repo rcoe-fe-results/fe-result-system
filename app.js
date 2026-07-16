@@ -166,8 +166,14 @@ function _beLoadGrid() {
     UI.toast('Select session, branch, and attempt type first.', 'error'); return;
   }
 
-  // Get subjects
-  bulkState.subjects = getSubjectsForSem(semester, branch);
+  // Sem II sessions must have electives configured
+  if (session.semester === 2 && !sessionHasElectives(session)) {
+    UI.toast('This Sem II session has no electives configured. Ask an Admin to edit the session.', 'error', 6000);
+    return;
+  }
+
+  // Get subjects — session carries elective codes for Sem II
+  bulkState.subjects = getSubjectsForSem(semester, branch, session);
 
   // Get students
   let students;
@@ -454,7 +460,7 @@ function _seRenderGrid() {
   if (!student || !session) return;
 
   const attemptType = document.getElementById('se-attempt').value || 'Regular';
-  const subjects    = getSubjectsForSem(session.semester, student.branch);
+  const subjects    = getSubjectsForSem(session.semester, student.branch, session);
   singleState.subjects = subjects;
 
   const info = document.getElementById('se-student-info');
@@ -749,8 +755,16 @@ function initAdmin() {
   }
 
   // Session management
-  document.getElementById('admin-add-session').onclick = _adminAddSession;
+  document.getElementById('admin-add-session').onclick  = _adminAddSession;
   document.getElementById('admin-lock-session').onclick = _adminLockSession;
+
+  // Show/hide elective dropdowns when semester changes
+  const semEl = document.getElementById('admin-session-sem');
+  semEl.onchange = _adminToggleElectives;
+  _adminToggleElectives(); // run once on init to set correct initial state
+
+  // Populate elective dropdowns from config pools
+  _buildElectiveSelects();
 
   // Student upload
   document.getElementById('admin-upload-btn').onclick = _adminUploadStudents;
@@ -758,28 +772,157 @@ function initAdmin() {
 
   // Populate lock session dropdown
   const sessions = State.getSessions();
-  UI.buildSelect('admin-session-lock-select', sessions.filter(s=>s.status==='Active'), '— select session to lock —', 'id', 'name');
+  UI.buildSelect('admin-session-lock-select', sessions.filter(s => s.status === 'Active'), '— select session to lock —', 'id', 'name');
 
-  // Refresh audit
+  // Session list table
+  _adminRenderSessionList();
+
+  // Audit log
   _adminRenderAudit();
+}
+
+function _adminToggleElectives() {
+  const sem     = document.getElementById('admin-session-sem').value;
+  const section = document.getElementById('admin-electives-section');
+  if (section) section.classList.toggle('hidden', sem !== '2');
+}
+
+function _buildElectiveSelects() {
+  // Physics Theory
+  const pt = document.getElementById('admin-phys-theory');
+  if (pt) {
+    pt.innerHTML = '<option value="">— select —</option>' +
+      ELECTIVE_PHYSICS_THEORY.map(e => `<option value="${UI.esc(e.code)}">${UI.esc(e.code)} — ${UI.esc(e.name)}</option>`).join('');
+  }
+  // Physics Lab
+  const pl = document.getElementById('admin-phys-lab');
+  if (pl) {
+    pl.innerHTML = '<option value="">— select —</option>' +
+      ELECTIVE_PHYSICS_LAB.map(e => `<option value="${UI.esc(e.code)}">${UI.esc(e.code)} — ${UI.esc(e.name)}</option>`).join('');
+  }
+  // Chem Theory
+  const ct = document.getElementById('admin-chem-theory');
+  if (ct) {
+    ct.innerHTML = '<option value="">— select —</option>' +
+      ELECTIVE_CHEMISTRY_THEORY.map(e => `<option value="${UI.esc(e.code)}">${UI.esc(e.code)} — ${UI.esc(e.name)}</option>`).join('');
+  }
+  // Chem Lab
+  const cl = document.getElementById('admin-chem-lab');
+  if (cl) {
+    cl.innerHTML = '<option value="">— select —</option>' +
+      ELECTIVE_CHEMISTRY_LAB.map(e => `<option value="${UI.esc(e.code)}">${UI.esc(e.code)} — ${UI.esc(e.name)}</option>`).join('');
+  }
+
+  // Auto-pair: when Physics Theory changes, auto-select the matching lab
+  document.getElementById('admin-phys-theory')?.addEventListener('change', e => {
+    const code    = e.target.value;                       // e.g. BSC2021
+    const labCode = code.replace('BSC202', 'BSL201');     // → BSL2011
+    const labEl   = document.getElementById('admin-phys-lab');
+    if (labEl && labCode && labEl.querySelector(`option[value="${labCode}"]`)) {
+      labEl.value = labCode;
+    }
+  });
+
+  // Auto-pair: when Chem Theory changes, auto-select the matching lab
+  document.getElementById('admin-chem-theory')?.addEventListener('change', e => {
+    const code    = e.target.value;                       // e.g. BSC2031
+    const labCode = code.replace('BSC203', 'BSL202');     // → BSL2021
+    const labEl   = document.getElementById('admin-chem-lab');
+    if (labEl && labCode && labEl.querySelector(`option[value="${labCode}"]`)) {
+      labEl.value = labCode;
+    }
+  });
 }
 
 async function _adminAddSession() {
   const name     = document.getElementById('admin-session-name').value.trim();
   const semester = document.getElementById('admin-session-sem').value;
   const batch    = document.getElementById('admin-session-batch').value.trim();
-  if (!name || !semester || !batch) { UI.toast('Fill in all session fields.', 'error'); return; }
 
-  UI.showSpinner('Creating session…');
-  try {
-    const s = await State.addSession(name, semester, batch);
-    UI.hideSpinner();
-    UI.toast(`Session "${s.name}" created.`, 'success');
-    initAdmin(); // refresh
-  } catch(e) {
-    UI.hideSpinner();
-    UI.toast('Error: ' + e.message, 'error', 8000);
+  if (!name || !semester || !batch) {
+    UI.toast('Fill in session name, semester, and batch year.', 'error'); return;
   }
+
+  // Collect electives for Sem II
+  let electives = {};
+  if (semester === '2') {
+    electives = {
+      physicsTheoryCode: document.getElementById('admin-phys-theory').value,
+      physicsLabCode:    document.getElementById('admin-phys-lab').value,
+      chemTheoryCode:    document.getElementById('admin-chem-theory').value,
+      chemLabCode:       document.getElementById('admin-chem-lab').value,
+    };
+    const missing = Object.entries(electives).filter(([,v]) => !v).map(([k]) => k);
+    if (missing.length > 0) {
+      UI.toast('Select all 4 electives for a Sem II session.', 'error'); return;
+    }
+  }
+
+  // Build confirmation message
+  let confirmBody = `Create session <strong>${UI.esc(name)}</strong>?<br>
+    Semester: <strong>${semester === '1' ? 'I' : 'II'}</strong> &nbsp;·&nbsp; Batch: <strong>${UI.esc(batch)}</strong>`;
+
+  if (semester === '2') {
+    const pt = findElective(electives.physicsTheoryCode);
+    const ct = findElective(electives.chemTheoryCode);
+    confirmBody += `<br><br>
+    <table class="elective-confirm-table">
+      <tr><td>Physics Theory</td><td><strong>${UI.esc(electives.physicsTheoryCode)}</strong> — ${UI.esc(pt?.name || '')}</td></tr>
+      <tr><td>Physics Lab</td><td><strong>${UI.esc(electives.physicsLabCode)}</strong></td></tr>
+      <tr><td>Chemistry Theory</td><td><strong>${UI.esc(electives.chemTheoryCode)}</strong> — ${UI.esc(ct?.name || '')}</td></tr>
+      <tr><td>Chemistry Lab</td><td><strong>${UI.esc(electives.chemLabCode)}</strong></td></tr>
+    </table>
+    <p class="elective-lock-note">⚠ Electives are locked once the session is created and cannot be changed.</p>`;
+  }
+
+  UI.showModal('Confirm session creation', confirmBody, {
+    confirmLabel: 'Create session',
+    onConfirm: async () => {
+      UI.showSpinner('Creating session…');
+      try {
+        const s = await State.addSession(name, semester, batch, electives);
+        UI.hideSpinner();
+        UI.toast(`Session "${s.name}" created.`, 'success');
+        // Clear form
+        ['admin-session-name','admin-session-batch'].forEach(id => document.getElementById(id).value = '');
+        document.getElementById('admin-session-sem').value = '';
+        _adminToggleElectives();
+        initAdmin();
+      } catch(e) {
+        UI.hideSpinner();
+        UI.toast('Error: ' + e.message, 'error', 8000);
+      }
+    }
+  });
+}
+
+function _adminRenderSessionList() {
+  const tbody = document.getElementById('admin-session-tbody');
+  if (!tbody) return;
+  const sessions = State.getSessions();
+  if (sessions.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--ink-4);padding:16px;">No sessions yet.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = sessions.map(s => {
+    const electiveInfo = s.semester === 2 && s.physicsTheoryCode
+      ? `<span class="elective-pill phys">${UI.esc(s.physicsTheoryCode)}</span>
+         <span class="elective-pill phys-lab">${UI.esc(s.physicsLabCode)}</span>
+         <span class="elective-pill chem">${UI.esc(s.chemTheoryCode)}</span>
+         <span class="elective-pill chem-lab">${UI.esc(s.chemLabCode)}</span>`
+      : s.semester === 2
+        ? '<span class="elective-missing">⚠ No electives set</span>'
+        : '<span class="muted">—</span>';
+
+    return `<tr>
+      <td>${UI.esc(s.name)}</td>
+      <td>Sem ${UI.esc(String(s.semester))}</td>
+      <td>${UI.esc(s.batchYear)}</td>
+      <td>${electiveInfo}</td>
+      <td><span class="badge ${s.status === 'Active' ? 'badge-pass' : 'badge-pending'}">${UI.esc(s.status)}</span></td>
+      <td class="muted" style="font-size:11px;">${UI.esc(s.createdBy)}</td>
+    </tr>`;
+  }).join('');
 }
 
 async function _adminLockSession() {

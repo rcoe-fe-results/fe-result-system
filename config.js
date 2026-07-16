@@ -53,35 +53,99 @@ const SEM1_SUBJECTS = [
 
 // ── Semester II branch-specific PCC/PCL ──────────────────────
 const PCC_MAP = {
-  AIDS:       { pccCode:'PCC2011', pccName:'Data Structure',                   pclCode:'PCL2011', pclName:'Data Structure Lab' },
-  Civil:      { pccCode:'PCC2012', pccName:'Elements of Civil Engineering',    pclCode:'PCL2012', pclName:'Elements of Civil Engineering Lab' },
-  Computer:   { pccCode:'PCC2011', pccName:'Data Structure',                   pclCode:'PCL2011', pclName:'Data Structure Lab' },
-  ECSE:       { pccCode:'PCC2014', pccName:'Digital Electronics',              pclCode:'PCL2014', pclName:'Digital Electronics Lab' },
-  Mechanical: { pccCode:'PCC2018', pccName:'Elements of Mechanical Engineering',pclCode:'PCL2018', pclName:'Elements of Mechanical Engineering Lab' },
+  AIDS:       { pccCode:'PCC2011', pccName:'Data Structure',                    pclCode:'PCL2011', pclName:'Data Structure Lab' },
+  Civil:      { pccCode:'PCC2012', pccName:'Elements of Civil Engineering',     pclCode:'PCL2012', pclName:'Elements of Civil Engineering Lab' },
+  Computer:   { pccCode:'PCC2011', pccName:'Data Structure',                    pclCode:'PCL2011', pclName:'Data Structure Lab' },
+  ECSE:       { pccCode:'PCC2014', pccName:'Digital Electronics',               pclCode:'PCL2014', pclName:'Digital Electronics Lab' },
+  Mechanical: { pccCode:'PCC2018', pccName:'Elements of Mechanical Engineering', pclCode:'PCL2018', pclName:'Elements of Mechanical Engineering Lab' },
 };
 
-// ── Semester II subjects (branch-agnostic core) ───────────────
-function getSem2Subjects(branch) {
-  const pcc = PCC_MAP[branch] || PCC_MAP['Computer'];
+// ── Sem II Elective Physics options (BSC202X / BSL201X) ──────
+// Admin picks ONE theory + ONE lab per session when creating a Sem II session.
+const ELECTIVE_PHYSICS_THEORY = [
+  { code:'BSC2021', name:'Physics for Emerging Fields' },
+  { code:'BSC2022', name:'Semiconductor Physics' },
+  { code:'BSC2023', name:'Physics of Measurements and Sensors' },
+];
+
+const ELECTIVE_PHYSICS_LAB = [
+  { code:'BSL2011', name:'Physics for Emerging Fields Lab' },
+  { code:'BSL2012', name:'Semiconductor Physics Lab' },
+  { code:'BSL2013', name:'Physics of Measurements and Sensors Lab' },
+];
+
+// ── Sem II Elective Chemistry options (BSC203X / BSL202X) ────
+// Admin picks ONE theory + ONE lab per session.
+const ELECTIVE_CHEMISTRY_THEORY = [
+  { code:'BSC2031', name:'Engineering Materials' },
+  { code:'BSC2032', name:'Environmental Chemistry and Non-conventional Energy Sources' },
+  { code:'BSC2033', name:'Introduction to Computational Chemistry' },
+];
+
+const ELECTIVE_CHEMISTRY_LAB = [
+  { code:'BSL2021', name:'Engineering Materials Lab' },
+  { code:'BSL2022', name:'Environmental Chemistry and Non-conventional Energy Sources Lab' },
+  { code:'BSL2023', name:'Introduction to Computational Chemistry Lab' },
+];
+
+// ── Helper: look up an elective by code across all pools ──────
+function findElective(code) {
   return [
-    { code:'BSC201',    name:'Applied Mathematics II',                type:'Theory+Tutorial', credits:3,   marks:{ IAT:40, ESE:60, TW:25 } },
-    { code:'BSC2023',   name:'Physics of Measurements and Sensors',   type:'Theory',          credits:2,   marks:{ IAT:30, ESE:45 } },
-    { code:'BSC2031',   name:'Engineering Materials',                 type:'Theory',          credits:2,   marks:{ IAT:30, ESE:45 } },
-    { code:'ESC201',    name:'Engineering Graphics',                  type:'Theory',          credits:3,   marks:{ IAT:40, ESE:60 } },
-    { code:pcc.pccCode, name:pcc.pccName,                            type:'Theory',          credits:2,   marks:{ IAT:40, ESE:60 } },
-    { code:'BSL2013',   name:'Physics of Measurements Lab',           type:'Practical',       credits:0.5, marks:{ TW:25 } },
-    { code:'BSL2021',   name:'Engineering Materials Lab',             type:'Practical',       credits:0.5, marks:{ TW:25 } },
-    { code:'ESL201',    name:'Engineering Graphics Lab',              type:'Practical+Oral',  credits:1,   marks:{ TW:25, Oral:25 } },
-    { code:pcc.pclCode, name:pcc.pclName,                            type:'Practical+Oral',  credits:1,   marks:{ TW:25, Oral:25 } },
-    { code:'CC201',     name:'Social Science & Community Services',   type:'Practical',       credits:2,   marks:{ TW:25 } },
-    { code:'IKS201',    name:'Indian Knowledge System',               type:'Practical',       credits:2,   marks:{ TW:25 } },
-    { code:'VSEC201',   name:'Engineering Workshop II',               type:'Practical',       credits:1,   marks:{ TW:25 } },
-    { code:'VSEC202',   name:'Python Programming',                    type:'Practical+Oral',  credits:2,   marks:{ TW:25, Oral:25 } },
+    ...ELECTIVE_PHYSICS_THEORY, ...ELECTIVE_PHYSICS_LAB,
+    ...ELECTIVE_CHEMISTRY_THEORY, ...ELECTIVE_CHEMISTRY_LAB,
+  ].find(e => e.code === code) || null;
+}
+
+// ── Semester II subjects ──────────────────────────────────────
+// session object must include:
+//   physicsTheoryCode, physicsLabCode, chemTheoryCode, chemLabCode
+// These are set by the Admin when creating a Sem II session.
+// KT lookups pass null for session — in that case we fall back to
+// reading elective codes from the student's own ledger history,
+// so the subject config object is reconstructed from ledger data
+// (code + name already stored there). See getKTEligibleStudents().
+function getSem2Subjects(branch, session) {
+  const pcc = PCC_MAP[branch] || PCC_MAP['Computer'];
+
+  // Resolve electives from session, or use placeholder stubs if session unknown
+  const phyT = session ? (findElective(session.physicsTheoryCode) || { code: session.physicsTheoryCode || 'BSC202X', name: 'Elective Physics Theory' })
+                       : { code: 'BSC202X', name: 'Elective Physics Theory' };
+  const phyL = session ? (findElective(session.physicsLabCode)    || { code: session.physicsLabCode    || 'BSL201X', name: 'Elective Physics Lab' })
+                       : { code: 'BSL201X', name: 'Elective Physics Lab' };
+  const chT  = session ? (findElective(session.chemTheoryCode)    || { code: session.chemTheoryCode    || 'BSC203X', name: 'Elective Chemistry Theory' })
+                       : { code: 'BSC203X', name: 'Elective Chemistry Theory' };
+  const chL  = session ? (findElective(session.chemLabCode)       || { code: session.chemLabCode       || 'BSL202X', name: 'Elective Chemistry Lab' })
+                       : { code: 'BSL202X', name: 'Elective Chemistry Lab' };
+
+  return [
+    { code:'BSC201',    name:'Applied Mathematics II',             type:'Theory+Tutorial', credits:3,   marks:{ IAT:40, ESE:60, TW:25 } },
+    { code:phyT.code,   name:phyT.name,                           type:'Theory',          credits:2,   marks:{ IAT:30, ESE:45 } },
+    { code:chT.code,    name:chT.name,                            type:'Theory',          credits:2,   marks:{ IAT:30, ESE:45 } },
+    { code:'ESC201',    name:'Engineering Graphics',              type:'Theory',          credits:3,   marks:{ IAT:40, ESE:60 } },
+    { code:pcc.pccCode, name:pcc.pccName,                        type:'Theory',          credits:2,   marks:{ IAT:40, ESE:60 } },
+    { code:phyL.code,   name:phyL.name,                          type:'Practical',       credits:0.5, marks:{ TW:25 } },
+    { code:chL.code,    name:chL.name,                           type:'Practical',       credits:0.5, marks:{ TW:25 } },
+    { code:'ESL201',    name:'Engineering Graphics Lab',          type:'Practical+Oral',  credits:1,   marks:{ TW:25, Oral:25 } },
+    { code:pcc.pclCode, name:pcc.pclName,                        type:'Practical+Oral',  credits:1,   marks:{ TW:25, Oral:25 } },
+    { code:'CC201',     name:'Social Science & Community Services',type:'Practical',      credits:2,   marks:{ TW:25 } },
+    { code:'IKS201',    name:'Indian Knowledge System',           type:'Practical',       credits:2,   marks:{ TW:25 } },
+    { code:'VSEC201',   name:'Engineering Workshop II',           type:'Practical',       credits:1,   marks:{ TW:25 } },
+    { code:'VSEC202',   name:'Python Programming',                type:'Practical+Oral',  credits:2,   marks:{ TW:25, Oral:25 } },
   ];
 }
 
-function getSubjectsForSem(sem, branch) {
-  return sem === 1 ? SEM1_SUBJECTS : getSem2Subjects(branch);
+// ── Primary entry point for subject lists ─────────────────────
+// session = full session object (has elective codes for Sem II)
+// For Sem I, session is irrelevant — pass null freely.
+function getSubjectsForSem(sem, branch, session) {
+  return sem === 1 ? SEM1_SUBJECTS : getSem2Subjects(branch, session);
+}
+
+// ── Guard: does a session have electives configured? ──────────
+function sessionHasElectives(session) {
+  return !!(session &&
+    session.physicsTheoryCode && session.physicsLabCode &&
+    session.chemTheoryCode    && session.chemLabCode);
 }
 
 // ── Marks validation ──────────────────────────────────────────
