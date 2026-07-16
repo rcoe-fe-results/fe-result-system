@@ -14,16 +14,18 @@ const Auth = (() => {
     _onAuthChange = onAuthChange;
 
     // Single token client that handles BOTH identity + Sheets scope.
-    // We request the ID token via 'openid email profile' alongside
-    // the Sheets scope, so only one popup/redirect ever fires.
+    // include_granted_scopes: true tells Google to remember previously
+    // granted scopes so it doesn't re-prompt on every login.
     const tokenClient = google.accounts.oauth2.initTokenClient({
       client_id: CONFIG.CLIENT_ID,
-      // openid + profile + email gives us identity info
-      // spreadsheets scope gives Sheets read/write
       scope: 'openid email profile ' + CONFIG.SCOPES,
+      include_granted_scopes: true,
       callback: _handleToken,
       error_callback: (err) => {
         console.error('OAuth error:', err);
+        if (err.type === 'access_denied') {
+          localStorage.removeItem('gsi_consented');
+        }
         UI.toast('Sign-in failed: ' + (err.message || err.type), 'error', 6000);
       },
     });
@@ -44,9 +46,9 @@ const Auth = (() => {
         </button>`;
 
       document.getElementById('gsi-custom-btn').onclick = () => {
-        // On first visit: show account chooser + consent.
-        // On repeat visits: skip consent (user already granted).
         const hasConsented = localStorage.getItem('gsi_consented');
+        // First time on this browser: show account chooser + consent.
+        // After that: empty prompt — Google skips consent if already granted.
         tokenClient.requestAccessToken({
           prompt: hasConsented ? '' : 'select_account consent',
         });
@@ -70,11 +72,9 @@ const Auth = (() => {
   function isAdmin()         { return _user && _user.role === 'admin'; }
   function isAuthenticated() { return !!_user; }
 
-  // requestToken — used by sheets.js before every API call
+  // requestToken — used by sheets.js before every write API call
   async function requestToken() {
     if (_accessToken) return _accessToken;
-    // Token expired — this shouldn't normally be called without a valid token
-    // If it is, it means the session expired; prompt re-login
     _onAuthChange && _onAuthChange(null);
     throw new Error('Session expired. Please sign in again.');
   }
@@ -89,7 +89,7 @@ const Auth = (() => {
 
     _accessToken = tokenResponse.access_token;
 
-    // Decode identity from the access token by calling userinfo endpoint
+    // Decode identity by calling userinfo endpoint
     try {
       const resp = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
         headers: { 'Authorization': 'Bearer ' + _accessToken }
@@ -110,10 +110,10 @@ const Auth = (() => {
         role:    CONFIG.ADMINS.includes(info.email) ? 'admin' : 'faculty',
       };
 
-      // Mark that this browser has completed consent — skip it on future logins
+      // Mark consent as given — future logins skip the consent screen
       localStorage.setItem('gsi_consented', '1');
 
-      // Auto-revoke before expiry
+      // Auto-clear token before expiry so writes fail gracefully
       const expiresIn = (tokenResponse.expires_in || 3600) * 1000;
       setTimeout(() => { _accessToken = null; }, expiresIn - 60000);
 
