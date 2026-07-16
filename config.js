@@ -6,7 +6,7 @@
 const CONFIG = {
   // ── Google Identity / Sheets ──────────────────────────────
   CLIENT_ID: '497936592966-ktr29sdnhts41d3risg4pai84s3m15ig.apps.googleusercontent.com',
-  SHEET_ID:  'https://docs.google.com/spreadsheets/d/1Zfm6RO0-Ax1LmrJFGJaatzCZh11mcbNKEHf8fzR_2Ww/edit?gid=518120931#gid=518120931',
+  SHEET_ID:  '1Zfm6RO0-Ax1LmrJFGJaatzCZh11mcbNKEHf8fzR_2Ww',
   API_KEY:   'AIzaSyDFKjU7qnGAlc_6L39n31jkjW8knsiaO8E',
   SCOPES:    'https://www.googleapis.com/auth/spreadsheets',
   DOMAIN:    'eng.rizvi.edu.in',
