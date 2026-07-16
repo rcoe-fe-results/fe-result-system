@@ -11,7 +11,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 
 <!-- Google Identity Services -->
-<script src="https://accounts.google.com/gsi/client"></script>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 
 <style>
 /* ─── Design tokens ─────────────────────────────────────── */
@@ -84,6 +84,14 @@ a { color:var(--brand); text-decoration:none; }
 .login-card h1 { font-size:20px; font-weight:700; color:var(--ink); margin-bottom:4px; }
 .login-card p  { color:var(--ink-3); font-size:13px; margin-bottom:28px; line-height:1.5; }
 .login-note    { margin-top:20px; font-size:12px; color:var(--ink-4); }
+.btn-google {
+  display:inline-flex; align-items:center; gap:10px;
+  padding:10px 20px; border-radius:20px; border:1px solid var(--border-2);
+  background:var(--surface); color:var(--ink); font-size:14px; font-weight:500;
+  font-family:inherit; cursor:pointer; transition:box-shadow .15s, background .15s;
+  box-shadow: 0 1px 3px rgba(0,0,0,.08);
+}
+.btn-google:hover { box-shadow:0 2px 8px rgba(0,0,0,.15); background:#FAFAFA; }
 
 /* ─── Loading Screen ────────────────────────────────────── */
 #screen-loading {
@@ -792,7 +800,6 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
 </div>
 
 <!-- ─── Scripts ─────────────────────────────────────────── -->
-<script src="https://accounts.google.com/gsi/client"></script>
 <script src="config.js"></script>
 <script src="auth.js"></script>
 <script src="ui-utils.js"></script>
