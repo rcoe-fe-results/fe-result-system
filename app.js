@@ -142,14 +142,21 @@ function _beEnableBranch() {
 
 function _beOnBranchChange() {
   bulkState.branch = document.getElementById('be-branch').value;
+  bulkState.division = null;
   const divs = State.getDivisions(bulkState.branch);
-  UI.buildSelect('be-division', divs, '— all divisions —');
+  const multiDiv = divs.length > 1;
+  // When multiple divisions exist, add an explicit "All Divisions" option
+  // so the user consciously chooses instead of accidentally loading everyone
+  const placeholder = multiDiv ? '— select division —' : '— all divisions —';
+  const options = multiDiv ? ['All', ...divs] : divs;
+  UI.buildSelect('be-division', options, placeholder);
   document.getElementById('be-division').disabled = false;
   _beEnableAttempt();
 }
 
 function _beOnDivisionChange() {
-  bulkState.division = document.getElementById('be-division').value || null;
+  const val = document.getElementById('be-division').value;
+  bulkState.division = (val === 'All') ? null : (val || null);
 }
 
 function _beEnableAttempt() {
@@ -164,9 +171,16 @@ function _beOnAttemptChange() {
 
 function _beLoadGrid() {
   const { session, semester, branch, division, attemptType } = bulkState;
-  if (!session || !branch || !attemptType) {
-    UI.toast('Select session, branch, and attempt type first.', 'error'); return;
-  }
+const divs = State.getDivisions(bulkState.branch || '');
+const requireDivChoice = divs.length > 1;
+const divEl = document.getElementById('be-division');
+if (!session || !branch || !attemptType) {
+  UI.toast('Select session, branch, and attempt type first.', 'error'); return;
+}
+if (requireDivChoice && !divEl.value) {
+  UI.toast('This branch has multiple divisions — select Div A, Div B, or All Divisions.', 'error', 5000);
+  return;
+}
   if (session.semester === 2 && !sessionHasElectives(session)) {
     UI.toast('This Sem II session has no electives configured. Ask an Admin to edit the session.', 'error', 6000);
     return;
