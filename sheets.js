@@ -14,8 +14,15 @@ const Sheets = (() => {
 
   // ── Low-level GET ────────────────────────────────────────
   async function getRange(tab, range) {
-    const url = `${BASE}/${CONFIG.SHEET_ID}/values/${encodeURIComponent(tab + '!' + range)}`;
-    const r = await fetch(url, { headers: await _headers() });
+    const token = Auth.getToken();
+    let url = `${BASE}/${CONFIG.SHEET_ID}/values/${encodeURIComponent(tab + '!' + range)}`;
+    let headers = {};
+    if (token) {
+      headers = { 'Authorization': `Bearer ${token}` };
+    } else {
+      url += `?key=${encodeURIComponent(CONFIG.API_KEY)}`;
+    }
+    const r = await fetch(url, { headers });
     if (!r.ok) throw new Error(`Sheets GET failed: ${r.status}`);
     const d = await r.json();
     return d.values || [];
