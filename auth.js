@@ -56,6 +56,7 @@ const Auth = (() => {
     }
     _user        = null;
     _accessToken = null;
+    google.accounts.id.disableAutoSelect();
     _onAuthChange && _onAuthChange(null);
   }
 
