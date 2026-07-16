@@ -5,9 +5,9 @@
 
 const CONFIG = {
   // ── Google Identity / Sheets ──────────────────────────────
-  CLIENT_ID: 'YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com',
-  SHEET_ID:  'YOUR_GOOGLE_SHEET_ID',
-  API_KEY:   'YOUR_GOOGLE_API_KEY',
+  CLIENT_ID: '497936592966-ktr29sdnhts41d3risg4pai84s3m15ig.apps.googleusercontent.com',
+  SHEET_ID:  'https://docs.google.com/spreadsheets/d/1Zfm6RO0-Ax1LmrJFGJaatzCZh11mcbNKEHf8fzR_2Ww/edit?gid=518120931#gid=518120931',
+  API_KEY:   'AIzaSyDFKjU7qnGAlc_6L39n31jkjW8knsiaO8E',
   SCOPES:    'https://www.googleapis.com/auth/spreadsheets',
   DOMAIN:    'eng.rizvi.edu.in',
 
@@ -21,8 +21,8 @@ const CONFIG = {
 
   // ── Admin emails (hardcoded) ──────────────────────────────
   ADMINS: [
-    'admin@eng.rizvi.edu.in',
-    'hod.fye@eng.rizvi.edu.in',
+    'hod.humanities@eng.rizvi.edu.in',
+    'shiburaj@eng.rizvi.edu.in',
     // add more here
   ],
 };
