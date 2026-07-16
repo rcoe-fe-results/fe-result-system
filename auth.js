@@ -17,6 +17,8 @@ const Auth = (() => {
       client_id: CONFIG.CLIENT_ID,
       scope:     CONFIG.SCOPES,
       callback:  _handleToken,
+      ux_mode:   'redirect',
+      redirect_uri: window.location.origin + window.location.pathname,
     });
 
     // Initialise ID client (for login button / sign-in popup)
