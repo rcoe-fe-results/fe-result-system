@@ -44,8 +44,12 @@ const Auth = (() => {
         </button>`;
 
       document.getElementById('gsi-custom-btn').onclick = () => {
-        // prompt:'select_account' forces the account chooser every time
-        tokenClient.requestAccessToken({ prompt: 'select_account' });
+        // On first visit: show account chooser + consent.
+        // On repeat visits: skip consent (user already granted).
+        const hasConsented = localStorage.getItem('gsi_consented');
+        tokenClient.requestAccessToken({
+          prompt: hasConsented ? '' : 'select_account consent',
+        });
       };
     }
   }
@@ -56,6 +60,7 @@ const Auth = (() => {
     }
     _user        = null;
     _accessToken = null;
+    localStorage.removeItem('gsi_consented');
     google.accounts.id.disableAutoSelect();
     _onAuthChange && _onAuthChange(null);
   }
@@ -104,6 +109,9 @@ const Auth = (() => {
         picture: info.picture,
         role:    CONFIG.ADMINS.includes(info.email) ? 'admin' : 'faculty',
       };
+
+      // Mark that this browser has completed consent — skip it on future logins
+      localStorage.setItem('gsi_consented', '1');
 
       // Auto-revoke before expiry
       const expiresIn = (tokenResponse.expires_in || 3600) * 1000;
