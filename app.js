@@ -44,7 +44,6 @@ function _buildNav(user) {
     `;
   }
 
-  // Show admin-only tabs
   document.querySelectorAll('[data-admin-only]').forEach(el => {
     el.style.display = Auth.isAdmin() ? '' : 'none';
   });
@@ -89,7 +88,7 @@ function _bindModalClose() {
 let bulkState = {
   session: null, semester: null, branch: null, division: null,
   attemptType: null, subjects: [], students: [],
-  activeComps: new Set(['IAT','ESE','TW','Oral']), // columns selected to enter
+  activeComps: new Set(['IAT','ESE','TW','Oral']),
   sortBy: 'default',
 };
 
@@ -140,13 +139,12 @@ function _beEnableBranch() {
   UI.buildSelect('be-branch', BRANCHES, '— select branch —');
 }
 
+// FIX 2: Division — show explicit options when multiple divisions exist
 function _beOnBranchChange() {
   bulkState.branch = document.getElementById('be-branch').value;
   bulkState.division = null;
   const divs = State.getDivisions(bulkState.branch);
   const multiDiv = divs.length > 1;
-  // When multiple divisions exist, add an explicit "All Divisions" option
-  // so the user consciously chooses instead of accidentally loading everyone
   const placeholder = multiDiv ? '— select division —' : '— all divisions —';
   const options = multiDiv ? ['All', ...divs] : divs;
   UI.buildSelect('be-division', options, placeholder);
@@ -171,16 +169,19 @@ function _beOnAttemptChange() {
 
 function _beLoadGrid() {
   const { session, semester, branch, division, attemptType } = bulkState;
-const divs = State.getDivisions(bulkState.branch || '');
-const requireDivChoice = divs.length > 1;
-const divEl = document.getElementById('be-division');
-if (!session || !branch || !attemptType) {
-  UI.toast('Select session, branch, and attempt type first.', 'error'); return;
-}
-if (requireDivChoice && !divEl.value) {
-  UI.toast('This branch has multiple divisions — select Div A, Div B, or All Divisions.', 'error', 5000);
-  return;
-}
+
+  // FIX 2: Require division choice when multiple divisions exist
+  const divs = State.getDivisions(bulkState.branch || '');
+  const requireDivChoice = divs.length > 1;
+  const divEl = document.getElementById('be-division');
+
+  if (!session || !branch || !attemptType) {
+    UI.toast('Select session, branch, and attempt type first.', 'error'); return;
+  }
+  if (requireDivChoice && !divEl.value) {
+    UI.toast('This branch has multiple divisions — select Div A, Div B, or All Divisions.', 'error', 5000);
+    return;
+  }
   if (session.semester === 2 && !sessionHasElectives(session)) {
     UI.toast('This Sem II session has no electives configured. Ask an Admin to edit the session.', 'error', 6000);
     return;
@@ -209,7 +210,7 @@ if (requireDivChoice && !divEl.value) {
 
   bulkState.students = students;
   bulkState.sortBy = 'default';
-  bulkState.activeComps = new Set(['IAT','ESE','TW','Oral']); // reset to all on fresh load
+  bulkState.activeComps = new Set(['IAT','ESE','TW','Oral']);
 
   _beRenderToolbar();
   _beRenderGrid();
@@ -221,7 +222,6 @@ function _beRenderToolbar() {
   const toolbar = document.getElementById('be-toolbar');
   toolbar.classList.remove('hidden');
 
-  // Sort control
   const sortEl = document.getElementById('be-sort');
   sortEl.value = bulkState.sortBy;
   sortEl.onchange = () => {
@@ -230,7 +230,6 @@ function _beRenderToolbar() {
     _beRenderGrid();
   };
 
-  // Column picker — figure out which comps actually appear in subjects
   const allComps = ['IAT','ESE','TW','Oral'];
   const presentComps = new Set();
   for (const subj of bulkState.subjects) {
@@ -256,7 +255,7 @@ function _beRenderToolbar() {
 
 function _beSortStudents() {
   const by = bulkState.sortBy;
-  if (by === 'default') return; // keep original order
+  if (by === 'default') return;
   bulkState.students = [...bulkState.students].sort((a, b) => {
     if (by === 'name')  return a.name.localeCompare(b.name);
     if (by === 'uin')   return a.uin.localeCompare(b.uin);
@@ -271,11 +270,9 @@ function _beRenderGrid() {
   const { subjects, students, attemptType, activeComps } = bulkState;
   const container = document.getElementById('be-grid-area');
 
-  // Which comps to actually render (intersection of subject comps + selected)
   const getVisibleComps = (subj) =>
     Object.keys(subj.marks).filter(c => activeComps.size === 0 || activeComps.has(c));
 
-  // Count total visible columns
   const totalVisibleCols = subjects.reduce((n, s) => n + getVisibleComps(s).length, 0);
 
   if (totalVisibleCols === 0) {
@@ -295,7 +292,7 @@ function _beRenderGrid() {
   </div>
   <div class="grid-scroll-outer">
   <div class="grid-scroll-mirror" id="be-mirror"><div class="grid-scroll-mirror-inner" id="be-mirror-inner"></div></div>
-  <div class="grid-scroll" id="be-scroll">
+  <div class="grid-scroll-wrapper" id="be-scroll"><div class="grid-scroll">
   <table class="entry-grid" id="entry-table">
     <thead>
       <tr>
@@ -364,31 +361,28 @@ function _beRenderGrid() {
     html += `</tr>`;
   }
 
-  html += `</tbody></table></div></div>`;
+  html += `</tbody></table></div></div></div>`;
   container.innerHTML = html;
 
-  // Bind input events
   container.querySelectorAll('.mark-input').forEach(input => {
     input.addEventListener('input', _beOnCellInput);
     input.addEventListener('keydown', _beOnCellKeydown);
   });
 
-  // Sync mirror scrollbar width + scroll
   _setupMirrorScroll();
 }
 
 function _setupMirrorScroll() {
-  const scroll  = document.getElementById('be-scroll');
+  const scroll  = document.getElementById('be-scroll');   // outer wrapper
   const mirror  = document.getElementById('be-mirror');
   const inner   = document.getElementById('be-mirror-inner');
   if (!scroll || !mirror || !inner) return;
 
-  // Set inner width to match scrollable content
+  // Match inner width to the actual scrollable table inside the wrapper
   const syncWidth = () => { inner.style.width = scroll.scrollWidth + 'px'; };
   syncWidth();
   new ResizeObserver(syncWidth).observe(scroll);
 
-  // Sync scroll positions bidirectionally
   let syncing = false;
   mirror.addEventListener('scroll', () => {
     if (syncing) return; syncing = true;
@@ -411,7 +405,7 @@ function _beOnCellInput(e) {
   input.classList.remove('cell-grace','cell-absent','cell-error','cell-ok','cell-over-max');
   input.title = '';
 
-  if (!raw) return; // empty = no highlight (partial entry allowed)
+  if (!raw) return;
   if (!parsed.valid)          { input.classList.add('cell-error'); input.title = 'Invalid value'; return; }
   if (parsed.absent)          { input.classList.add('cell-absent'); return; }
   if (parsed.grace)           { input.classList.add('cell-grace'); return; }
@@ -446,22 +440,19 @@ function _beOnCellKeydown(e) {
 async function _beSubmit() {
   const { session, students, attemptType } = bulkState;
 
-  // Block on over-max errors (invalid values are also blocked)
   const errorInputs = [...document.querySelectorAll('#entry-table .mark-input.cell-error, #entry-table .mark-input.cell-over-max')];
   if (errorInputs.length > 0) {
     errorInputs[0].focus();
-    UI.toast(`Fix ${errorInputs.length} invalid cell(s) before submitting. Red = invalid, orange = over max.`, 'error', 5000);
+    UI.toast(`Fix ${errorInputs.length} invalid cell(s) before submitting.`, 'error', 5000);
     return;
   }
 
-  // Collect only inputs that have a value (partial submit — empty = skip)
   const inputs = [...document.querySelectorAll('#entry-table .mark-input:not([disabled])')].filter(i => i.value.trim() !== '');
 
   if (inputs.length === 0) {
     UI.toast('No marks entered yet.', 'info'); return;
   }
 
-  // Build entries — only subjects where at least one comp was filled
   const entriesByStudentSubject = {};
   for (const input of inputs) {
     const { uin, code, comp } = input.dataset;
@@ -527,7 +518,6 @@ function initSingleEntry() {
     });
   }, 250));
 
-  // Session selectors
   const sessions = State.getSessions().filter(s => s.status === 'Active');
   UI.buildSelect('se-session', sessions, '— select session —', 'id', 'name');
   document.getElementById('se-session').onchange = () => {
@@ -654,7 +644,6 @@ function initProgress() {
     let students;
     const ql = q.toLowerCase();
     if (ql === 'reval') {
-      // Students with at least one REVAL row
       const revalUINs = new Set(State.ledger.filter(r => r.attemptType === 'Reval').map(r => r.uin));
       students = State.getStudents().filter(s => revalUINs.has(s.uin));
     } else if (ql === 'kt' || ql === 'failed' || ql === 'fail') {
@@ -677,34 +666,80 @@ function initProgress() {
   }, 250));
 }
 
+// ── Mark outcome tag (per-component) ─────────────────────────
+function _pvMarkTag(markStr, maxMark) {
+  if (!markStr || markStr === '—') return '<span class="pv-tag pv-tag-pending">—</span>';
+  if (markStr === 'AB') return '<span class="pv-tag pv-tag-absent">Absent</span>';
+
+  const val = parseFloat(markStr.replace('*',''));
+  const threshold = maxMark * 0.4; // 40% rule
+  const isGrace = markStr.includes('*');
+
+  if (isNaN(val)) return `<span class="pv-tag pv-tag-pending">${UI.esc(markStr)}</span>`;
+
+  if (val >= threshold || isGrace) {
+    return `<span class="pv-tag pv-tag-success">✓</span>`;
+  } else {
+    return `<span class="pv-tag pv-tag-fail">✗</span>`;
+  }
+}
+
 function _pvShowStudent(uin) {
-  const student  = State.getStudent(uin);
-  const ledger   = State.getLedgerForStudent(uin);
+  const student = State.getStudent(uin);
+  const ledger  = State.getLedgerForStudent(uin);
   document.getElementById('pv-results').innerHTML = '';
   document.getElementById('pv-search').value = student.name;
 
-  document.getElementById('pv-student-info').innerHTML = `
-    <div class="student-card">
-      <div class="sc-name">${UI.esc(student.name)}</div>
-      <div class="sc-meta">UIN: ${UI.esc(student.uin)} · PRN: ${UI.esc(student.prn || '—')} · ${UI.esc(student.branch)} · Div ${UI.esc(student.division)} · Batch ${UI.esc(student.batchYear)}</div>
+  // Build session map to get session object for each ledger group
+  const sessionMap = {};
+  State.getSessions().forEach(s => { sessionMap[s.id] = s; });
+
+  // Group by session
+  const bySession = {};
+  for (const row of ledger) {
+    const key = row.examSession + '|' + row.semester;
+    if (!bySession[key]) bySession[key] = { sessionId: row.examSession, sessionName: row.examSession, semester: row.semester, rows: [] };
+    // Try to resolve session name from session master
+    const sess = sessionMap[row.examSession];
+    if (sess) bySession[key].sessionName = sess.name;
+    bySession[key].rows.push(row);
+  }
+
+  // Student info card — with overall status badge per session computed below
+  // We'll build per-session status badges inline in the timeline
+
+  let infoHTML = `
+    <div class="student-card" style="display:flex; align-items:center; gap:16px; flex-wrap:wrap;">
+      <div>
+        <div class="sc-name">${UI.esc(student.name)}</div>
+        <div class="sc-meta">UIN: ${UI.esc(student.uin)} · PRN: ${UI.esc(student.prn || '—')} · ${UI.esc(student.branch)} · Div ${UI.esc(student.division)} · Batch ${UI.esc(student.batchYear)}</div>
+      </div>
     </div>`;
+  document.getElementById('pv-student-info').innerHTML = infoHTML;
 
   if (ledger.length === 0) {
     document.getElementById('pv-timeline').innerHTML = '<div class="empty-state">No entries found for this student.</div>';
     return;
   }
 
-  // Group by session → semester
-  const bySession = {};
-  for (const row of ledger) {
-    const key = row.examSession + '|' + row.semester;
-    if (!bySession[key]) bySession[key] = { sessionName: row.examSession, semester: row.semester, rows: [] };
-    bySession[key].rows.push(row);
+  // Component max marks lookup (from subject config via ledger type+code)
+  function getCompMax(subjectCode, comp) {
+    const allSubjects = [...SEM1_SUBJECTS];
+    // Try to find in Sem1
+    let subj = allSubjects.find(s => s.code === subjectCode);
+    if (!subj) {
+      // Try Sem2 fixed
+      subj = getSem2Subjects(student.branch, null).find(s => s.code === subjectCode);
+    }
+    if (!subj) return null;
+    return subj.marks[comp] || null;
   }
 
-  // Compute credits per session
   let html = '';
+
   for (const [, group] of Object.entries(bySession)) {
+    const sess = sessionMap[group.sessionId];
+
     // Latest row per subject
     const latestBySubject = {};
     for (const r of group.rows) {
@@ -715,11 +750,25 @@ function _pvShowStudent(uin) {
     const totalCredits  = Object.values(latestBySubject).reduce((a,r) => a + (Number(r.creditsEarned)||0), 0);
     const totalAssigned = Object.values(latestBySubject).reduce((a,r) => a + (Number(r.creditsAssigned)||0), 0);
 
+    // Session-level status
+    const sessionStatus = sess ? State.getSessionStatus(uin, sess) : 'pending';
+    const showPerComp   = sessionStatus === 'multi-attempt';
+
+    // Status badge for session header
+    let sessionBadge = '';
+    if (sessionStatus === 'successful') {
+      sessionBadge = `<span class="pv-session-badge pv-session-success">🎉 Successful — First Attempt</span>`;
+    } else if (sessionStatus === 'pending') {
+      sessionBadge = `<span class="pv-session-badge pv-session-pending">⏳ Pending</span>`;
+    }
+    // multi-attempt: no session badge, show per-component tags instead
+
     html += `
     <div class="session-block">
       <div class="session-header">
         <span class="session-name">${UI.esc(group.sessionName)}</span>
         <span class="session-sem">Sem ${UI.esc(group.semester)}</span>
+        ${sessionBadge}
         <span class="credit-pill">${totalCredits} / ${totalAssigned} credits</span>
       </div>
       <table class="progress-table">
@@ -730,18 +779,34 @@ function _pvShowStudent(uin) {
         </tr></thead>
         <tbody>`;
 
-    // Show all rows (timeline), latest highlighted
     for (const r of group.rows) {
       const isLatest = latestBySubject[r.subjectCode]?.entryId === r.entryId;
+
+      // Build per-component cells with tags if multi-attempt
+      const comps = ['IAT','ESE','TW','Oral'];
+      const compFields = { IAT: r.iatMarks, ESE: r.eseMarks, TW: r.twMarks, Oral: r.oralMarks };
+      const compMaxKeys = { IAT: 'iatMarks', ESE: 'eseMarks', TW: 'twMarks', Oral: 'oralMarks' };
+
+      // Try to get max marks for this subject
+      let subjConfig = SEM1_SUBJECTS.find(s => s.code === r.subjectCode);
+      if (!subjConfig) subjConfig = getSem2Subjects(student.branch, null).find(s => s.code === r.subjectCode);
+
+      const cells = comps.map(comp => {
+        const val = compFields[comp] || '—';
+        if (!showPerComp || !isLatest) {
+          return `<td>${UI.esc(val)}</td>`;
+        }
+        const maxMark = subjConfig?.marks?.[comp];
+        if (!maxMark) return `<td>${UI.esc(val)}</td>`; // comp not applicable for this subject
+        return `<td class="pv-comp-cell">${UI.esc(val)} ${_pvMarkTag(val === '—' ? null : val, maxMark)}</td>`;
+      }).join('');
+
       html += `
         <tr class="${isLatest ? '' : 'row-superseded'}" title="${isLatest ? 'Latest entry' : 'Superseded by later entry'}">
           <td><span class="subj-code-small">${UI.esc(r.subjectCode)}</span> ${UI.esc(r.subjectName)}</td>
           <td>${UI.esc(r.subjectType)}</td>
           <td>${UI.attemptBadge(r.attemptType)}</td>
-          <td>${UI.esc(r.iatMarks  || '—')}</td>
-          <td>${UI.esc(r.eseMarks  || '—')}</td>
-          <td>${UI.esc(r.twMarks   || '—')}</td>
-          <td>${UI.esc(r.oralMarks || '—')}</td>
+          ${cells}
           <td>${UI.esc(r.totalMarks|| '—')}</td>
           <td>${UI.resultBadge(r.result)}</td>
           <td class="${r.creditsEarned > 0 ? 'credit-earned' : 'credit-zero'}">${UI.esc(r.creditsEarned)}</td>
@@ -759,59 +824,234 @@ function _pvShowStudent(uin) {
 // ═══════════════════════════════════════════════════════════════
 function initReports() {
   const sessions = State.getSessions();
-  UI.buildSelect('rpt-session', sessions, '— select session —', 'id', 'name');
+  UI.buildSelect('rpt-session', sessions, '— all sessions —', 'id', 'name');
 
-  document.getElementById('rpt-result-summary').onclick   = _rptResultSummary;
-  document.getElementById('rpt-reval-impact').onclick     = _rptRevalImpact;
-  document.getElementById('rpt-toppers').onclick          = _rptToppers;
-  document.getElementById('rpt-credit-filter').onclick    = _rptCreditFilter;
-  document.getElementById('rpt-kt-filter').onclick        = _rptKTFilter;
-  document.getElementById('rpt-my-entries').onclick       = _rptMyEntries;
+  // Populate branch and batchYear dropdowns
+  UI.buildSelect('rpt-branch', BRANCHES, '— all branches —');
+  const years = State.getBatchYears();
+  UI.buildSelect('rpt-batch', years, '— all years —');
+
+  // Populate subject dropdown from ledger
+  const subjects = State.getAllSubjects();
+  const subjEl = document.getElementById('rpt-subject');
+  subjEl.innerHTML = '<option value="">— all subjects —</option>' +
+    subjects.map(s => `<option value="${UI.esc(s.code)}">${UI.esc(s.code)} — ${UI.esc(s.name)}</option>`).join('');
+
+  // Wire live result summary
+  ['rpt-session','rpt-branch','rpt-batch','rpt-subject','rpt-component'].forEach(id => {
+    document.getElementById(id)?.addEventListener('change', _rptLiveResultSummary);
+  });
+  _rptLiveResultSummary(); // initial render
+
+  // Reval filters
+  UI.buildSelect('rpt-reval-branch', BRANCHES, '— all branches —');
+  UI.buildSelect('rpt-reval-subject', [{ code:'', name:'All subjects' }, ...subjects], '— all subjects —', 'code', 'name');
+  ['rpt-reval-session','rpt-reval-branch','rpt-reval-subject'].forEach(id => {
+    document.getElementById(id)?.addEventListener('change', _rptLiveRevalImpact);
+  });
+  UI.buildSelect('rpt-reval-session', sessions, '— all sessions —', 'id', 'name');
+  _rptLiveRevalImpact();
+
+  // Topper filters
+  UI.buildSelect('rpt-topper-branch', BRANCHES, '— all branches —');
+  UI.buildSelect('rpt-topper-subject', [{ code:'', name:'All subjects' }, ...subjects], '— all subjects —', 'code', 'name');
+  UI.buildSelect('rpt-topper-session', sessions, '— select session —', 'id', 'name');
+  document.getElementById('rpt-topper-mode').onchange = _rptToggleTopperMode;
+  _rptToggleTopperMode();
+  ['rpt-topper-session','rpt-topper-branch','rpt-topper-mode','rpt-topper-subject','rpt-topper-n'].forEach(id => {
+    document.getElementById(id)?.addEventListener('change', _rptLiveToppers);
+    document.getElementById(id)?.addEventListener('input', _rptLiveToppers);
+  });
+
+  // Populate per-card session selects
+  UI.buildSelect('rpt-credit-session', sessions, '— select session —', 'id', 'name');
+  UI.buildSelect('rpt-my-session',     sessions, '— all sessions —',   'id', 'name');
+
+  // Export buttons
+  document.getElementById('rpt-result-summary-csv').onclick  = _rptExportResultSummary;
+  document.getElementById('rpt-reval-impact-csv').onclick    = _rptExportRevalImpact;
+  document.getElementById('rpt-toppers-csv').onclick         = _rptExportToppers;
+  document.getElementById('rpt-credit-filter').onclick       = _rptCreditFilter;
+  document.getElementById('rpt-kt-filter').onclick           = _rptKTFilter;
+  document.getElementById('rpt-my-entries').onclick          = _rptMyEntries;
 }
 
-function _rptSession() {
-  const id = document.getElementById('rpt-session').value;
-  if (!id) { UI.toast('Select a session.', 'error'); return null; }
-  return State.getSession(id);
+// ── Result Summary (live) ─────────────────────────────────────
+function _rptGetSummaryFilters() {
+  return {
+    sessionId:   document.getElementById('rpt-session').value   || null,
+    branch:      document.getElementById('rpt-branch').value    || null,
+    batchYear:   document.getElementById('rpt-batch').value     || null,
+    subjectCode: document.getElementById('rpt-subject').value   || null,
+    component:   document.getElementById('rpt-component').value || null,
+  };
 }
 
-function _rptResultSummary() {
-  const session = _rptSession(); if (!session) return;
-  const data = State.reportResultSummary(session.id);
-  UI.exportCSV(`ResultSummary_${session.name}`,
-    ['Subject Code','Subject Name','Total','Pass','Fail','AB','Pass %'],
-    data.map(d => [d.code, d.name, d.total, d.pass, d.fail, d.ab, d.passPct + '%'])
+function _rptLiveResultSummary() {
+  const filters = _rptGetSummaryFilters();
+  const data    = State.reportResultSummary(filters);
+  const comp    = filters.component;
+  const tbody   = document.getElementById('rpt-summary-tbody');
+  if (!tbody) return;
+
+  if (data.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--ink-4);padding:12px;">No data for this filter.</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = data.map(d => {
+    const avgCell = comp === 'IAT'  ? d.avgIAT
+                  : comp === 'ESE'  ? d.avgESE
+                  : comp === 'TW'   ? d.avgTW
+                  : comp === 'Oral' ? d.avgOral
+                  : '—';
+    return `<tr>
+      <td><span class="subj-code-small">${UI.esc(d.code)}</span></td>
+      <td>${UI.esc(d.name)}</td>
+      <td>${d.total}</td>
+      <td style="color:var(--pass);font-weight:600;">${d.pass}</td>
+      <td style="color:var(--fail);font-weight:600;">${d.fail}</td>
+      <td style="color:var(--ab);font-weight:600;">${d.ab}</td>
+      <td><span class="badge ${d.passPct >= 60 ? 'badge-pass' : d.passPct >= 40 ? 'badge-pending' : 'badge-fail'}">${d.passPct}%</span></td>
+      <td>${comp ? avgCell : `IAT:${d.avgIAT} ESE:${d.avgESE} TW:${d.avgTW}`}</td>
+    </tr>`;
+  }).join('');
+}
+
+function _rptExportResultSummary() {
+  const filters = _rptGetSummaryFilters();
+  const data    = State.reportResultSummary(filters);
+  UI.exportCSV(`ResultSummary`,
+    ['Subject Code','Subject Name','Total','Pass','Fail','AB','Pass %','Avg IAT','Avg ESE','Avg TW','Avg Oral'],
+    data.map(d => [d.code, d.name, d.total, d.pass, d.fail, d.ab, d.passPct+'%', d.avgIAT, d.avgESE, d.avgTW, d.avgOral])
   );
-  UI.toast(`Exported result summary for ${session.name}.`, 'success');
+  UI.toast('Result summary exported.', 'success');
 }
 
-function _rptRevalImpact() {
-  const session = _rptSession(); if (!session) return;
-  const data = State.reportRevalImpact(session.id);
-  UI.exportCSV(`RevalImpact_${session.name}`,
-    ['UIN','PRN','Name','Branch','Subject Code','Subject Name','Prev Result','New Result','Entry Date'],
-    data.map(d => [d.uin, d.prn, d.name, d.branch, d.subjectCode, d.subjectName, d.prevResult, d.result, d.entryDateTime])
+// ── Reval Impact (live) ───────────────────────────────────────
+function _rptGetRevalFilters() {
+  return {
+    sessionId:   document.getElementById('rpt-reval-session').value  || null,
+    branch:      document.getElementById('rpt-reval-branch').value   || null,
+    subjectCode: document.getElementById('rpt-reval-subject').value  || null,
+  };
+}
+
+function _rptLiveRevalImpact() {
+  const filters = _rptGetRevalFilters();
+  const data    = State.reportRevalImpact(filters);
+  const tbody   = document.getElementById('rpt-reval-tbody');
+  if (!tbody) return;
+
+  if (data.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--ink-4);padding:12px;">No reval changes for this filter.</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = data.map(d => `
+    <tr class="${d.direction === 'worsened' ? 'reval-worsened' : ''}">
+      <td>${UI.esc(d.name)}</td>
+      <td><span class="subj-code-small">${UI.esc(d.uin)}</span></td>
+      <td>${UI.esc(d.branch)}</td>
+      <td><span class="subj-code-small">${UI.esc(d.subjectCode)}</span></td>
+      <td>${UI.resultBadge(d.prevResult)}</td>
+      <td>${UI.resultBadge(d.result)}</td>
+      <td>${d.direction === 'worsened'
+        ? '<span class="badge badge-fail">⚠ Worsened</span>'
+        : '<span class="badge badge-pass">↑ Improved</span>'}</td>
+      <td style="font-size:11px;color:var(--ink-3);">${UI.esc(d.entryDateTime?.slice(0,10)||'')}</td>
+    </tr>`).join('');
+}
+
+function _rptExportRevalImpact() {
+  const filters = _rptGetRevalFilters();
+  const data    = State.reportRevalImpact(filters);
+  UI.exportCSV('RevalImpact',
+    ['UIN','PRN','Name','Branch','Subject Code','Subject Name','Prev Result','New Result','Direction','Entry Date'],
+    data.map(d => [d.uin, d.prn, d.name, d.branch, d.subjectCode, d.subjectName, d.prevResult, d.result, d.direction, d.entryDateTime])
   );
-  UI.toast(`Exported reval impact for ${session.name}.`, 'success');
+  UI.toast('Reval impact exported.', 'success');
 }
 
-function _rptToppers() {
-  const session = _rptSession(); if (!session) return;
-  const n = Number(document.getElementById('rpt-toppers-n').value || 10);
-  const data = State.reportToppers(session.id, n);
-  UI.exportCSV(`Toppers_${session.name}`,
-    ['Rank','UIN','Name','Branch','Credits Earned','Total Marks'],
-    data.map((d,i) => [i+1, d.uin, d.name, d.branch, d.totalCredits, d.totalMarks])
-  );
-  UI.toast(`Exported top ${n} students.`, 'success');
+// ── Toppers (live) ────────────────────────────────────────────
+function _rptToggleTopperMode() {
+  const mode = document.getElementById('rpt-topper-mode').value;
+  document.getElementById('rpt-topper-subject-row').style.display = mode === 'subject' ? '' : 'none';
+  document.getElementById('rpt-topper-n-row').style.display       = mode === 'branch'  ? '' : 'none';
+  _rptLiveToppers();
 }
 
+function _rptLiveToppers() {
+  const sessionId  = document.getElementById('rpt-topper-session').value || null;
+  if (!sessionId) {
+    const tbody = document.getElementById('rpt-toppers-tbody');
+    if (tbody) tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--ink-4);padding:12px;">Select a session.</td></tr>';
+    return;
+  }
+  const mode       = document.getElementById('rpt-topper-mode').value || 'branch';
+  const branch     = document.getElementById('rpt-topper-branch').value || null;
+  const subjectCode= document.getElementById('rpt-topper-subject').value || null;
+  const topN       = Number(document.getElementById('rpt-topper-n').value || 10);
+
+  const data = State.reportToppers({ sessionId, mode, branch, subjectCode, topN });
+  const tbody = document.getElementById('rpt-toppers-tbody');
+  if (!tbody) return;
+
+  if (data.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--ink-4);padding:12px;">No data.</td></tr>';
+    return;
+  }
+
+  if (mode === 'branch') {
+    tbody.innerHTML = data.map(d => `<tr>
+      <td style="font-weight:700;color:var(--brand);">#${d.rank}</td>
+      <td>${UI.esc(d.name)}</td>
+      <td><span class="subj-code-small">${UI.esc(d.uin)}</span></td>
+      <td>${UI.esc(d.branch)}</td>
+      <td style="font-weight:600;">${d.totalMarks}</td>
+      <td>${d.totalCredits}</td>
+    </tr>`).join('');
+  } else {
+    tbody.innerHTML = data.map(d => `<tr>
+      <td style="font-weight:700;color:var(--brand);">#${d.rank}</td>
+      <td>${UI.esc(d.name)}</td>
+      <td><span class="subj-code-small">${UI.esc(d.uin)}</span></td>
+      <td>${UI.esc(d.branch)}</td>
+      <td><span class="subj-code-small">${UI.esc(d.subjectCode)}</span></td>
+      <td style="font-weight:600;">${d.totalMarks}</td>
+    </tr>`).join('');
+  }
+}
+
+function _rptExportToppers() {
+  const sessionId   = document.getElementById('rpt-topper-session').value || null;
+  const mode        = document.getElementById('rpt-topper-mode').value || 'branch';
+  const branch      = document.getElementById('rpt-topper-branch').value || null;
+  const subjectCode = document.getElementById('rpt-topper-subject').value || null;
+  const topN        = Number(document.getElementById('rpt-topper-n').value || 10);
+  const data = State.reportToppers({ sessionId, mode, branch, subjectCode, topN });
+  if (mode === 'branch') {
+    UI.exportCSV('Toppers_Branch',
+      ['Rank','Name','UIN','Branch','Total Marks','Credits Earned'],
+      data.map(d => [d.rank, d.name, d.uin, d.branch, d.totalMarks, d.totalCredits])
+    );
+  } else {
+    UI.exportCSV('Toppers_Subject',
+      ['Rank','Name','UIN','Branch','Subject Code','Total Marks'],
+      data.map(d => [d.rank, d.name, d.uin, d.branch, d.subjectCode, d.totalMarks])
+    );
+  }
+  UI.toast('Toppers exported.', 'success');
+}
+
+// ── Credit / KT / My Entries ──────────────────────────────────
 function _rptCreditFilter() {
-  const session = _rptSession(); if (!session) return;
+  const sessionId = document.getElementById('rpt-credit-session').value;
+  if (!sessionId) { UI.toast('Select a session.', 'error'); return; }
   const x = Number(document.getElementById('rpt-credit-x').value);
   if (!x) { UI.toast('Enter minimum credits.', 'error'); return; }
-  const data = State.reportCreditFilter(x, session.id);
-  UI.exportCSV(`CreditFilter_lt${x}_${session.name}`,
+  const data = State.reportCreditFilter(x, sessionId);
+  UI.exportCSV(`CreditFilter_lt${x}`,
     ['UIN','PRN','Name','Branch','Credits Earned'],
     data.map(d => [d.uin, d.prn, d.name, d.branch, d.credits])
   );
@@ -827,12 +1067,12 @@ function _rptKTFilter() {
     ['PRN','UIN','Name','Branch','Subject Code','Subject Name','Session','Result'],
     data.map(d => [d.prn, d.uin, d.name, d.branch, d.subjectCode, d.subjectName, d.session, d.result])
   );
-  UI.toast(`Exported KT filter results.`, 'success');
+  UI.toast('KT filter exported.', 'success');
 }
 
 function _rptMyEntries() {
   const user = Auth.getUser();
-  const session = document.getElementById('rpt-session').value;
+  const session = document.getElementById('rpt-my-session').value;
   const data = State.getMyEntries(user.email, session || null);
   UI.exportCSV(`MyEntries_${user.email}`,
     LEDGER_COLS,
@@ -851,30 +1091,22 @@ function initAdmin() {
     return;
   }
 
-  // Session management
   document.getElementById('admin-add-session').onclick  = _adminAddSession;
   document.getElementById('admin-lock-session').onclick = _adminLockSession;
 
-  // Show/hide elective dropdowns when semester changes
   const semEl = document.getElementById('admin-session-sem');
   semEl.onchange = _adminToggleElectives;
-  _adminToggleElectives(); // run once on init to set correct initial state
+  _adminToggleElectives();
 
-  // Populate elective dropdowns from config pools
   _buildElectiveSelects();
 
-  // Student upload
   document.getElementById('admin-upload-btn').onclick = _adminUploadStudents;
   document.getElementById('admin-csv-file').onchange  = _adminPreviewCSV;
 
-  // Populate lock session dropdown
   const sessions = State.getSessions();
   UI.buildSelect('admin-session-lock-select', sessions.filter(s => s.status === 'Active'), '— select session to lock —', 'id', 'name');
 
-  // Session list table
   _adminRenderSessionList();
-
-  // Audit log
   _adminRenderAudit();
 }
 
@@ -885,49 +1117,39 @@ function _adminToggleElectives() {
 }
 
 function _buildElectiveSelects() {
-  // Physics Theory
   const pt = document.getElementById('admin-phys-theory');
   if (pt) {
     pt.innerHTML = '<option value="">— select —</option>' +
       ELECTIVE_PHYSICS_THEORY.map(e => `<option value="${UI.esc(e.code)}">${UI.esc(e.code)} — ${UI.esc(e.name)}</option>`).join('');
   }
-  // Physics Lab
   const pl = document.getElementById('admin-phys-lab');
   if (pl) {
     pl.innerHTML = '<option value="">— select —</option>' +
       ELECTIVE_PHYSICS_LAB.map(e => `<option value="${UI.esc(e.code)}">${UI.esc(e.code)} — ${UI.esc(e.name)}</option>`).join('');
   }
-  // Chem Theory
   const ct = document.getElementById('admin-chem-theory');
   if (ct) {
     ct.innerHTML = '<option value="">— select —</option>' +
       ELECTIVE_CHEMISTRY_THEORY.map(e => `<option value="${UI.esc(e.code)}">${UI.esc(e.code)} — ${UI.esc(e.name)}</option>`).join('');
   }
-  // Chem Lab
   const cl = document.getElementById('admin-chem-lab');
   if (cl) {
     cl.innerHTML = '<option value="">— select —</option>' +
       ELECTIVE_CHEMISTRY_LAB.map(e => `<option value="${UI.esc(e.code)}">${UI.esc(e.code)} — ${UI.esc(e.name)}</option>`).join('');
   }
 
-  // Auto-pair: when Physics Theory changes, auto-select the matching lab
   document.getElementById('admin-phys-theory')?.addEventListener('change', e => {
-    const code    = e.target.value;                       // e.g. BSC2021
-    const labCode = code.replace('BSC202', 'BSL201');     // → BSL2011
+    const code    = e.target.value;
+    const labCode = code.replace('BSC202', 'BSL201');
     const labEl   = document.getElementById('admin-phys-lab');
-    if (labEl && labCode && labEl.querySelector(`option[value="${labCode}"]`)) {
-      labEl.value = labCode;
-    }
+    if (labEl && labCode && labEl.querySelector(`option[value="${labCode}"]`)) labEl.value = labCode;
   });
 
-  // Auto-pair: when Chem Theory changes, auto-select the matching lab
   document.getElementById('admin-chem-theory')?.addEventListener('change', e => {
-    const code    = e.target.value;                       // e.g. BSC2031
-    const labCode = code.replace('BSC203', 'BSL202');     // → BSL2021
+    const code    = e.target.value;
+    const labCode = code.replace('BSC203', 'BSL202');
     const labEl   = document.getElementById('admin-chem-lab');
-    if (labEl && labCode && labEl.querySelector(`option[value="${labCode}"]`)) {
-      labEl.value = labCode;
-    }
+    if (labEl && labCode && labEl.querySelector(`option[value="${labCode}"]`)) labEl.value = labCode;
   });
 }
 
@@ -940,7 +1162,6 @@ async function _adminAddSession() {
     UI.toast('Fill in session name, semester, and batch year.', 'error'); return;
   }
 
-  // Collect electives for Sem II
   let electives = {};
   if (semester === '2') {
     electives = {
@@ -955,7 +1176,6 @@ async function _adminAddSession() {
     }
   }
 
-  // Build confirmation message
   let confirmBody = `Create session <strong>${UI.esc(name)}</strong>?<br>
     Semester: <strong>${semester === '1' ? 'I' : 'II'}</strong> &nbsp;·&nbsp; Batch: <strong>${UI.esc(batch)}</strong>`;
 
@@ -980,7 +1200,6 @@ async function _adminAddSession() {
         const s = await State.addSession(name, semester, batch, electives);
         UI.hideSpinner();
         UI.toast(`Session "${s.name}" created.`, 'success');
-        // Clear form
         ['admin-session-name','admin-session-batch'].forEach(id => document.getElementById(id).value = '');
         document.getElementById('admin-session-sem').value = '';
         _adminToggleElectives();
