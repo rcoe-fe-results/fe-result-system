@@ -6,14 +6,16 @@ const State = (() => {
   let students  = [];
   let sessions  = [];
   let ledger    = [];
+  let seats     = [];   // [{ uin, sessionId, seatNumber }]
   let _loaded   = false;
 
   // ── Load all data ─────────────────────────────────────────
   async function loadAll() {
-    [students, sessions, ledger] = await Promise.all([
+    [students, sessions, ledger, seats] = await Promise.all([
       Sheets.getStudents(),
       Sheets.getSessions(),
       Sheets.getLedger(),
+      Sheets.getSeats(),
     ]);
     _loaded = true;
   }
@@ -51,7 +53,7 @@ const State = (() => {
     return sessions.filter(s => s.batchYear === batchYear || s.status === 'Active');
   }
 
-  async function addSession(name, semester, batchYear, electives = {}) {
+  async function addSession(name, semester, batchYear, electives = {}, entryType = 'Preliminary', linkedPrelimSessionId = '') {
     const user = Auth.getUser();
     const sem  = Number(semester);
 
@@ -69,10 +71,12 @@ const State = (() => {
       batchYear,
       status:    'Active',
       createdBy: user.email,
-      physicsTheoryCode: electives.physicsTheoryCode || '',
-      physicsLabCode:    electives.physicsLabCode    || '',
-      chemTheoryCode:    electives.chemTheoryCode    || '',
-      chemLabCode:       electives.chemLabCode       || '',
+      physicsTheoryCode:     electives.physicsTheoryCode    || '',
+      physicsLabCode:        electives.physicsLabCode       || '',
+      chemTheoryCode:        electives.chemTheoryCode       || '',
+      chemLabCode:           electives.chemLabCode          || '',
+      entryType:             entryType || 'Preliminary',
+      linkedPrelimSessionId: linkedPrelimSessionId || '',
     };
     await Sheets.addSession(session);
     sessions.push(session);
@@ -83,6 +87,101 @@ const State = (() => {
     await Sheets.updateSessionStatus(sessionId, 'Locked');
     const s = sessions.find(s => s.id === sessionId);
     if (s) s.status = 'Locked';
+  }
+
+  async function linkPrelimSession(finalSessionId, prelimSessionId) {
+    await Sheets.updateSessionLinkedPrelim(finalSessionId, prelimSessionId);
+    const s = sessions.find(s => s.id === finalSessionId);
+    if (s) s.linkedPrelimSessionId = prelimSessionId;
+  }
+
+  // ── Seat numbers ──────────────────────────────────────────
+  function getSeatNumber(uin, sessionId) {
+    const seat = seats.find(s => s.uin === uin && s.sessionId === sessionId);
+    return seat ? seat.seatNumber : '—';
+  }
+
+  function getSeatsForSession(sessionId) {
+    return seats.filter(s => s.sessionId === sessionId);
+  }
+
+  async function uploadSeats(seatList) {
+    await Sheets.uploadSeats(seatList);
+    seats.push(...seatList);
+  }
+
+  // ── Computed attempt tags (never stored, always computed) ─
+  // Returns a human-readable tag string for a given ledger entry
+  // in the context of all ledger history.
+  //
+  // Tags:
+  //   'Cleared in Regular attempt'
+  //   'Cleared in Regular attempt after Reval'
+  //   'Cleared in KT attempt'
+  //   'Cleared in KT attempt after Reval'
+  //   'Active KT'
+  //   null — not yet cleared / still pending / AB with no prior
+  function computeAttemptTag(uin, subjectCode, sessionId) {
+    // All ledger rows for this student+subject, sorted chronologically
+    const allRows = ledger
+      .filter(r => r.uin === uin && r.subjectCode === subjectCode)
+      .sort((a, b) => a.entryDateTime.localeCompare(b.entryDateTime));
+
+    if (allRows.length === 0) return null;
+
+    // Latest row for this specific session
+    const sessionRows = allRows.filter(r => r.examSession === sessionId);
+    if (sessionRows.length === 0) return null;
+    const latest = sessionRows[sessionRows.length - 1];
+
+    // Active KT = latest result overall is Fail or AB
+    const overallLatest = allRows[allRows.length - 1];
+    if (overallLatest.result === 'Fail' || overallLatest.result === 'AB') {
+      return 'Active KT';
+    }
+
+    if (latest.result !== 'Pass') return null;
+
+    // Is this a KT attempt? — student had any prior Fail/AB for this subject in EARLIER session
+    const session = getSession(sessionId);
+    const priorFail = allRows.some(r => {
+      if (r.examSession === sessionId) return false;
+      const rSession = getSession(r.examSession);
+      // Earlier in time = session created before current (compare session IDs as timestamps via prefix)
+      // We compare entryDateTime as a proxy — any Fail/AB before the earliest entry in this session
+      return (r.result === 'Fail' || r.result === 'AB') &&
+             r.entryDateTime < (sessionRows[0]?.entryDateTime || '');
+    });
+
+    // Is this a Reval? — compare ESE between Preliminary and Final Gazette
+    const isReval = _detectReval(uin, subjectCode, sessionId);
+
+    if (priorFail) {
+      return isReval ? 'Cleared in KT attempt after Reval' : 'Cleared in KT attempt';
+    }
+    return isReval ? 'Cleared in Regular attempt after Reval' : 'Cleared in Regular attempt';
+  }
+
+  // Detect reval: for a Final Gazette session, check if ESE differs from linked Preliminary session
+  function _detectReval(uin, subjectCode, sessionId) {
+    const session = getSession(sessionId);
+    if (!session || session.entryType !== 'Final Gazette' || !session.linkedPrelimSessionId) {
+      return false;
+    }
+    // Get ESE from Final Gazette
+    const finalRows = ledger.filter(r =>
+      r.uin === uin && r.subjectCode === subjectCode && r.examSession === sessionId
+    ).sort((a, b) => b.entryDateTime.localeCompare(a.entryDateTime));
+    const finalESE = finalRows[0]?.eseMarks;
+
+    // Get ESE from Preliminary
+    const prelimRows = ledger.filter(r =>
+      r.uin === uin && r.subjectCode === subjectCode && r.examSession === session.linkedPrelimSessionId
+    ).sort((a, b) => b.entryDateTime.localeCompare(a.entryDateTime));
+    const prelimESE = prelimRows[0]?.eseMarks;
+
+    if (finalESE === undefined || prelimESE === undefined) return false;
+    return String(finalESE).trim() !== String(prelimESE).trim();
   }
 
   // ── KT eligibility ────────────────────────────────────────
@@ -199,11 +298,8 @@ const State = (() => {
     const enteredCount = Object.keys(latestBySubject).length;
     if (expectedCount && enteredCount < expectedCount) return 'pending';
 
-    // Check if any row (not just latest) has KT, AB, or Reval attempt
-    const hasMultiAttempt = rows.some(r =>
-      r.attemptType === 'KT' || r.attemptType === 'Reval' ||
-      r.result === 'AB' || r.result === 'Fail'
-    );
+    // Check if any row (not just latest) has a prior Fail/AB
+    const hasMultiAttempt = rows.some(r => r.result === 'Fail' || r.result === 'AB');
 
     if (hasMultiAttempt) return 'multi-attempt';
 
@@ -213,10 +309,15 @@ const State = (() => {
   }
 
   // ── Submit marks ──────────────────────────────────────────
+  // For Preliminary sessions: all components editable, partial entry allowed.
+  // For Final Gazette sessions: only ESE is submitted. If ESE is empty → skip.
+  //   IAT/TW/Oral are pulled from the linked Preliminary session for result computation only.
+  // attemptType is no longer stored — it is computed dynamically at query time.
   async function submitEntries(session, entries) {
-    const user    = Auth.getUser();
-    const now     = new Date().toISOString();
-    const toAppend = [];
+    const user      = Auth.getUser();
+    const now       = new Date().toISOString();
+    const toAppend  = [];
+    const isFinal   = session.entryType === 'Final Gazette';
 
     for (const entry of entries) {
       const student = getStudent(entry.uin);
@@ -227,44 +328,70 @@ const State = (() => {
       const subject  = subjects.find(s => s.code === entry.subjectCode);
       if (!subject) continue;
 
-      if (entry.attemptType === 'Reval') {
-        const prev = getLatestEntryForSubject(entry.uin, entry.subjectCode, session.id);
-        const newESE = entry.marks.ESE?.value;
-        const oldESE = prev ? Number(prev.eseMarks) : null;
-        if (prev && newESE === oldESE) continue;
+      // Partial entry: skip rows where no component has a value
+      const hasAnyMark = Object.values(entry.marks).some(m => m && m.value !== null);
+      if (!hasAnyMark) continue;
+
+      let marksToStore = { ...entry.marks };
+
+      if (isFinal) {
+        // Final Gazette: only ESE is submitted/stored.
+        // Skip if ESE is empty.
+        const newESE = entry.marks.ESE;
+        if (!newESE || newESE.value === null) continue;
+
+        // For result computation, supplement with IAT/TW/Oral from linked Preliminary
+        if (session.linkedPrelimSessionId) {
+          const prelimEntry = getLatestEntryForSubject(entry.uin, entry.subjectCode, session.linkedPrelimSessionId);
+          if (prelimEntry) {
+            if (!marksToStore.IAT  && prelimEntry.iatMarks)  marksToStore.IAT  = parseMarkValue(prelimEntry.iatMarks);
+            if (!marksToStore.TW   && prelimEntry.twMarks)   marksToStore.TW   = parseMarkValue(prelimEntry.twMarks);
+            if (!marksToStore.Oral && prelimEntry.oralMarks) marksToStore.Oral = parseMarkValue(prelimEntry.oralMarks);
+          }
+        }
+
+        // Only store ESE; clear other components so ledger only has ESE for Final Gazette rows
+        marksToStore = {
+          ESE:  entry.marks.ESE,
+          IAT:  null,
+          TW:   null,
+          Oral: null,
+        };
       }
 
-      const allComps = Object.keys(subject.marks);
-      const hasAllComps = allComps.every(c => entry.marks[c] && entry.marks[c].value !== null);
-      const result = hasAllComps ? computeResult(subject, entry.marks) : { total: null, result: '', creditsEarned: 0 };
-      const grade  = '—';
+      const allComps   = Object.keys(subject.marks);
+      // For result computation, combine stored marks with pre-filled prelim marks
+      const computeMarks = isFinal ? { ...entry.marks } : marksToStore;
+      const hasAllComps  = allComps.every(c => computeMarks[c] && computeMarks[c].value !== null);
+      const result       = hasAllComps ? computeResult(subject, computeMarks) : { total: null, result: '', creditsEarned: 0 };
+      const grade        = '—';
 
       const row = {
-        entryId:        Sheets.newEntryId(),
-        uin:            student.uin,
-        prn:            student.prn,
-        name:           student.name,
-        branch:         student.branch,
-        division:       student.division,
-        batchYear:      student.batchYear,
-        examSession:    session.id,
-        semester:       String(semester),
-        subjectCode:    subject.code,
-        subjectName:    subject.name,
-        subjectType:    subject.type,
-        creditsAssigned:String(subject.credits),
-        attemptType:    entry.attemptType,
-        iatMarks:       _markStr(entry.marks.IAT),
-        eseMarks:       _markStr(entry.marks.ESE),
-        twMarks:        _markStr(entry.marks.TW),
-        oralMarks:      _markStr(entry.marks.Oral),
-        totalMarks:     result.total !== null ? String(result.total) : '',
+        entryId:         Sheets.newEntryId(),
+        uin:             student.uin,
+        prn:             student.prn,
+        name:            student.name,
+        branch:          student.branch,
+        division:        student.division,
+        batchYear:       student.batchYear,
+        examSession:     session.id,
+        semester:        String(semester),
+        subjectCode:     subject.code,
+        subjectName:     subject.name,
+        subjectType:     subject.type,
+        creditsAssigned: String(subject.credits),
+        attemptType:     '',   // intentionally blank — computed at query time
+        iatMarks:        isFinal ? '' : _markStr(marksToStore.IAT),
+        eseMarks:        _markStr(marksToStore.ESE),
+        twMarks:         isFinal ? '' : _markStr(marksToStore.TW),
+        oralMarks:       isFinal ? '' : _markStr(marksToStore.Oral),
+        totalMarks:      result.total !== null ? String(result.total) : '',
         grade,
-        creditsEarned:  result.creditsEarned !== undefined ? String(result.creditsEarned) : '0',
-        result:         result.result || '',
-        source:         'WebApp',
-        enteredBy:      user.email,
-        entryDateTime:  now,
+        creditsEarned:   result.creditsEarned !== undefined ? String(result.creditsEarned) : '0',
+        result:          result.result || '',
+        source:          'WebApp',
+        enteredBy:       user.email,
+        entryDateTime:   now,
       };
 
       toAppend.push(row);
@@ -329,28 +456,46 @@ const State = (() => {
 
   // Reval Impact — filters: sessionId, branch?, subjectCode?
   // Returns both Fail→Pass (positive) and Pass→Fail (warning)
+  // Reval is now determined dynamically: compares ESE between Final Gazette and linked Preliminary.
   function reportRevalImpact({ sessionId, branch, subjectCode } = {}) {
-    let revalRows = ledger.filter(r => r.attemptType === 'Reval');
-    if (sessionId)   revalRows = revalRows.filter(r => r.examSession === sessionId);
-    if (branch)      revalRows = revalRows.filter(r => r.branch === branch);
-    if (subjectCode) revalRows = revalRows.filter(r => r.subjectCode === subjectCode);
+    // Find Final Gazette sessions matching the filter
+    let finalSessions = sessions.filter(s => s.entryType === 'Final Gazette' && s.linkedPrelimSessionId);
+    if (sessionId) finalSessions = finalSessions.filter(s => s.id === sessionId);
 
     const result = [];
-    for (const r of revalRows) {
-      const prev = ledger
-        .filter(p => p.uin === r.uin && p.subjectCode === r.subjectCode &&
-                     p.examSession === r.examSession && p.attemptType !== 'Reval')
-        .sort((a,b) => b.entryDateTime.localeCompare(a.entryDateTime))[0];
 
-      if (!prev) continue;
-      const changed = prev.result !== r.result;
-      if (!changed) continue;
+    for (const finalSess of finalSessions) {
+      const prelimSess = sessions.find(s => s.id === finalSess.linkedPrelimSessionId);
+      if (!prelimSess) continue;
 
-      result.push({
-        ...r,
-        prevResult: prev.result,
-        direction: (prev.result === 'Fail' && r.result === 'Pass') ? 'improved' : 'worsened',
-      });
+      // All Final Gazette ledger rows for this session
+      let finalRows = ledger.filter(r => r.examSession === finalSess.id);
+      if (branch)      finalRows = finalRows.filter(r => r.branch === branch);
+      if (subjectCode) finalRows = finalRows.filter(r => r.subjectCode === subjectCode);
+
+      for (const finalRow of finalRows) {
+        // Get corresponding Preliminary row
+        const prelimRow = ledger
+          .filter(p => p.uin === finalRow.uin &&
+                       p.subjectCode === finalRow.subjectCode &&
+                       p.examSession === finalSess.linkedPrelimSessionId)
+          .sort((a,b) => b.entryDateTime.localeCompare(a.entryDateTime))[0];
+
+        if (!prelimRow) continue;
+
+        // Only a reval if ESE changed
+        const eseChanged = String(finalRow.eseMarks).trim() !== String(prelimRow.eseMarks).trim();
+        if (!eseChanged) continue;
+
+        const changed = prelimRow.result !== finalRow.result;
+        if (!changed) continue;
+
+        result.push({
+          ...finalRow,
+          prevResult: prelimRow.result,
+          direction: (prelimRow.result === 'Fail' && finalRow.result === 'Pass') ? 'improved' : 'worsened',
+        });
+      }
     }
     return result;
   }
@@ -480,11 +625,13 @@ const State = (() => {
   return {
     loadAll, reload,
     getStudents, getStudent, searchStudents,
-    getSessions, getSession, getSessionsForBatch, addSession, lockSession,
+    getSessions, getSession, getSessionsForBatch, addSession, lockSession, linkPrelimSession,
     getStudentResults, getActiveKTSubjects, getKTEligibleStudents,
     getLatestEntryForSubject, getLedgerForStudent,
     getSessionStatus,
     submitEntries,
+    getSeatNumber, getSeatsForSession, uploadSeats,
+    computeAttemptTag,
     reportResultSummary, reportRevalImpact, reportToppers, reportCreditFilter, reportKTFilter, getMyEntries,
     getDivisions, getBatchYears, getAllSubjects,
     get ledger() { return ledger; },

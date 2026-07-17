@@ -517,6 +517,32 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
 @media(prefers-reduced-motion:reduce) {
   *, .spinner-ring { animation:none !important; transition:none !important; }
 }
+
+/* ─── Seat number column ─────────────────────────────────── */
+.col-seat  { min-width:56px; }
+.seat-cell { font-family:'DM Mono',monospace; font-size:12px; font-weight:600;
+             color:var(--brand); text-align:center; min-width:56px; }
+
+/* ─── Session type badges ────────────────────────────────── */
+.session-type-badge {
+  display:inline-flex; align-items:center; gap:4px;
+  padding:3px 10px; border-radius:20px; font-size:11px; font-weight:600; white-space:nowrap;
+}
+.session-type-badge.preliminary    { background:#EFF6FF; color:#1D4ED8; border:1px solid #BFDBFE; }
+.session-type-badge.final-gazette  { background:var(--reval-bg); color:var(--reval); border:1px solid #A5F3FC; }
+.session-type-inline               { font-size:11px; font-weight:600; padding:2px 8px; border-radius:4px; }
+.session-type-inline.preliminary   { background:#EFF6FF; color:#1D4ED8; }
+.session-type-inline.final-gazette { background:var(--reval-bg); color:var(--reval); }
+
+/* ─── Pre-filled cells ───────────────────────────────────── */
+.mark-input.cell-prefilled { background:#FFFBF0; border-color:#FDE68A; }
+
+/* ─── Attempt tags (computed) ────────────────────────────── */
+.attempt-tag {
+  display:inline-block; font-size:10px; font-weight:600;
+  padding:2px 7px; border-radius:4px;
+  background:var(--surface-2); color:var(--ink-3); white-space:nowrap;
+}
 </style>
 </head>
 <body>
@@ -590,10 +616,6 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
             <label>Division</label>
             <select id="be-division" disabled><option value="">All divisions</option></select>
           </div>
-          <div class="filter-group">
-            <label>Attempt Type</label>
-            <select id="be-attempt" disabled><option value="">— select —</option></select>
-          </div>
           <div class="filter-group" style="justify-content:flex-end;">
             <label>&nbsp;</label>
             <button id="be-load-btn" class="btn btn-secondary" disabled>Load grid</button>
@@ -602,9 +624,11 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
 
         <!-- Sort + Column picker — shown after grid loads -->
         <div id="be-toolbar" class="be-toolbar hidden">
+          <span id="be-session-type-badge" style="display:none;"></span>
           <label>Sort by</label>
           <select id="be-sort">
             <option value="default">Default (sheet order)</option>
+            <option value="seat">Seat Number ↑</option>
             <option value="name">Name (A–Z)</option>
             <option value="uin">UIN</option>
             <option value="prn">PRN</option>
@@ -634,15 +658,6 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
           <div class="filter-group">
             <label>Session</label>
             <select id="se-session"><option value="">— select session —</option></select>
-          </div>
-          <div class="filter-group">
-            <label>Attempt Type</label>
-            <select id="se-attempt">
-              <option value="Regular">Regular</option>
-              <option value="Reval">Reval</option>
-              <option value="KT">KT</option>
-              <option value="Grace">Grace</option>
-            </select>
           </div>
           <div class="filter-group">
             <label>Search student</label>
@@ -902,6 +917,27 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
             </div>
           </div>
 
+          <div class="form-group">
+            <label>Entry Type</label>
+            <select id="admin-session-entry-type">
+              <option value="Preliminary">Preliminary</option>
+              <option value="Final Gazette">Final Gazette</option>
+            </select>
+          </div>
+
+          <!-- Linked Preliminary Session — shown only for Final Gazette -->
+          <div id="admin-linked-prelim-section" class="hidden">
+            <div class="elective-section-header">
+              <span class="elective-section-icon">🔗</span>
+              Link to Preliminary Session
+              <span class="elective-section-note">Optional — enables reval detection</span>
+            </div>
+            <div class="form-group">
+              <label>Preliminary session <span class="auto-fill-note">(same batch year + semester)</span></label>
+              <select id="admin-linked-prelim-select"><option value="">— none (skip reval detection) —</option></select>
+            </div>
+          </div>
+
           <!-- Elective dropdowns — shown only for Sem II -->
           <div id="admin-electives-section" class="hidden">
             <div class="elective-section-header">
@@ -948,6 +984,20 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
               <button id="admin-lock-session" class="btn btn-danger btn-sm">Lock</button>
             </div>
           </div>
+
+          <!-- Update linked preliminary session (for existing Final Gazette sessions) -->
+          <div style="margin-top:20px; padding-top:16px; border-top:1px solid var(--border);">
+            <div style="font-size:12px; font-weight:600; color:var(--ink-3); margin-bottom:8px;">Update Session Link (Final Gazette → Preliminary)</div>
+            <div class="form-group">
+              <label>Final Gazette session</label>
+              <select id="admin-link-final-select"><option value="">— select —</option></select>
+            </div>
+            <div class="form-group">
+              <label>Link to Preliminary session</label>
+              <select id="admin-link-prelim-select"><option value="">— none —</option></select>
+            </div>
+            <button id="admin-link-session-btn" class="btn btn-secondary btn-sm">Update link</button>
+          </div>
         </div>
 
         <!-- Student upload -->
@@ -966,6 +1016,22 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
           <button id="admin-upload-btn" class="btn btn-primary btn-sm" disabled>Upload to Sheet</button>
         </div>
 
+        <!-- Seat Number upload -->
+        <div class="admin-section">
+          <h3>Seat Number Upload (CSV)</h3>
+          <p style="font-size:12px; color:var(--ink-3); margin-bottom:10px; line-height:1.6;">
+            CSV columns: <code>UIN, Session ID, Seat Number</code><br>
+            First row = header (skipped). Session ID must match the ID in EXAM_MASTER.<br>
+            Seat numbers are per-student per-session. Used for gazette sorting.
+          </p>
+          <div class="form-group">
+            <label>Upload Seat CSV</label>
+            <input type="file" id="admin-seat-csv-file" accept=".csv">
+          </div>
+          <div id="admin-seat-preview" style="font-size:12px; color:var(--ink-3); margin-bottom:10px;"></div>
+          <button id="admin-seat-upload-btn" class="btn btn-primary btn-sm" disabled>Upload Seat Numbers</button>
+        </div>
+
         <!-- Session list -->
         <div class="admin-section" style="grid-column:1/-1;">
           <h3>All Sessions</h3>
@@ -974,6 +1040,7 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
               <thead>
                 <tr>
                   <th>Name</th><th>Semester</th><th>Batch</th>
+                  <th>Type</th><th>Linked Preliminary</th>
                   <th>Electives</th><th>Status</th><th>Created By</th>
                 </tr>
               </thead>

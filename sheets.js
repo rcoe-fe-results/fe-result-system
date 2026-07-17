@@ -60,20 +60,24 @@ const Sheets = (() => {
   // Columns: A=Session ID, B=Name, C=Semester, D=Batch Year,
   //          E=Status, F=Created By,
   //          G=Physics Theory Code, H=Physics Lab Code,
-  //          I=Chem Theory Code,   J=Chem Lab Code
+  //          I=Chem Theory Code,   J=Chem Lab Code,
+  //          K=Entry Type (Preliminary|Final Gazette),
+  //          L=Linked Preliminary Session ID
   async function getSessions() {
-    const rows = await getRange(CONFIG.TABS.EXAM, 'A2:J');
+    const rows = await getRange(CONFIG.TABS.EXAM, 'A2:L');
     return rows.map(r => ({
-      id:                 r[0] || '',
-      name:               r[1] || '',
-      semester:           Number(r[2]) || 1,
-      batchYear:          r[3] || '',
-      status:             r[4] || 'Active',   // Active | Locked
-      createdBy:          r[5] || '',
-      physicsTheoryCode:  r[6] || '',   // BSC202X — set for Sem II only
-      physicsLabCode:     r[7] || '',   // BSL201X
-      chemTheoryCode:     r[8] || '',   // BSC203X
-      chemLabCode:        r[9] || '',   // BSL202X
+      id:                      r[0]  || '',
+      name:                    r[1]  || '',
+      semester:                Number(r[2]) || 1,
+      batchYear:               r[3]  || '',
+      status:                  r[4]  || 'Active',   // Active | Locked
+      createdBy:               r[5]  || '',
+      physicsTheoryCode:       r[6]  || '',   // BSC202X — set for Sem II only
+      physicsLabCode:          r[7]  || '',   // BSL201X
+      chemTheoryCode:          r[8]  || '',   // BSC203X
+      chemLabCode:             r[9]  || '',   // BSL202X
+      entryType:               r[10] || 'Preliminary',   // Preliminary | Final Gazette
+      linkedPrelimSessionId:   r[11] || '',
     })).filter(s => s.id);
   }
 
@@ -81,16 +85,18 @@ const Sheets = (() => {
     return appendRows(CONFIG.TABS.EXAM, [[
       session.id, session.name, session.semester, session.batchYear,
       session.status, session.createdBy,
-      session.physicsTheoryCode || '',
-      session.physicsLabCode    || '',
-      session.chemTheoryCode    || '',
-      session.chemLabCode       || '',
+      session.physicsTheoryCode      || '',
+      session.physicsLabCode         || '',
+      session.chemTheoryCode         || '',
+      session.chemLabCode            || '',
+      session.entryType              || 'Preliminary',
+      session.linkedPrelimSessionId  || '',
     ]]);
   }
 
   async function updateSessionStatus(sessionId, newStatus) {
     // Find row, then update Status cell (col E) only
-    const rows = await getRange(CONFIG.TABS.EXAM, 'A:J');
+    const rows = await getRange(CONFIG.TABS.EXAM, 'A:L');
     for (let i = 1; i < rows.length; i++) {
       if (rows[i][0] === sessionId) {
         const rowNum = i + 1;
@@ -98,6 +104,21 @@ const Sheets = (() => {
         const body = { values: [[newStatus]] };
         const r = await fetch(url, { method:'PUT', headers: await _headers(), body: JSON.stringify(body) });
         if (!r.ok) throw new Error(`Session lock failed: ${r.status}`);
+        return r.json();
+      }
+    }
+    throw new Error('Session not found: ' + sessionId);
+  }
+
+  async function updateSessionLinkedPrelim(sessionId, linkedPrelimSessionId) {
+    const rows = await getRange(CONFIG.TABS.EXAM, 'A:L');
+    for (let i = 1; i < rows.length; i++) {
+      if (rows[i][0] === sessionId) {
+        const rowNum = i + 1;
+        const url = `${BASE}/${CONFIG.SHEET_ID}/values/${encodeURIComponent(CONFIG.TABS.EXAM + '!L' + rowNum)}?valueInputOption=USER_ENTERED`;
+        const body = { values: [[linkedPrelimSessionId]] };
+        const r = await fetch(url, { method:'PUT', headers: await _headers(), body: JSON.stringify(body) });
+        if (!r.ok) throw new Error(`Session link update failed: ${r.status}`);
         return r.json();
       }
     }
@@ -153,6 +174,23 @@ const Sheets = (() => {
     return rows; // raw — used for admin verification only
   }
 
+  // ── SEAT_MASTER ──────────────────────────────────────────
+  // Columns: A=UIN, B=Session ID, C=Seat Number
+  async function getSeats() {
+    const rows = await getRange(CONFIG.TABS.SEAT, 'A2:C');
+    return rows.map(r => ({
+      uin:       r[0] || '',
+      sessionId: r[1] || '',
+      seatNumber:r[2] || '',
+    })).filter(s => s.uin && s.sessionId);
+  }
+
+  async function uploadSeats(seats) {
+    // seats = [{ uin, sessionId, seatNumber }]
+    const rows = seats.map(s => [s.uin, s.sessionId, s.seatNumber]);
+    return appendRows(CONFIG.TABS.SEAT, rows);
+  }
+
   // ── Utility: generate Entry ID ────────────────────────────
   function newEntryId() {
     return 'RCE-' + Date.now() + '-' + Math.random().toString(36).slice(2,6).toUpperCase();
@@ -160,9 +198,10 @@ const Sheets = (() => {
 
   return {
     getStudents, uploadStudents,
-    getSessions, addSession, updateSessionStatus,
+    getSessions, addSession, updateSessionStatus, updateSessionLinkedPrelim,
     getLedger, appendLedgerRows,
     getSubjectMaster,
+    getSeats, uploadSeats,
     newEntryId,
   };
 })();

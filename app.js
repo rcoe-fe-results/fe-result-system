@@ -87,7 +87,7 @@ function _bindModalClose() {
 // ═══════════════════════════════════════════════════════════════
 let bulkState = {
   session: null, semester: null, branch: null, division: null,
-  attemptType: null, subjects: [], students: [],
+  subjects: [], students: [], seatMap: {},
   activeComps: new Set(['IAT','ESE','TW','Oral']),
   sortBy: 'default',
 };
@@ -99,7 +99,6 @@ function initBulkEntry() {
   document.getElementById('be-semester').onchange = _beOnSemesterChange;
   document.getElementById('be-branch').onchange   = _beOnBranchChange;
   document.getElementById('be-division').onchange = _beOnDivisionChange;
-  document.getElementById('be-attempt').onchange  = _beOnAttemptChange;
   document.getElementById('be-load-btn').onclick  = _beLoadGrid;
   document.getElementById('be-submit-btn').onclick = _beSubmit;
   document.getElementById('be-grid-area').innerHTML = '';
@@ -108,7 +107,7 @@ function initBulkEntry() {
 }
 
 function _beResetFilters() {
-  ['be-semester','be-branch','be-division','be-attempt'].forEach(id => {
+  ['be-semester','be-branch','be-division'].forEach(id => {
     document.getElementById(id).disabled = true;
     document.getElementById(id).value = '';
   });
@@ -149,7 +148,8 @@ function _beOnBranchChange() {
   const options = multiDiv ? ['All', ...divs] : divs;
   UI.buildSelect('be-division', options, placeholder);
   document.getElementById('be-division').disabled = false;
-  _beEnableAttempt();
+  // Enable load button — no attempt type dropdown anymore
+  document.getElementById('be-load-btn').disabled = false;
 }
 
 function _beOnDivisionChange() {
@@ -158,25 +158,19 @@ function _beOnDivisionChange() {
 }
 
 function _beEnableAttempt() {
-  document.getElementById('be-attempt').disabled = false;
-  UI.buildSelect('be-attempt', ATTEMPT_TYPES, '— select attempt type —');
-}
-
-function _beOnAttemptChange() {
-  bulkState.attemptType = document.getElementById('be-attempt').value;
-  document.getElementById('be-load-btn').disabled = !bulkState.attemptType;
+  // Kept for compatibility but no longer used in bulk entry
 }
 
 function _beLoadGrid() {
-  const { session, semester, branch, division, attemptType } = bulkState;
+  const { session, semester, branch, division } = bulkState;
 
   // FIX 2: Require division choice when multiple divisions exist
   const divs = State.getDivisions(bulkState.branch || '');
   const requireDivChoice = divs.length > 1;
   const divEl = document.getElementById('be-division');
 
-  if (!session || !branch || !attemptType) {
-    UI.toast('Select session, branch, and attempt type first.', 'error'); return;
+  if (!session || !branch) {
+    UI.toast('Select session and branch first.', 'error'); return;
   }
   if (requireDivChoice && !divEl.value) {
     UI.toast('This branch has multiple divisions — select Div A, Div B, or All Divisions.', 'error', 5000);
@@ -189,17 +183,18 @@ function _beLoadGrid() {
 
   bulkState.subjects = getSubjectsForSem(semester, branch, session);
 
-  let students;
-  if (attemptType === 'KT') {
-    const ktData = State.getKTEligibleStudents(semester, branch);
-    students = ktData
-      .filter(d => !division || d.student.division === division)
-      .map(d => ({ ...d.student, _ktSubjects: d.ktSubjects.map(s => s.code) }));
-  } else {
-    students = State.getStudents({ branch, division: division || undefined });
-    if (session.batchYear) {
-      students = students.filter(s => s.batchYear === session.batchYear);
-    }
+  // For Final Gazette: show all students (no KT filter)
+  // KT detection is automatic at query time
+  let students = State.getStudents({ branch, division: division || undefined });
+  if (session.batchYear) {
+    students = students.filter(s => s.batchYear === session.batchYear);
+  }
+
+  // Build seat map for this session
+  const seatEntries = State.getSeatsForSession(session.id);
+  bulkState.seatMap = {};
+  for (const s of seatEntries) {
+    bulkState.seatMap[s.uin] = s.seatNumber;
   }
 
   if (students.length === 0) {
@@ -230,6 +225,16 @@ function _beRenderToolbar() {
     _beRenderGrid();
   };
 
+  // Show session type badge
+  const session = bulkState.session;
+  const typeBadge = document.getElementById('be-session-type-badge');
+  if (typeBadge) {
+    const isFinal = session && session.entryType === 'Final Gazette';
+    typeBadge.textContent = isFinal ? '📋 Final Gazette' : '📝 Preliminary';
+    typeBadge.className = 'session-type-badge ' + (isFinal ? 'final-gazette' : 'preliminary');
+    typeBadge.style.display = '';
+  }
+
   const allComps = ['IAT','ESE','TW','Oral'];
   const presentComps = new Set();
   for (const subj of bulkState.subjects) {
@@ -256,22 +261,38 @@ function _beRenderToolbar() {
 function _beSortStudents() {
   const by = bulkState.sortBy;
   if (by === 'default') return;
+  const seatMap = bulkState.seatMap || {};
   bulkState.students = [...bulkState.students].sort((a, b) => {
     if (by === 'name')  return a.name.localeCompare(b.name);
     if (by === 'uin')   return a.uin.localeCompare(b.uin);
     if (by === 'prn')   return (a.prn||'').localeCompare(b.prn||'');
     if (by === 'batch') return (a.batchYear||'').localeCompare(b.batchYear||'');
+    if (by === 'seat') {
+      const sa = seatMap[a.uin] || '';
+      const sb = seatMap[b.uin] || '';
+      // Numeric sort if both look like numbers, else string sort
+      const na = Number(sa), nb = Number(sb);
+      if (!isNaN(na) && !isNaN(nb)) return na - nb;
+      return sa.localeCompare(sb);
+    }
     return 0;
   });
 }
 
 // ── Grid render ───────────────────────────────────────────────
 function _beRenderGrid() {
-  const { subjects, students, attemptType, activeComps } = bulkState;
+  const { subjects, students, activeComps, session, seatMap } = bulkState;
   const container = document.getElementById('be-grid-area');
+  const isFinal   = session && session.entryType === 'Final Gazette';
 
-  const getVisibleComps = (subj) =>
-    Object.keys(subj.marks).filter(c => activeComps.size === 0 || activeComps.has(c));
+  const getVisibleComps = (subj) => {
+    const comps = Object.keys(subj.marks);
+    if (isFinal) {
+      // Final Gazette: only show ESE editable; IAT/TW/Oral shown greyed as reference
+      return comps; // show all but only ESE is editable (handled per-cell)
+    }
+    return comps.filter(c => activeComps.size === 0 || activeComps.has(c));
+  };
 
   const totalVisibleCols = subjects.reduce((n, s) => n + getVisibleComps(s).length, 0);
 
@@ -281,9 +302,18 @@ function _beRenderGrid() {
     return;
   }
 
+  // For Final Gazette: find linked preliminary session
+  const prelimSession = isFinal && session.linkedPrelimSessionId
+    ? State.getSession(session.linkedPrelimSessionId)
+    : null;
+
+  const sessionTypeLabel = isFinal
+    ? `<span class="session-type-inline final-gazette">📋 Final Gazette${prelimSession ? ' · linked to: ' + UI.esc(prelimSession.name) : ' · no preliminary linked'}</span>`
+    : `<span class="session-type-inline preliminary">📝 Preliminary — all components editable</span>`;
+
   let html = `
   <div class="grid-info">
-    <span>${students.length} students · ${subjects.length} subjects</span>
+    <span>${students.length} students · ${subjects.length} subjects · ${sessionTypeLabel}</span>
     <span class="grid-legend">
       <span class="dot dot-grace"></span> Grace (e.g. 21*)
       <span class="dot dot-absent"></span> AB
@@ -297,6 +327,7 @@ function _beRenderGrid() {
     <thead>
       <tr>
         <th class="col-student sticky-col">Student</th>
+        <th class="col-seat">Seat</th>
         <th class="col-branch">Branch</th>`;
 
   for (const subj of subjects) {
@@ -305,52 +336,78 @@ function _beRenderGrid() {
     html += `<th colspan="${visComps.length}" class="subj-header" title="${UI.esc(subj.name)}">${UI.esc(subj.code)}<br><small>${UI.esc(subj.name.length>20 ? subj.name.slice(0,18)+'…' : subj.name)}</small></th>`;
   }
 
-  html += `</tr><tr><th class="sticky-col"></th><th></th>`;
+  html += `</tr><tr><th class="sticky-col"></th><th></th><th></th>`;
   for (const subj of subjects) {
     const visComps = getVisibleComps(subj);
     for (const comp of visComps) {
-      const isRevalLocked = attemptType === 'Reval' && comp !== 'ESE';
-      html += `<th class="comp-header${isRevalLocked?' locked':''}">${comp}<br><small>/${subj.marks[comp]}</small></th>`;
+      const isFinalLocked = isFinal && comp !== 'ESE';
+      html += `<th class="comp-header${isFinalLocked?' locked':''}">${comp}<br><small>/${subj.marks[comp]}</small></th>`;
     }
   }
   html += `</tr></thead><tbody>`;
 
   for (const student of students) {
-    const isKT = attemptType === 'KT';
+    const seatNum = seatMap[student.uin] || '—';
     html += `<tr data-uin="${UI.esc(student.uin)}">
       <td class="sticky-col student-cell">
         <div class="student-name">${UI.esc(student.name)}</div>
         <div class="student-ids">${UI.esc(student.uin)}${student.prn ? ' · ' + UI.esc(student.prn) : ''}</div>
         ${student.batchYear ? `<div class="student-batch">Batch ${UI.esc(student.batchYear)}</div>` : ''}
       </td>
+      <td class="seat-cell">${UI.esc(seatNum)}</td>
       <td class="branch-cell">${UI.esc(student.branch)}</td>`;
 
     for (const subj of subjects) {
       const visComps = getVisibleComps(subj);
       if (visComps.length === 0) continue;
 
-      const isKTSubject = isKT && student._ktSubjects && !student._ktSubjects.includes(subj.code);
-      let prevEntry = null;
-      if (attemptType === 'Reval' || attemptType === 'KT') {
-        prevEntry = State.getLatestEntryForSubject(student.uin, subj.code, bulkState.session.id);
-      }
+      // Prelim entry: look up any previously submitted value for this session to pre-fill
+      const prevEntry = State.getLatestEntryForSubject(student.uin, subj.code, session.id);
+
+      // For Final Gazette: look up the Preliminary entry for pre-fill
+      const prelimEntry = isFinal && session.linkedPrelimSessionId
+        ? State.getLatestEntryForSubject(student.uin, subj.code, session.linkedPrelimSessionId)
+        : null;
 
       for (const comp of visComps) {
-        const isRevalLocked = attemptType === 'Reval' && comp !== 'ESE';
-        const locked = isRevalLocked || isKTSubject;
-        const prevVal = prevEntry ? prevEntry[comp.toLowerCase() + 'Marks'] : '';
-
-        if (locked) {
-          html += `<td class="cell-locked"><span class="locked-val">${UI.esc(prevVal || '—')}</span></td>`;
+        if (isFinal) {
+          // Final Gazette mode
+          if (comp !== 'ESE') {
+            // Non-ESE: show pre-filled from preliminary (greyed, read-only)
+            const prelimVal = prelimEntry ? prelimEntry[comp.toLowerCase() + 'Marks'] : '';
+            html += `<td class="cell-locked"><span class="locked-val">${UI.esc(prelimVal || '—')}</span></td>`;
+          } else {
+            // ESE: editable, pre-filled with preliminary ESE as default
+            const prelimESE = prelimEntry ? (prelimEntry.eseMarks || '') : '';
+            const existingFinalESE = prevEntry ? (prevEntry.eseMarks || '') : '';
+            // Use existing Final Gazette value if already entered, else prelim ESE
+            const defaultVal = existingFinalESE || prelimESE;
+            html += `<td>
+              <input type="text"
+                class="mark-input${defaultVal ? ' cell-prefilled' : ''}"
+                id="cell-${UI.esc(student.uin)}-${UI.esc(subj.code)}-${comp}"
+                data-uin="${UI.esc(student.uin)}"
+                data-code="${UI.esc(subj.code)}"
+                data-comp="${comp}"
+                data-max="${subj.marks[comp]}"
+                data-prelim-ese="${UI.esc(prelimESE)}"
+                value="${UI.esc(defaultVal)}"
+                autocomplete="off" spellcheck="false"
+              >
+            </td>`;
+          }
         } else {
+          // Preliminary mode: all editable, pre-fill existing values (not greyed)
+          const existingVal = prevEntry ? (prevEntry[comp.toLowerCase() + 'Marks'] || '') : '';
           html += `<td>
             <input type="text"
-              class="mark-input"
+              class="mark-input${existingVal ? ' cell-prefilled' : ''}"
               id="cell-${UI.esc(student.uin)}-${UI.esc(subj.code)}-${comp}"
               data-uin="${UI.esc(student.uin)}"
               data-code="${UI.esc(subj.code)}"
               data-comp="${comp}"
               data-max="${subj.marks[comp]}"
+              value="${UI.esc(existingVal)}"
               placeholder=""
               autocomplete="off" spellcheck="false"
             >
@@ -364,7 +421,9 @@ function _beRenderGrid() {
   html += `</tbody></table></div></div></div>`;
   container.innerHTML = html;
 
+  // Validate any pre-filled values
   container.querySelectorAll('.mark-input').forEach(input => {
+    if (input.value) _beOnCellInput({ target: input });
     input.addEventListener('input', _beOnCellInput);
     input.addEventListener('keydown', _beOnCellKeydown);
   });
@@ -438,7 +497,7 @@ function _beOnCellKeydown(e) {
 }
 
 async function _beSubmit() {
-  const { session, students, attemptType } = bulkState;
+  const { session, students } = bulkState;
 
   const errorInputs = [...document.querySelectorAll('#entry-table .mark-input.cell-error, #entry-table .mark-input.cell-over-max')];
   if (errorInputs.length > 0) {
@@ -447,7 +506,17 @@ async function _beSubmit() {
     return;
   }
 
-  const inputs = [...document.querySelectorAll('#entry-table .mark-input:not([disabled])')].filter(i => i.value.trim() !== '');
+  const isFinal = session && session.entryType === 'Final Gazette';
+
+  // For Final Gazette: collect all ESE inputs (including pre-filled ones), skip if empty
+  // For Preliminary: collect all inputs with a value
+  const inputs = [...document.querySelectorAll('#entry-table .mark-input')].filter(i => {
+    const val = i.value.trim();
+    if (!val) return false;
+    // Final Gazette: only ESE inputs are editable/relevant
+    if (isFinal && i.dataset.comp !== 'ESE') return false;
+    return true;
+  });
 
   if (inputs.length === 0) {
     UI.toast('No marks entered yet.', 'info'); return;
@@ -462,7 +531,7 @@ async function _beSubmit() {
   }
 
   const entries = Object.values(entriesByStudentSubject).map(e => ({
-    uin: e.uin, subjectCode: e.code, attemptType, marks: e.marks,
+    uin: e.uin, subjectCode: e.code, marks: e.marks,
   }));
 
   const filledStudents = new Set(entries.map(e => e.uin)).size;
@@ -524,9 +593,6 @@ function initSingleEntry() {
     singleState.session = State.getSession(document.getElementById('se-session').value);
     if (singleState.student) _seRenderGrid();
   };
-  document.getElementById('se-attempt').onchange = () => {
-    if (singleState.student) _seRenderGrid();
-  };
   document.getElementById('se-submit-btn').onclick = _seSubmit;
 }
 
@@ -546,8 +612,8 @@ function _seRenderGrid() {
   const { student, session } = singleState;
   if (!student || !session) return;
 
-  const attemptType = document.getElementById('se-attempt').value || 'Regular';
-  const subjects    = getSubjectsForSem(session.semester, student.branch, session);
+  const isFinal  = session.entryType === 'Final Gazette';
+  const subjects = getSubjectsForSem(session.semester, student.branch, session);
   singleState.subjects = subjects;
 
   const info = document.getElementById('se-student-info');
@@ -555,12 +621,16 @@ function _seRenderGrid() {
     <div class="student-card">
       <div class="sc-name">${UI.esc(student.name)}</div>
       <div class="sc-meta">UIN: ${UI.esc(student.uin)} · PRN: ${UI.esc(student.prn || '—')} · ${UI.esc(student.branch)} · Div ${UI.esc(student.division)} · Batch ${UI.esc(student.batchYear)}</div>
+      ${isFinal ? '<div style="margin-top:6px;"><span class="session-type-inline final-gazette">📋 Final Gazette — only ESE editable</span></div>' : '<div style="margin-top:6px;"><span class="session-type-inline preliminary">📝 Preliminary — all components editable</span></div>'}
     </div>`;
 
   let html = `<div class="single-grid">`;
   for (const subj of subjects) {
-    const comps    = Object.keys(subj.marks);
+    const comps     = Object.keys(subj.marks);
     const prevEntry = State.getLatestEntryForSubject(student.uin, subj.code, session.id);
+    const prelimEntry = isFinal && session.linkedPrelimSessionId
+      ? State.getLatestEntryForSubject(student.uin, subj.code, session.linkedPrelimSessionId)
+      : null;
 
     html += `
     <div class="subj-card">
@@ -572,21 +642,48 @@ function _seRenderGrid() {
       <div class="subj-inputs">`;
 
     for (const comp of comps) {
-      const locked = attemptType === 'Reval' && comp !== 'ESE';
-      const prevVal = prevEntry ? prevEntry[comp.toLowerCase() + 'Marks'] : '';
-      html += `
-        <label class="comp-label${locked ? ' locked' : ''}">
-          <span>${comp}<small>/${subj.marks[comp]}</small></span>
-          <input type="text"
-            class="mark-input-single"
-            data-code="${UI.esc(subj.code)}"
-            data-comp="${comp}"
-            data-max="${subj.marks[comp]}"
-            value="${UI.esc(locked ? prevVal : '')}"
-            ${locked ? 'disabled' : ''}
-            autocomplete="off"
-          >
-        </label>`;
+      if (isFinal) {
+        if (comp !== 'ESE') {
+          // Show prelim value greyed
+          const prelimVal = prelimEntry ? (prelimEntry[comp.toLowerCase() + 'Marks'] || '—') : '—';
+          html += `
+            <label class="comp-label locked">
+              <span>${comp}<small>/${subj.marks[comp]}</small></span>
+              <input type="text" class="mark-input-single" data-code="${UI.esc(subj.code)}" data-comp="${comp}"
+                data-max="${subj.marks[comp]}" value="${UI.esc(prelimVal)}" disabled autocomplete="off">
+            </label>`;
+        } else {
+          // ESE: editable, pre-filled with existing final gazette or prelim ESE
+          const existingFinal = prevEntry ? (prevEntry.eseMarks || '') : '';
+          const prelimESE     = prelimEntry ? (prelimEntry.eseMarks || '') : '';
+          const defaultVal    = existingFinal || prelimESE;
+          html += `
+            <label class="comp-label">
+              <span>${comp}<small>/${subj.marks[comp]}</small></span>
+              <input type="text"
+                class="mark-input-single${defaultVal ? ' cell-prefilled' : ''}"
+                data-code="${UI.esc(subj.code)}"
+                data-comp="${comp}"
+                data-max="${subj.marks[comp]}"
+                value="${UI.esc(defaultVal)}"
+                autocomplete="off">
+            </label>`;
+        }
+      } else {
+        // Preliminary: all editable, pre-fill existing values
+        const existingVal = prevEntry ? (prevEntry[comp.toLowerCase() + 'Marks'] || '') : '';
+        html += `
+          <label class="comp-label">
+            <span>${comp}<small>/${subj.marks[comp]}</small></span>
+            <input type="text"
+              class="mark-input-single${existingVal ? ' cell-prefilled' : ''}"
+              data-code="${UI.esc(subj.code)}"
+              data-comp="${comp}"
+              data-max="${subj.marks[comp]}"
+              value="${UI.esc(existingVal)}"
+              autocomplete="off">
+          </label>`;
+      }
     }
     html += `</div></div>`;
   }
@@ -602,17 +699,19 @@ async function _seSubmit() {
   const { student, session, subjects } = singleState;
   if (!student || !session) { UI.toast('Select a student and session.', 'error'); return; }
 
-  const attemptType = document.getElementById('se-attempt').value || 'Regular';
-  const inputs = [...document.querySelectorAll('.mark-input-single:not([disabled])')];
+  const isFinal = session.entryType === 'Final Gazette';
+  const inputs  = [...document.querySelectorAll('.mark-input-single:not([disabled])')];
 
   const subjectMap = {};
   for (const input of inputs) {
     const { code, comp } = input.dataset;
+    const val = input.value.trim();
+    if (!val) continue;
     if (!subjectMap[code]) subjectMap[code] = {};
-    subjectMap[code][comp] = parseMarkValue(input.value.trim());
+    subjectMap[code][comp] = parseMarkValue(val);
   }
 
-  const entries = Object.entries(subjectMap).map(([code, marks]) => ({ uin: student.uin, subjectCode: code, attemptType, marks }));
+  const entries = Object.entries(subjectMap).map(([code, marks]) => ({ uin: student.uin, subjectCode: code, marks }));
 
   UI.showSpinner('Saving…');
   try {
@@ -644,7 +743,18 @@ function initProgress() {
     let students;
     const ql = q.toLowerCase();
     if (ql === 'reval') {
-      const revalUINs = new Set(State.ledger.filter(r => r.attemptType === 'Reval').map(r => r.uin));
+      // Find students who have any Final Gazette ESE that differs from their Preliminary ESE
+      const revalUINs = new Set();
+      for (const sess of State.getSessions()) {
+        if (sess.entryType !== 'Final Gazette' || !sess.linkedPrelimSessionId) continue;
+        const finalRows = State.ledger.filter(r => r.examSession === sess.id);
+        for (const fr of finalRows) {
+          const pr = State.ledger
+            .filter(p => p.uin === fr.uin && p.subjectCode === fr.subjectCode && p.examSession === sess.linkedPrelimSessionId)
+            .sort((a,b) => b.entryDateTime.localeCompare(a.entryDateTime))[0];
+          if (pr && String(fr.eseMarks).trim() !== String(pr.eseMarks).trim()) revalUINs.add(fr.uin);
+        }
+      }
       students = State.getStudents().filter(s => revalUINs.has(s.uin));
     } else if (ql === 'kt' || ql === 'failed' || ql === 'fail') {
       const ktUINs = new Set(State.ledger.filter(r => r.result === 'Fail' || r.result === 'AB').map(r => r.uin));
@@ -664,6 +774,16 @@ function initProgress() {
       el.onclick = () => _pvShowStudent(el.dataset.uin);
     });
   }, 250));
+}
+
+// ── Computed attempt tag HTML (for progress view) ─────────────
+function _pvAttemptTag(uin, subjectCode, sessionId) {
+  const tag = State.computeAttemptTag(uin, subjectCode, sessionId);
+  if (!tag) return '<span class="badge badge-pending">—</span>';
+  const cls = tag.includes('KT')    ? 'badge-kt'
+            : tag.includes('Reval') ? 'badge-reval'
+            : 'badge-regular';
+  return `<span class="badge ${cls}" title="${UI.esc(tag)}">${UI.esc(tag)}</span>`;
 }
 
 // ── Mark outcome tag (per-component) ─────────────────────────
@@ -805,7 +925,7 @@ function _pvShowStudent(uin) {
         <tr class="${isLatest ? '' : 'row-superseded'}" title="${isLatest ? 'Latest entry' : 'Superseded by later entry'}">
           <td><span class="subj-code-small">${UI.esc(r.subjectCode)}</span> ${UI.esc(r.subjectName)}</td>
           <td>${UI.esc(r.subjectType)}</td>
-          <td>${UI.attemptBadge(r.attemptType)}</td>
+          <td>${isLatest ? _pvAttemptTag(r.uin, r.subjectCode, r.examSession) : '<span class="muted">—</span>'}</td>
           ${cells}
           <td>${UI.esc(r.totalMarks|| '—')}</td>
           <td>${UI.resultBadge(r.result)}</td>
@@ -1100,14 +1220,76 @@ function initAdmin() {
 
   _buildElectiveSelects();
 
+  // Entry type dropdown — show/hide linked prelim selector
+  const entryTypeEl = document.getElementById('admin-session-entry-type');
+  if (entryTypeEl) {
+    entryTypeEl.onchange = _adminToggleLinkedPrelim;
+    _adminToggleLinkedPrelim();
+  }
+
   document.getElementById('admin-upload-btn').onclick = _adminUploadStudents;
   document.getElementById('admin-csv-file').onchange  = _adminPreviewCSV;
+
+  // Seat number upload
+  document.getElementById('admin-seat-csv-file')?.addEventListener('change', _adminPreviewSeatCSV);
+  document.getElementById('admin-seat-upload-btn')?.addEventListener('click', _adminUploadSeats);
+
+  // Session link update (for existing Final Gazette sessions)
+  document.getElementById('admin-link-session-btn')?.addEventListener('click', _adminUpdateSessionLink);
 
   const sessions = State.getSessions();
   UI.buildSelect('admin-session-lock-select', sessions.filter(s => s.status === 'Active'), '— select session to lock —', 'id', 'name');
 
+  // Populate link dropdowns
+  _adminPopulateLinkDropdowns();
+
   _adminRenderSessionList();
   _adminRenderAudit();
+}
+
+function _adminToggleLinkedPrelim() {
+  const entryType = document.getElementById('admin-session-entry-type')?.value;
+  const section   = document.getElementById('admin-linked-prelim-section');
+  if (section) section.classList.toggle('hidden', entryType !== 'Final Gazette');
+  _adminPopulateLinkedPrelimSelect();
+}
+
+function _adminPopulateLinkedPrelimSelect() {
+  const semEl    = document.getElementById('admin-session-sem');
+  const batchEl  = document.getElementById('admin-session-batch');
+  const sem      = Number(semEl?.value) || 0;
+  const batch    = batchEl?.value.trim() || '';
+  const selEl    = document.getElementById('admin-linked-prelim-select');
+  if (!selEl) return;
+  const prelims  = State.getSessions().filter(s =>
+    s.entryType !== 'Final Gazette' &&
+    (sem === 0 || s.semester === sem) &&
+    (batch === '' || s.batchYear === batch)
+  );
+  selEl.innerHTML = '<option value="">— none (skip reval detection) —</option>' +
+    prelims.map(s => `<option value="${UI.esc(s.id)}">${UI.esc(s.name)} (Sem ${s.semester}, ${s.batchYear})</option>`).join('');
+}
+
+function _adminPopulateLinkDropdowns() {
+  // For the "update link" section
+  const finalSessions = State.getSessions().filter(s => s.entryType === 'Final Gazette');
+  const finalSelEl    = document.getElementById('admin-link-final-select');
+  if (finalSelEl) {
+    finalSelEl.innerHTML = '<option value="">— select Final Gazette session —</option>' +
+      finalSessions.map(s => `<option value="${UI.esc(s.id)}">${UI.esc(s.name)} (Sem ${s.semester}, ${s.batchYear})</option>`).join('');
+    finalSelEl.onchange = () => {
+      const sess = State.getSession(finalSelEl.value);
+      const prelimSelEl = document.getElementById('admin-link-prelim-select');
+      if (!prelimSelEl || !sess) return;
+      const prelims = State.getSessions().filter(s =>
+        s.entryType !== 'Final Gazette' &&
+        s.semester === sess.semester &&
+        s.batchYear === sess.batchYear
+      );
+      prelimSelEl.innerHTML = '<option value="">— none —</option>' +
+        prelims.map(s => `<option value="${UI.esc(s.id)}" ${s.id === sess.linkedPrelimSessionId ? 'selected' : ''}>${UI.esc(s.name)} (${s.batchYear})</option>`).join('');
+    };
+  }
 }
 
 function _adminToggleElectives() {
@@ -1154,9 +1336,13 @@ function _buildElectiveSelects() {
 }
 
 async function _adminAddSession() {
-  const name     = document.getElementById('admin-session-name').value.trim();
-  const semester = document.getElementById('admin-session-sem').value;
-  const batch    = document.getElementById('admin-session-batch').value.trim();
+  const name      = document.getElementById('admin-session-name').value.trim();
+  const semester  = document.getElementById('admin-session-sem').value;
+  const batch     = document.getElementById('admin-session-batch').value.trim();
+  const entryType = document.getElementById('admin-session-entry-type')?.value || 'Preliminary';
+  const linkedPrelimSessionId = entryType === 'Final Gazette'
+    ? (document.getElementById('admin-linked-prelim-select')?.value || '')
+    : '';
 
   if (!name || !semester || !batch) {
     UI.toast('Fill in session name, semester, and batch year.', 'error'); return;
@@ -1176,8 +1362,15 @@ async function _adminAddSession() {
     }
   }
 
+  const linkedSession = linkedPrelimSessionId ? State.getSession(linkedPrelimSessionId) : null;
+
   let confirmBody = `Create session <strong>${UI.esc(name)}</strong>?<br>
-    Semester: <strong>${semester === '1' ? 'I' : 'II'}</strong> &nbsp;·&nbsp; Batch: <strong>${UI.esc(batch)}</strong>`;
+    Semester: <strong>${semester === '1' ? 'I' : 'II'}</strong> &nbsp;·&nbsp; Batch: <strong>${UI.esc(batch)}</strong>
+    &nbsp;·&nbsp; Type: <strong>${UI.esc(entryType)}</strong>`;
+
+  if (linkedSession) {
+    confirmBody += `<br>Linked preliminary: <strong>${UI.esc(linkedSession.name)}</strong>`;
+  }
 
   if (semester === '2') {
     const pt = findElective(electives.physicsTheoryCode);
@@ -1197,12 +1390,14 @@ async function _adminAddSession() {
     onConfirm: async () => {
       UI.showSpinner('Creating session…');
       try {
-        const s = await State.addSession(name, semester, batch, electives);
+        const s = await State.addSession(name, semester, batch, electives, entryType, linkedPrelimSessionId);
         UI.hideSpinner();
         UI.toast(`Session "${s.name}" created.`, 'success');
         ['admin-session-name','admin-session-batch'].forEach(id => document.getElementById(id).value = '');
         document.getElementById('admin-session-sem').value = '';
+        if (document.getElementById('admin-session-entry-type')) document.getElementById('admin-session-entry-type').value = 'Preliminary';
         _adminToggleElectives();
+        _adminToggleLinkedPrelim();
         initAdmin();
       } catch(e) {
         UI.hideSpinner();
@@ -1217,7 +1412,7 @@ function _adminRenderSessionList() {
   if (!tbody) return;
   const sessions = State.getSessions();
   if (sessions.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--ink-4);padding:16px;">No sessions yet.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--ink-4);padding:16px;">No sessions yet.</td></tr>';
     return;
   }
   tbody.innerHTML = sessions.map(s => {
@@ -1230,10 +1425,25 @@ function _adminRenderSessionList() {
         ? '<span class="elective-missing">⚠ No electives set</span>'
         : '<span class="muted">—</span>';
 
+    const typeCls   = s.entryType === 'Final Gazette' ? 'badge-reval' : 'badge-regular';
+    const typeLabel = s.entryType || 'Preliminary';
+
+    let linkedInfo = '—';
+    if (s.entryType === 'Final Gazette') {
+      if (s.linkedPrelimSessionId) {
+        const prelim = State.getSession(s.linkedPrelimSessionId);
+        linkedInfo = prelim ? UI.esc(prelim.name) : `<span class="muted">${UI.esc(s.linkedPrelimSessionId)}</span>`;
+      } else {
+        linkedInfo = '<span class="elective-missing">No link</span>';
+      }
+    }
+
     return `<tr>
       <td>${UI.esc(s.name)}</td>
       <td>Sem ${UI.esc(String(s.semester))}</td>
       <td>${UI.esc(s.batchYear)}</td>
+      <td><span class="badge ${typeCls}">${UI.esc(typeLabel)}</span></td>
+      <td>${linkedInfo}</td>
       <td>${electiveInfo}</td>
       <td><span class="badge ${s.status === 'Active' ? 'badge-pass' : 'badge-pending'}">${UI.esc(s.status)}</span></td>
       <td class="muted" style="font-size:11px;">${UI.esc(s.createdBy)}</td>
@@ -1301,20 +1511,97 @@ async function _adminUploadStudents() {
   });
 }
 
+// ── Seat number CSV upload ─────────────────────────────────────
+let _csvSeats = [];
+function _adminPreviewSeatCSV(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    const lines = ev.target.result.split('\n').filter(l => l.trim());
+    _csvSeats = lines.slice(1).map(line => {
+      const cols = line.split(',').map(c => c.trim().replace(/^"|"$/g,''));
+      return { uin: cols[0], sessionId: cols[1], seatNumber: cols[2] };
+    }).filter(s => s.uin && s.sessionId && s.seatNumber);
+
+    const preview = document.getElementById('admin-seat-preview');
+    if (preview) {
+      preview.innerHTML = `<strong>${_csvSeats.length} seat entries parsed.</strong><br>
+        Preview: ${_csvSeats.slice(0,3).map(s => UI.esc(s.uin + ' → ' + s.seatNumber)).join(', ')}`;
+    }
+    const btn = document.getElementById('admin-seat-upload-btn');
+    if (btn) btn.disabled = false;
+  };
+  reader.readAsText(file);
+}
+
+async function _adminUploadSeats() {
+  if (_csvSeats.length === 0) return;
+  UI.showModal('Upload seat numbers', `Upload <strong>${_csvSeats.length} seat entries</strong> to SEAT_MASTER?`, {
+    confirmLabel: 'Upload',
+    onConfirm: async () => {
+      UI.showSpinner('Uploading seat numbers…');
+      try {
+        await State.uploadSeats(_csvSeats);
+        UI.hideSpinner();
+        UI.toast(`${_csvSeats.length} seat entries uploaded.`, 'success');
+        _csvSeats = [];
+        const btn = document.getElementById('admin-seat-upload-btn');
+        if (btn) btn.disabled = true;
+      } catch(e) {
+        UI.hideSpinner();
+        UI.toast('Upload failed: ' + e.message, 'error', 8000);
+      }
+    }
+  });
+}
+
+// ── Update session link (Final Gazette → Preliminary) ─────────
+async function _adminUpdateSessionLink() {
+  const finalId  = document.getElementById('admin-link-final-select')?.value;
+  const prelimId = document.getElementById('admin-link-prelim-select')?.value || '';
+  if (!finalId) { UI.toast('Select a Final Gazette session.', 'error'); return; }
+  const finalSess  = State.getSession(finalId);
+  const prelimSess = prelimId ? State.getSession(prelimId) : null;
+  const desc = prelimSess
+    ? `Link <strong>${UI.esc(finalSess.name)}</strong> to preliminary session <strong>${UI.esc(prelimSess.name)}</strong>?`
+    : `Remove preliminary link from <strong>${UI.esc(finalSess.name)}</strong>? Reval detection will be disabled.`;
+  UI.showModal('Update session link', desc, {
+    confirmLabel: 'Update link',
+    onConfirm: async () => {
+      UI.showSpinner('Updating…');
+      try {
+        await State.linkPrelimSession(finalId, prelimId);
+        UI.hideSpinner();
+        UI.toast('Session link updated. Reval tags recompute automatically.', 'success');
+        initAdmin();
+      } catch(e) {
+        UI.hideSpinner();
+        UI.toast('Error: ' + e.message, 'error', 8000);
+      }
+    }
+  });
+}
+
 function _adminRenderAudit() {
   const last50 = [...State.ledger].reverse().slice(0,50);
   const tbody  = document.getElementById('audit-tbody');
   if (!tbody) return;
-  tbody.innerHTML = last50.map(r => `
+  tbody.innerHTML = last50.map(r => {
+    const tag = State.computeAttemptTag(r.uin, r.subjectCode, r.examSession);
+    const tagHtml = tag
+      ? `<span class="attempt-tag">${UI.esc(tag)}</span>`
+      : '<span class="muted">—</span>';
+    return `
     <tr>
       <td>${UI.esc(r.entryDateTime?.slice(0,16).replace('T',' ') || '')}</td>
       <td>${UI.esc(r.enteredBy)}</td>
       <td>${UI.esc(r.name)}</td>
       <td>${UI.esc(r.subjectCode)}</td>
-      <td>${UI.attemptBadge(r.attemptType)}</td>
+      <td>${tagHtml}</td>
       <td>${UI.resultBadge(r.result)}</td>
     </tr>
-  `).join('');
+  `}).join('');
 }
 
 
