@@ -23,7 +23,11 @@ const Sheets = (() => {
       url += `?key=${encodeURIComponent(CONFIG.API_KEY)}`;
     }
     const r = await fetch(url, { headers });
-    if (!r.ok) throw new Error(`Sheets GET failed: ${r.status}`);
+    if (!r.ok) {
+      let detail = '';
+      try { const body = await r.json(); detail = body?.error?.message || ''; } catch(_) {}
+      throw new Error(`Sheets GET failed: ${r.status}${detail ? ' — ' + detail : ''} (tab: ${tab})`);
+    }
     const d = await r.json();
     return d.values || [];
   }
@@ -177,12 +181,18 @@ const Sheets = (() => {
   // ── SEAT_MASTER ──────────────────────────────────────────
   // Columns: A=UIN, B=Session ID, C=Seat Number
   async function getSeats() {
-    const rows = await getRange(CONFIG.TABS.SEAT, 'A2:C');
-    return rows.map(r => ({
-      uin:       r[0] || '',
-      sessionId: r[1] || '',
-      seatNumber:r[2] || '',
-    })).filter(s => s.uin && s.sessionId);
+    try {
+      const rows = await getRange(CONFIG.TABS.SEAT, 'A2:C');
+      return rows.map(r => ({
+        uin:       r[0] || '',
+        sessionId: r[1] || '',
+        seatNumber:r[2] || '',
+      })).filter(s => s.uin && s.sessionId);
+    } catch (e) {
+      // Tab doesn't exist yet — return empty until admin creates it in Google Sheets
+      console.warn('SEAT_MASTER tab not found — seat numbers unavailable:', e.message);
+      return [];
+    }
   }
 
   async function uploadSeats(seats) {
