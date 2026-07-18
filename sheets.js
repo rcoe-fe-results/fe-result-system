@@ -69,20 +69,21 @@ const Sheets = (() => {
   //          K=Entry Type (Preliminary|Final Gazette),
   //          L=Linked Preliminary Session ID
   async function getSessions() {
-    const rows = await getRange(CONFIG.TABS.EXAM, 'A2:L');
+    const rows = await getRange(CONFIG.TABS.EXAM, 'A2:M');
     return rows.map(r => ({
       id:                      r[0]  || '',
       name:                    r[1]  || '',
       semester:                Number(r[2]) || 1,
       batchYear:               r[3]  || '',
-      status:                  r[4]  || 'Active',   // Active | Locked
+      status:                  r[4]  || 'Active',
       createdBy:               r[5]  || '',
-      physicsTheoryCode:       r[6]  || '',   // BSC202X — set for Sem II only
-      physicsLabCode:          r[7]  || '',   // BSL201X
-      chemTheoryCode:          r[8]  || '',   // BSC203X
-      chemLabCode:             r[9]  || '',   // BSL202X
-      entryType:               r[10] || 'Preliminary',   // Preliminary | Final Gazette
+      physicsTheoryCode:       r[6]  || '',
+      physicsLabCode:          r[7]  || '',
+      chemTheoryCode:          r[8]  || '',
+      chemLabCode:             r[9]  || '',
+      entryType:               r[10] || 'Preliminary',
       linkedPrelimSessionId:   r[11] || '',
+      month:                   r[12] || _inferMonthFromName(r[1] || ''),
     })).filter(s => s.id);
   }
 
@@ -96,6 +97,7 @@ const Sheets = (() => {
       session.chemLabCode            || '',
       session.entryType              || 'Preliminary',
       session.linkedPrelimSessionId  || '',
+      session.month                  || '',
     ]]);
   }
 
@@ -217,6 +219,15 @@ const Sheets = (() => {
     }
     // Row not found in sheet — append instead (handles race condition)
     return appendRows(CONFIG.TABS.SEAT, [[uin, sessionId, seatNumber]]);
+  }
+
+  // ── Infer month from legacy session names ─────────────────
+  // Fallback for sessions created before the Month column was added.
+  // Parses 'Dec' or 'May' from the auto-generated session name.
+  function _inferMonthFromName(name) {
+    if (name.includes('Dec')) return 'December';
+    if (name.includes('May')) return 'May';
+    return '';
   }
 
   // ── Utility: generate Entry ID ────────────────────────────
