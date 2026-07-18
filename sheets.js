@@ -51,12 +51,13 @@ const Sheets = (() => {
       branch:    r[3] || '',
       division:  r[4] || '',
       batchYear: r[5] || '',
+      gender:    r[6] || '',
     })).filter(s => s.uin);
   }
 
   async function uploadStudents(students) {
     // Header row assumed already present; just appends
-    const rows = students.map(s => [s.uin, s.prn, s.name, s.branch, s.division, s.batchYear]);
+    const rows = students.map(s => [s.uin, s.prn, s.name, s.branch, s.division, s.batchYear, s.gender || '']);
     return appendRows(CONFIG.TABS.STUDENT, rows);
   }
 
@@ -131,7 +132,7 @@ const Sheets = (() => {
 
   // ── MASTER_LEDGER ────────────────────────────────────────
   async function getLedger() {
-    const rows = await getRange(CONFIG.TABS.LEDGER, 'A2:Y');
+    const rows = await getRange(CONFIG.TABS.LEDGER, 'A2:Z');
     return rows.map(r => ({
       entryId:       r[0]  || '',
       uin:           r[1]  || '',
@@ -158,6 +159,7 @@ const Sheets = (() => {
       source:        r[22] || '',
       enteredBy:     r[23] || '',
       entryDateTime: r[24] || '',
+      gender:        r[25] || '',
     })).filter(r => r.entryId);
   }
 
@@ -167,7 +169,7 @@ const Sheets = (() => {
       e.examSession, e.semester, e.subjectCode, e.subjectName, e.subjectType,
       e.creditsAssigned, e.attemptType, e.iatMarks, e.eseMarks, e.twMarks,
       e.oralMarks, e.totalMarks, e.grade, e.creditsEarned, e.result,
-      e.source, e.enteredBy, e.entryDateTime
+      e.source, e.enteredBy, e.entryDateTime, e.gender || ''
     ]);
     return appendRows(CONFIG.TABS.LEDGER, rows);
   }

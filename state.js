@@ -23,11 +23,12 @@ const State = (() => {
   async function reload() { await loadAll(); }
 
   // ── Students ──────────────────────────────────────────────
-  function getStudents({ branch, division, batchYear } = {}) {
+  function getStudents({ branch, division, batchYear, gender } = {}) {
     return students.filter(s =>
       (!branch    || s.branch    === branch)   &&
       (!division  || s.division  === division) &&
-      (!batchYear || s.batchYear === batchYear)
+      (!batchYear || s.batchYear === batchYear) &&
+      (!gender    || s.gender    === gender)
     );
   }
 
@@ -400,6 +401,7 @@ const State = (() => {
         source:          'WebApp',
         enteredBy:       user.email,
         entryDateTime:   now,
+        gender:          student.gender || '',
       };
 
       toAppend.push(row);
@@ -734,12 +736,13 @@ const State = (() => {
   // ── Reports data ──────────────────────────────────────────
 
   // Result Summary — filters: sessionId, branch?, subjectCode?, batchYear?, component?
-function reportResultSummary({ sessionId, branch, batchYear, subjectCode, component } = {}) {
+function reportResultSummary({ sessionId, branch, batchYear, subjectCode, component, gender } = {}) {
     let rows = ledger;
     if (sessionId)   rows = rows.filter(r => r.examSession === sessionId);
     if (branch)      rows = rows.filter(r => r.branch === branch);
     if (batchYear)   rows = rows.filter(r => r.batchYear === batchYear);
     if (subjectCode) rows = rows.filter(r => r.subjectCode === subjectCode);
+    if (gender)      rows = rows.filter(r => r.gender === gender);
 
     // Group by subject
     const bySubject = {};
@@ -847,58 +850,62 @@ function reportResultSummary({ sessionId, branch, batchYear, subjectCode, compon
       r.examSession === sessionId && r.result === 'Pass'
     );
 
-    if (mode === 'branch') {
-      // Top N per branch by total marks
-      const byStudentBranch = {};
-      for (const r of sessionRows) {
+    // Helper: build ranked list for a given gender filter ('Male', 'Female', or null = All)
+    function _rankBranch(rows, genderFilter) {
+      const byStudent = {};
+      for (const r of rows) {
         if (branch && r.branch !== branch) continue;
+        if (genderFilter && r.gender !== genderFilter) continue;
         const key = r.uin;
-        if (!byStudentBranch[key]) byStudentBranch[key] = { uin:r.uin, prn:r.prn, name:r.name, branch:r.branch, totalCredits:0, totalMarks:0 };
-        byStudentBranch[key].totalCredits += Number(r.creditsEarned) || 0;
-        byStudentBranch[key].totalMarks   += Number(r.totalMarks)    || 0;
+        if (!byStudent[key]) byStudent[key] = { uin:r.uin, prn:r.prn, name:r.name, branch:r.branch, gender:r.gender||'', totalCredits:0, totalMarks:0 };
+        byStudent[key].totalCredits += Number(r.creditsEarned) || 0;
+        byStudent[key].totalMarks   += Number(r.totalMarks)    || 0;
       }
-
-      // Group by branch, sort, top N each
       const byBranch = {};
-      for (const s of Object.values(byStudentBranch)) {
+      for (const s of Object.values(byStudent)) {
         if (!byBranch[s.branch]) byBranch[s.branch] = [];
         byBranch[s.branch].push(s);
       }
       const result = [];
-      for (const [br, list] of Object.entries(byBranch)) {
+      for (const [, list] of Object.entries(byBranch)) {
         list.sort((a,b) => b.totalMarks - a.totalMarks || b.totalCredits - a.totalCredits);
         list.slice(0, topN).forEach((s, i) => result.push({ rank: i+1, ...s }));
       }
       return result;
+    }
 
-    } else {
-      // Subject-wise: top 3 per branch for a given subject (or all subjects)
-      const filtered = sessionRows.filter(r =>
+    function _rankSubject(rows, genderFilter) {
+      const filtered = rows.filter(r =>
         (!subjectCode || r.subjectCode === subjectCode) &&
-        (!branch || r.branch === branch)
+        (!branch || r.branch === branch) &&
+        (!genderFilter || r.gender === genderFilter)
       );
-
-      // group by subjectCode → branch → students
       const bySubjBranch = {};
       for (const r of filtered) {
         const sk = r.subjectCode;
         const bk = r.branch;
         if (!bySubjBranch[sk]) bySubjBranch[sk] = {};
         if (!bySubjBranch[sk][bk]) bySubjBranch[sk][bk] = [];
-        bySubjBranch[sk][bk].push({ uin:r.uin, prn:r.prn, name:r.name, branch:r.branch,
+        bySubjBranch[sk][bk].push({ uin:r.uin, prn:r.prn, name:r.name, branch:r.branch, gender:r.gender||'',
           subjectCode:r.subjectCode, subjectName:r.subjectName,
           totalMarks: Number(r.totalMarks)||0 });
       }
-
       const result = [];
-      for (const [sk, branches] of Object.entries(bySubjBranch)) {
-        for (const [bk, list] of Object.entries(branches)) {
+      for (const [, branches] of Object.entries(bySubjBranch)) {
+        for (const [, list] of Object.entries(branches)) {
           list.sort((a,b) => b.totalMarks - a.totalMarks);
           list.slice(0, 3).forEach((s, i) => result.push({ rank: i+1, ...s }));
         }
       }
       return result;
     }
+
+    const rankFn = mode === 'branch' ? _rankBranch : _rankSubject;
+    return {
+      all:    rankFn(sessionRows, null),
+      male:   rankFn(sessionRows, 'Male'),
+      female: rankFn(sessionRows, 'Female'),
+    };
   }
 
   function reportCreditFilter(minCredits, sessionId) {
@@ -911,9 +918,10 @@ function reportResultSummary({ sessionId, branch, batchYear, subjectCode, compon
     return Object.values(byStudent).filter(s => s.credits < minCredits);
   }
 
-  function reportKTFilter(n, mode, scope) {
+  function reportKTFilter(n, mode, scope, gender) {
     const byStudent = {};
     for (const student of students) {
+      if (gender && student.gender !== gender) continue;
       const results = getStudentResults(student.uin);
       const allLedgerForStudent = ledger.filter(r => r.uin === student.uin);
 
@@ -932,7 +940,8 @@ function reportResultSummary({ sessionId, branch, batchYear, subjectCode, compon
         for (const s of subjects) {
           byStudent[student.uin + s.subjectCode] = {
             prn: student.prn, uin: student.uin, name: student.name,
-            branch: student.branch, subjectCode: s.subjectCode,
+            branch: student.branch, gender: student.gender || '',
+            subjectCode: s.subjectCode,
             subjectName: s.subjectName, session: s.examSession, result: s.result
           };
         }

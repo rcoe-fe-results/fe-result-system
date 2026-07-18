@@ -298,5 +298,5 @@ const LEDGER_COLS = [
   'Exam Session','Semester','Subject Code','Subject Name','Subject Type',
   'Credits Assigned','Attempt Type','IAT Marks','ESE Marks','TW Marks',
   'Oral Marks','Total Marks','Grade','Credits Earned','Result',
-  'Source','Entered By','Entry Date/Time'
+  'Source','Entered By','Entry Date/Time','Gender'
 ];
