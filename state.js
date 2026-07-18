@@ -970,7 +970,7 @@ function reportResultSummary({ sessionId, branch, batchYear, subjectCode, compon
     computeStudentAcademics,
     getStudentResults, getActiveKTSubjects, getKTEligibleStudents,
     getLatestEntryForSubject, getLedgerForStudent,
-    getSessionStatus,
+    getSessionStatus, getExpectedSubjectCount,
     submitEntries,
     getSeatNumber, getSeatsForSession, uploadSeats, updateSeatNumber,
     computeAttemptTag,
