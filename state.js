@@ -734,44 +734,65 @@ const State = (() => {
   // ── Reports data ──────────────────────────────────────────
 
   // Result Summary — filters: sessionId, branch?, subjectCode?, batchYear?, component?
-  function reportResultSummary({ sessionId, branch, subjectCode, batchYear, component } = {}) {
-    let rows = ledger.filter(r => (!sessionId || r.examSession === sessionId));
+function reportResultSummary({ sessionId, branch, batchYear, subjectCode, component } = {}) {
+    let rows = ledger;
+    if (sessionId)   rows = rows.filter(r => r.examSession === sessionId);
     if (branch)      rows = rows.filter(r => r.branch === branch);
     if (batchYear)   rows = rows.filter(r => r.batchYear === batchYear);
     if (subjectCode) rows = rows.filter(r => r.subjectCode === subjectCode);
 
+    // Group by subject
     const bySubject = {};
     for (const r of rows) {
-      if (!bySubject[r.subjectCode]) {
-        bySubject[r.subjectCode] = {
-          name: r.subjectName, type: r.subjectType,
-          pass:0, fail:0, ab:0, total:0,
-          iatTotal:0, iatCount:0,
-          eseTotal:0, eseCount:0,
-          twTotal:0,  twCount:0,
-          oralTotal:0,oralCount:0,
-        };
-      }
-      const d = bySubject[r.subjectCode];
-      d.total++;
-      if (r.result === 'Pass') d.pass++;
-      else if (r.result === 'Fail') d.fail++;
-      else if (r.result === 'AB')   d.ab++;
-
-      if (r.iatMarks  && r.iatMarks  !== 'AB') { d.iatTotal  += Number(r.iatMarks)  || 0; d.iatCount++;  }
-      if (r.eseMarks  && r.eseMarks  !== 'AB') { d.eseTotal  += Number(r.eseMarks)  || 0; d.eseCount++;  }
-      if (r.twMarks   && r.twMarks   !== 'AB') { d.twTotal   += Number(r.twMarks)   || 0; d.twCount++;   }
-      if (r.oralMarks && r.oralMarks !== 'AB') { d.oralTotal += Number(r.oralMarks) || 0; d.oralCount++; }
+      if (!bySubject[r.subjectCode]) bySubject[r.subjectCode] = { code: r.subjectCode, name: r.subjectName, rows: [] };
+      bySubject[r.subjectCode].rows.push(r);
     }
 
-    return Object.entries(bySubject).map(([code, d]) => ({
-      code, ...d,
-      passPct:  d.total ? Math.round(d.pass/d.total*100) : 0,
-      avgIAT:   d.iatCount  ? (d.iatTotal/d.iatCount).toFixed(1)   : '—',
-      avgESE:   d.eseCount  ? (d.eseTotal/d.eseCount).toFixed(1)   : '—',
-      avgTW:    d.twCount   ? (d.twTotal/d.twCount).toFixed(1)      : '—',
-      avgOral:  d.oralCount ? (d.oralTotal/d.oralCount).toFixed(1)  : '—',
-    }));
+    return Object.values(bySubject).map(({ code, name, rows }) => {
+      // ── Merge all rows per student per subject (same logic as computeStudentAcademics) ──
+      // Sort ascending by entryDateTime, then last-non-empty-wins per component per student.
+      const sorted = [...rows].sort((a, b) => a.entryDateTime.localeCompare(b.entryDateTime));
+      const mergedPerStudent = {};
+      for (const r of sorted) {
+        if (!mergedPerStudent[r.uin]) {
+          mergedPerStudent[r.uin] = { ...r };
+        } else {
+          const m = mergedPerStudent[r.uin];
+          if (r.iatMarks  !== '') m.iatMarks  = r.iatMarks;
+          if (r.eseMarks  !== '') m.eseMarks  = r.eseMarks;
+          if (r.twMarks   !== '') m.twMarks   = r.twMarks;
+          if (r.oralMarks !== '') m.oralMarks = r.oralMarks;
+          // Use latest result and entryDateTime
+          if (r.result        !== '') m.result        = r.result;
+          if (r.totalMarks    !== '') m.totalMarks    = r.totalMarks;
+          if (r.creditsEarned !== '') m.creditsEarned = r.creditsEarned;
+          m.entryDateTime = r.entryDateTime;
+        }
+      }
+
+      const entries = Object.values(mergedPerStudent);
+      const total   = entries.length;
+      const pass    = entries.filter(r => r.result === 'Pass').length;
+      const fail    = entries.filter(r => r.result === 'Fail').length;
+      const ab      = entries.filter(r => r.result === 'AB').length;
+
+      // Average marks per component (across merged rows that have that component)
+      const compSums  = { IAT: 0, ESE: 0, TW: 0, Oral: 0 };
+      const compCount = { IAT: 0, ESE: 0, TW: 0, Oral: 0 };
+      for (const r of entries) {
+        if (r.iatMarks  !== '') { compSums.IAT  += Number(r.iatMarks)  || 0; compCount.IAT++;  }
+        if (r.eseMarks  !== '') { compSums.ESE  += Number(r.eseMarks)  || 0; compCount.ESE++;  }
+        if (r.twMarks   !== '') { compSums.TW   += Number(r.twMarks)   || 0; compCount.TW++;   }
+        if (r.oralMarks !== '') { compSums.Oral += Number(r.oralMarks) || 0; compCount.Oral++; }
+      }
+
+      const avgMarks = {};
+      for (const comp of ['IAT','ESE','TW','Oral']) {
+        avgMarks[comp] = compCount[comp] > 0 ? (compSums[comp] / compCount[comp]) : null;
+      }
+
+      return { code, name, total, pass, fail, ab, passRate: total ? pass/total : 0, avgMarks };
+    });
   }
 
   // Reval Impact — filters: sessionId, branch?, subjectCode?
