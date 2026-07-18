@@ -36,16 +36,16 @@ const ATTEMPT_TYPES = ['Regular', 'Reval', 'KT', 'Grace'];
 
 // ── Semester I subjects ──────────────────────────────────────
 const SEM1_SUBJECTS = [
-  { code:'BSC101', name:'Applied Mathematics I',          type:'Theory+Tutorial',  credits:3,   marks:{ IAT:40, ESE:60, TW:25 } },
-  { code:'BSC102', name:'Applied Physics',                type:'Theory',           credits:2,   marks:{ IAT:30, ESE:45 } },
-  { code:'BSC103', name:'Applied Chemistry',              type:'Theory',           credits:2,   marks:{ IAT:30, ESE:45 } },
-  { code:'ESC101', name:'Engineering Mechanics',          type:'Theory',           credits:2,   marks:{ IAT:40, ESE:60 } },
-  { code:'ESC102', name:'Basic Electrical & Electronics', type:'Theory',           credits:3,   marks:{ IAT:40, ESE:60 } },
+  { code:'BSC101', name:'Applied Mathematics I',          type:'Theory+Tutorial',  credits:3,   marks:{ TW:25, ESE:60, IAT:40 } },
+  { code:'BSC102', name:'Applied Physics',                type:'Theory',           credits:2,   marks:{ ESE:45, IAT:30 } },
+  { code:'BSC103', name:'Applied Chemistry',              type:'Theory',           credits:2,   marks:{ ESE:45, IAT:30 } },
+  { code:'ESC101', name:'Engineering Mechanics',          type:'Theory',           credits:2,   marks:{ ESE:60, IAT:40 } },
+  { code:'ESC102', name:'Basic Electrical & Electronics', type:'Theory',           credits:3,   marks:{ ESE:60, IAT:40 } },
   { code:'BSL101', name:'Applied Physics Lab',            type:'Practical',        credits:0.5, marks:{ TW:25 } },
   { code:'BSL102', name:'Applied Chemistry Lab',          type:'Practical',        credits:0.5, marks:{ TW:25 } },
   { code:'ESL101', name:'Engineering Mechanics Lab',      type:'Practical+Oral',   credits:1,   marks:{ TW:25, Oral:25 } },
   { code:'ESL102', name:'BEE Lab',                        type:'Practical+Oral',   credits:1,   marks:{ TW:25, Oral:25 } },
-  { code:'AEC101', name:'Prof & Communication Ethics',    type:'Theory',           credits:2,   marks:{ IAT:30, ESE:45 } },
+  { code:'AEC101', name:'Prof & Communication Ethics',    type:'Theory',           credits:2,   marks:{ ESE:45, IAT:30 } },
   { code:'AEL101', name:'Prof & Comm Ethics Lab',         type:'Practical',        credits:1,   marks:{ TW:25 } },
   { code:'VSEC101',name:'Engineering Workshop I',         type:'Practical',        credits:1,   marks:{ TW:25 } },
   { code:'VSEC102',name:'C Programming',                  type:'Practical+Oral',   credits:2,   marks:{ TW:25, Oral:25 } },
@@ -119,18 +119,18 @@ function getSem2Subjects(branch, session) {
                        : { code: 'BSL202X', name: 'Elective Chemistry Lab' };
 
   return [
-    { code:'BSC201',    name:'Applied Mathematics II',             type:'Theory+Tutorial', credits:3,   marks:{ IAT:40, ESE:60, TW:25 } },
-    { code:'ESC201',    name:'Engineering Graphics',              type:'Theory',          credits:3,   marks:{ IAT:40, ESE:60 } },
-    { code:pcc.pccCode, name:pcc.pccName,                        type:'Theory',          credits:2,   marks:{ IAT:40, ESE:60 } },
+    { code:'BSC201',    name:'Applied Mathematics II',             type:'Theory+Tutorial', credits:3,   marks:{ TW:25, ESE:60, IAT:40 } },
+    { code:'ESC201',    name:'Engineering Graphics',              type:'Theory',          credits:3,   marks:{ ESE:60, IAT:40 } },
+    { code:pcc.pccCode, name:pcc.pccName,                        type:'Theory',          credits:2,   marks:{ ESE:60, IAT:40 } },
     { code:'ESL201',    name:'Engineering Graphics Lab',          type:'Practical+Oral',  credits:1,   marks:{ TW:25, Oral:25 } },
     { code:pcc.pclCode, name:pcc.pclName,                        type:'Practical+Oral',  credits:1,   marks:{ TW:25, Oral:25 } },
     { code:'CC201',     name:'Social Science & Community Services',type:'Practical',      credits:2,   marks:{ TW:25 } },
     { code:'IKS201',    name:'Indian Knowledge System',           type:'Practical',       credits:2,   marks:{ TW:25 } },
     { code:'VSEC201',   name:'Engineering Workshop II',           type:'Practical',       credits:1,   marks:{ TW:25 } },
     { code:'VSEC202',   name:'Python Programming',                type:'Practical+Oral',  credits:2,   marks:{ TW:25, Oral:25 } },
-    { code:phyT.code,   name:phyT.name,                           type:'Theory',          credits:2,   marks:{ IAT:30, ESE:45 } },
+    { code:phyT.code,   name:phyT.name,                           type:'Theory',          credits:2,   marks:{ ESE:45, IAT:30 } },
     { code:phyL.code,   name:phyL.name,                          type:'Practical',       credits:0.5, marks:{ TW:25 } },
-    { code:chT.code,    name:chT.name,                            type:'Theory',          credits:2,   marks:{ IAT:30, ESE:45 } },
+    { code:chT.code,    name:chT.name,                            type:'Theory',          credits:2,   marks:{ ESE:45, IAT:30 } },
     { code:chL.code,    name:chL.name,                           type:'Practical',       credits:0.5, marks:{ TW:25 } },
   ];
 }
