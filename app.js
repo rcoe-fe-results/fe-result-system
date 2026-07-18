@@ -934,77 +934,104 @@ function _pvShowStudent(uin) {
         <thead><tr>
           <th>Subject</th><th>Type</th><th>Attempt</th>
           <th>IAT</th><th>ESE</th><th>TW</th><th>Oral</th>
-          <th>Total</th><th>%</th><th>Grade</th><th>GP</th><th>G×C</th>
-          <th>Result</th><th>Credits</th>
+          <th>Total</th><th>%</th><th>Grade</th><th>GP</th><th>Credits</th><th>G×C</th>
+          <th>Result</th>
         </tr></thead>
         <tbody>`;
 
-    for (const r of group.rows) {
-      const isLatest = latestBySubject[r.subjectCode]?.entryId === r.entryId;
-      const drKey    = r.examSession + '||' + r.subjectCode + '||' + r.entryId;
-      const dr       = isLatest ? (drLookup[drKey] || null) : null;
+// Use merged rows from academics (one per subject per session)
+// acadSess.subjects has the merged data; fall back to group.rows deduped if academics unavailable
+    const displayRows = acadSess
+      ? acadSess.subjects.map(s => s.r)
+      : Object.values((() => {
+          const m = {};
+          for (const r of group.rows) {
+            if (!m[r.subjectCode] || r.entryDateTime > m[r.subjectCode].entryDateTime) m[r.subjectCode] = r;
+          }
+          return m;
+        })());
+
+    // Totals for footer
+    let footerTotalMarks = 0;
+    let footerGxC        = 0;
+    let footerCredits    = 0;
+    let footerHasTotal   = false;
+
+    for (const r of displayRows) {
+      const drKey = r.examSession + '||' + r.subjectCode + '||' + r.entryId;
+      const dr    = drLookup[drKey] || (acadSess?.subjects.find(s => s.r.subjectCode === r.subjectCode)?.dr) || null;
 
       let subjConfig = SEM1_SUBJECTS.find(s => s.code === r.subjectCode);
+      if (!subjConfig) subjConfig = getSem2Subjects(student.branch, sess).find(s => s.code === r.subjectCode);
       if (!subjConfig) subjConfig = getSem2Subjects(student.branch, null).find(s => s.code === r.subjectCode);
 
       const comps      = ['IAT', 'ESE', 'TW', 'Oral'];
       const compFields = { IAT: r.iatMarks, ESE: r.eseMarks, TW: r.twMarks, Oral: r.oralMarks };
 
       const cells = comps.map(comp => {
-        const val    = compFields[comp] || '—';
+        const val     = compFields[comp] || '—';
         const maxMark = subjConfig?.marks?.[comp];
         if (!maxMark) return `<td class="muted">—</td>`;
-        if (showPerComp && isLatest) {
+        if (showPerComp) {
           return `<td class="pv-comp-cell">${UI.esc(val)} ${_pvMarkTag(val === '—' ? null : val, maxMark)}</td>`;
         }
         return `<td>${UI.esc(val)}</td>`;
       }).join('');
 
-      // Grade / GP / GxC cells — only for latest row with all components
-      let gradeCell = '<td class="muted">—</td>';
-      let gpCell    = '<td class="muted">—</td>';
-      let gxcCell   = '<td class="muted">—</td>';
-      let pctCell   = '<td class="muted">—</td>';
-      let totalCell = `<td>${UI.esc(r.totalMarks || '—')}</td>`;
+      let gradeCell  = '<td class="muted">—</td>';
+      let gpCell     = '<td class="muted">—</td>';
+      let creditCell = '<td class="muted">—</td>';
+      let gxcCell    = '<td class="muted">—</td>';
+      let pctCell    = '<td class="muted">—</td>';
+      let totalCell  = `<td class="muted">—</td>`;
+      let resultCell = `<td>${UI.resultBadge(r.result)}</td>`;
 
-      if (isLatest && dr && !dr.pending) {
-        const gradeCls = dr.grade === 'F' ? 'grade-f' : dr.grade === 'O' ? 'grade-o' : '';
-        gradeCell = `<td class="grade-cell ${gradeCls}">${UI.esc(dr.grade)}</td>`;
-        gpCell    = `<td class="gp-cell">${dr.gradePoint}</td>`;
-        gxcCell   = `<td class="gxc-cell">${dr.GxC.toFixed(1)}</td>`;
-        pctCell   = `<td>${dr.pct.toFixed(1)}%</td>`;
-        totalCell = `<td>${dr.total}<small>/${dr.totalMax}</small></td>`;
-      } else if (isLatest && dr?.pending) {
-        gradeCell = `<td class="muted">Pending</td>`;
-        gpCell    = `<td class="muted">—</td>`;
-        gxcCell   = `<td class="muted">—</td>`;
-        pctCell   = `<td class="muted">—</td>`;
+      if (dr && !dr.pending) {
+        const gradeCls   = dr.grade === 'F' ? 'grade-f' : dr.grade === 'O' ? 'grade-o' : '';
+        gradeCell  = `<td class="grade-cell ${gradeCls}">${UI.esc(dr.grade)}</td>`;
+        gpCell     = `<td class="gp-cell">${dr.gradePoint}</td>`;
+        const creditCls  = dr.creditsEarned > 0 ? 'credit-earned' : 'credit-zero';
+        creditCell = `<td class="${creditCls}">${dr.creditsEarned}</td>`;
+        gxcCell    = `<td class="gxc-cell">${dr.GxC.toFixed(1)}</td>`;
+        pctCell    = `<td>${dr.pct.toFixed(1)}%</td>`;
+        totalCell  = `<td>${dr.total}<small>/${dr.totalMax}</small></td>`;
+        resultCell = `<td>${UI.resultBadge(dr.result)}</td>`;
+        // Accumulate footer totals
+        footerTotalMarks += dr.total;
+        footerGxC        += dr.GxC;
+        footerCredits    += dr.creditsEarned;
+        footerHasTotal    = true;
+      } else if (dr?.pending) {
+        gradeCell  = `<td class="muted">Pending</td>`;
+        resultCell = `<td>${UI.resultBadge('Pending')}</td>`;
       }
 
-      const creditCls = (isLatest && dr && !dr.pending && dr.creditsEarned > 0) ? 'credit-earned' : 'credit-zero';
-      const creditVal = (isLatest && dr && !dr.pending) ? dr.creditsEarned : (isLatest ? '—' : '');
-
       html += `
-        <tr class="${isLatest ? '' : 'row-superseded'}" title="${isLatest ? '' : 'Superseded by later entry'}">
+        <tr>
           <td><span class="subj-code-small">${UI.esc(r.subjectCode)}</span> ${UI.esc(r.subjectName)}</td>
           <td>${UI.esc(r.subjectType)}</td>
-          <td>${isLatest ? _pvAttemptTag(r.uin, r.subjectCode, r.examSession) : '<span class="muted">—</span>'}</td>
+          <td>${_pvAttemptTag(r.uin, r.subjectCode, r.examSession)}</td>
           ${cells}
-          ${totalCell}
-          ${pctCell}
-          ${gradeCell}
-          ${gpCell}
-          ${gxcCell}
-          <td>${isLatest ? UI.resultBadge(dr?.result || r.result) : '<span class="muted">—</span>'}</td>
-          <td class="${creditCls}">${creditVal}</td>
+          ${totalCell}${pctCell}${gradeCell}${gpCell}${creditCell}${gxcCell}
+          ${resultCell}
         </tr>`;
     }
 
-    // SGPA footer row
+    // Total + SGPA footer row
+    const footerTotal   = footerHasTotal ? String(footerTotalMarks) : '—';
+    const footerGxCStr  = footerHasTotal ? footerGxC.toFixed(1) : '—';
+    const footerCredStr = footerHasTotal ? String(footerCredits)  : '—';
+
     html += `
         <tr class="sgpa-row">
-          <td colspan="12" style="text-align:right; font-weight:600; color:var(--ink-2);">Session SGPA</td>
-          <td colspan="2" class="sgpa-val">${UI.esc(sgpaStr)}</td>
+          <td colspan="7" style="text-align:right; font-weight:600; color:var(--ink-2); padding-right:12px;">Total</td>
+          <td style="font-weight:700;">${UI.esc(footerTotal)}</td>
+          <td></td>
+          <td></td>
+          <td></td>
+          <td class="credit-earned" style="font-weight:700;">${UI.esc(footerCredStr)}</td>
+          <td class="gxc-cell" style="font-weight:700;">${UI.esc(footerGxCStr)}</td>
+          <td class="sgpa-val" colspan="1">SGPA: ${UI.esc(sgpaStr)}</td>
         </tr>`;
 
     html += `</tbody></table></div></div>`;

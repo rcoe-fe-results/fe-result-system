@@ -437,19 +437,37 @@ const State = (() => {
     const student = getStudent(uin);
     if (!student) return null;
 
-    // ── Build latest ledger entry per subject per session ──────
-    // key = sessionId + '||' + subjectCode → latest ledger row
-    const latestPerSessionSubject = {};
-    for (const r of ledger.filter(r => r.uin === uin)) {
+// ── Merge all ledger rows per subject per session ──────────
+    // For each student+subject+session, scan ALL rows sorted ascending by entryDateTime.
+    // Take the latest non-empty value per component across all rows.
+    // This handles partial entries spread across multiple submissions.
+    const mergedPerSessionSubject = {};   // key = sessionId+'||'+subjectCode → merged pseudo-row
+    const allStudentRows = ledger.filter(r => r.uin === uin)
+      .sort((a, b) => a.entryDateTime.localeCompare(b.entryDateTime));
+
+    for (const r of allStudentRows) {
       const key = r.examSession + '||' + r.subjectCode;
-      if (!latestPerSessionSubject[key] || r.entryDateTime > latestPerSessionSubject[key].entryDateTime) {
-        latestPerSessionSubject[key] = r;
+      if (!mergedPerSessionSubject[key]) {
+        // First row for this subject+session — clone it as the base
+        mergedPerSessionSubject[key] = { ...r };
+      } else {
+        // Subsequent rows — overwrite only non-empty components
+        const m = mergedPerSessionSubject[key];
+        if (r.iatMarks  !== '') m.iatMarks  = r.iatMarks;
+        if (r.eseMarks  !== '') m.eseMarks  = r.eseMarks;
+        if (r.twMarks   !== '') m.twMarks   = r.twMarks;
+        if (r.oralMarks !== '') m.oralMarks = r.oralMarks;
+        // Always take the latest entryDateTime and entryId as the canonical reference
+        m.entryDateTime = r.entryDateTime;
+        m.entryId       = r.entryId;
       }
     }
+    // Alias so the rest of computeStudentAcademics can use the same name
+    const latestPerSessionSubject = mergedPerSessionSubject;
 
-    // ── Build latest ledger entry per subject across ALL sessions ──
+// ── Latest merged row per subject across ALL sessions ──────
     // Used for CGPA and consolidated semester SGPA.
-    // KT entry for a subject supersedes Regular (latest entry date wins).
+    // KT entry for a subject supersedes Regular (latest entryDateTime wins).
     const latestPerSubject = {};
     for (const r of Object.values(latestPerSessionSubject)) {
       const code = r.subjectCode;
