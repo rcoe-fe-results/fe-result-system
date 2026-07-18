@@ -105,124 +105,198 @@ function _meSetMode(mode) {
 
 // ── AD-HOC MODE ───────────────────────────────────────────────
 function _meInitAdhoc() {
-  const sessions = State.getSessions().filter(s => s.status === 'Active');
-  UI.buildSelect('me-adhoc-session', sessions, '— select session —', 'id', 'name');
-  document.getElementById('me-adhoc-session').onchange = () => {
-    meAdhocState.session = State.getSession(document.getElementById('me-adhoc-session').value);
-    if (meAdhocState.student) _meAdhocRenderGrid();
-  };
-
   const searchInput = document.getElementById('me-adhoc-search');
   const resultsBox  = document.getElementById('me-adhoc-results');
   searchInput.value = '';
   resultsBox.innerHTML = '';
+  meAdhocState = { student: null, session: null };
   document.getElementById('me-adhoc-student-panel').classList.add('hidden');
+  document.getElementById('me-adhoc-session-picker').innerHTML = '';
 
   searchInput.addEventListener('input', _debounce(() => {
     const q = searchInput.value.trim();
     if (q.length < 2) { resultsBox.innerHTML = ''; return; }
-    const matches = State.searchStudents(q).slice(0, 10);
+
+    let matches = [];
+    // Pure digits → try seat number first
+    if (/^\d+$/.test(q)) {
+      const seatMatches = _meSearchBySeat(q);
+      if (seatMatches.length > 0) {
+        matches = seatMatches;
+      } else {
+        matches = State.searchStudents(q).slice(0, 10);
+      }
+    } else {
+      matches = State.searchStudents(q).slice(0, 10);
+    }
+
     resultsBox.innerHTML = matches.length
       ? matches.map(s => `
-          <div class="search-result" data-uin="${UI.esc(s.uin)}">
+          <div class="search-result" data-uin="${UI.esc(s.uin)}"
+               data-seat="${UI.esc(s._matchedSeat || '')}">
             <strong>${UI.esc(s.name)}</strong>
-            <span>${UI.esc(s.uin)} · ${UI.esc(s.branch)} · Batch ${UI.esc(s.batchYear)}</span>
+            <span>${UI.esc(s.uin)} · ${UI.esc(s.branch)} · Batch ${UI.esc(s.batchYear)}
+              ${s._matchedSeat ? `· <strong>Seat ${UI.esc(s._matchedSeat)}</strong>` : ''}
+            </span>
           </div>`).join('')
       : '<div class="search-result muted">No students found.</div>';
+
     resultsBox.querySelectorAll('.search-result[data-uin]').forEach(el => {
-      el.onclick = () => _meAdhocSelectStudent(el.dataset.uin);
+      el.onclick = () => _meAdhocSelectStudent(el.dataset.uin, el.dataset.seat || null);
     });
   }, 250));
 
   document.getElementById('me-adhoc-submit-btn').onclick = _meAdhocSubmit;
 }
 
+// Search students by seat number across all sessions
+function _meSearchBySeat(seatQuery) {
+  const matches = [];
+  const seen    = new Set();
+  // Find all seat entries matching this seat number
+  for (const sess of State.getSessions()) {
+    const seats = State.getSeatsForSession(sess.id);
+    for (const seat of seats) {
+      if (String(seat.seatNumber) === seatQuery && !seen.has(seat.uin)) {
+        const student = State.getStudent(seat.uin);
+        if (student) {
+          seen.add(seat.uin);
+          matches.push({ ...student, _matchedSeat: seat.seatNumber, _matchedSessionId: sess.id });
+        }
+      }
+    }
+  }
+  return matches;
+}
+
+// Check if a student is eligible for a given session
+function _isStudentEligibleForSession(student, session) {
+  // Fresh batch check
+  const year  = Number(session.name.slice(0, 4));
+  const month = session.month || (session.name.includes('Dec') ? 'December' : 'May');
+  const freshBatch = String(deriveFreshBatch(year, month));
+  if (student.batchYear === freshBatch) return true;
+  // KT check — has active fail/AB in any subject of this semester
+  const activeKTs = State.getActiveKTSubjects(student.uin);
+  return activeKTs.some(r => Number(r.semester) === session.semester);
+}
+
 let meAdhocState = { student: null, session: null };
 
-function _meAdhocSelectStudent(uin) {
-  meAdhocState.student = State.getStudent(uin);
+function _meAdhocSelectStudent(uin, matchedSeat) {
+  const student = State.getStudent(uin);
+  if (!student) return;
+  meAdhocState.student = student;
   document.getElementById('me-adhoc-results').innerHTML = '';
-  document.getElementById('me-adhoc-search').value = meAdhocState.student.name;
-  if (!meAdhocState.session) { UI.toast('Select a session first.', 'info'); return; }
-  _meAdhocRenderGrid();
+  document.getElementById('me-adhoc-search').value = student.name;
+
+  // Find eligible active sessions for this student
+  const eligibleSessions = State.getSessions().filter(s =>
+    s.status === 'Active' && _isStudentEligibleForSession(student, s)
+  );
+
+  if (eligibleSessions.length === 0) {
+    UI.toast('No active sessions found for this student.', 'error');
+    return;
+  }
+
+  // If came via seat number and exactly one session → auto-select
+  if (matchedSeat) {
+    // Find which session(s) this seat belongs to for this student
+    const seatSessions = State.getSessions().filter(sess => {
+      const seats = State.getSeatsForSession(sess.id);
+      return seats.some(s => s.uin === uin && String(s.seatNumber) === String(matchedSeat));
+    }).filter(s => s.status === 'Active');
+
+    if (seatSessions.length === 1) {
+      meAdhocState.session = seatSessions[0];
+      _meAdhocShowAutoSession(seatSessions[0], matchedSeat);
+      _meAdhocRenderGrid();
+      document.getElementById('me-adhoc-student-panel').classList.remove('hidden');
+      return;
+    }
+  }
+
+  // Multiple or no seat match → show session picker
+  _meAdhocShowSessionPicker(eligibleSessions);
   document.getElementById('me-adhoc-student-panel').classList.remove('hidden');
+  document.getElementById('me-adhoc-grid').innerHTML = '';
+  document.getElementById('me-adhoc-student-info').innerHTML = _meStudentInfoHtml(student, null);
+}
+
+function _meAdhocShowAutoSession(session, seatNum) {
+  const picker = document.getElementById('me-adhoc-session-picker');
+  picker.innerHTML = `
+    <div class="session-picker">
+      <div class="session-picker-label">Session — auto-detected from seat ${UI.esc(String(seatNum))}</div>
+      <div class="session-option" style="cursor:default; border-color:var(--pass); background:var(--pass-bg);">
+        <span class="session-option-name">${UI.esc(session.name)}</span>
+        <span class="session-auto-badge">✓ Auto-selected</span>
+      </div>
+    </div>`;
+}
+
+function _meAdhocShowSessionPicker(sessions) {
+  const picker = document.getElementById('me-adhoc-session-picker');
+  picker.innerHTML = `
+    <div class="session-picker">
+      <div class="session-picker-label">Select session</div>
+      ${sessions.map(s => `
+        <div class="session-option" data-session-id="${UI.esc(s.id)}">
+          <span class="session-option-name">${UI.esc(s.name)}</span>
+          <span class="session-option-meta">Sem ${s.semester} · ${UI.esc(s.batchYear)} · ${UI.esc(s.entryType)}</span>
+        </div>`).join('')}
+    </div>`;
+
+  picker.querySelectorAll('.session-option[data-session-id]').forEach(el => {
+    el.onclick = () => {
+      meAdhocState.session = State.getSession(el.dataset.sessionId);
+      // Highlight selected
+      picker.querySelectorAll('.session-option').forEach(o =>
+        o.style.borderColor = o === el ? 'var(--brand)' : ''
+      );
+      _meAdhocRenderGrid();
+    };
+  });
+}
+
+function _meStudentInfoHtml(student, session) {
+  const isKT = session
+    ? State.getActiveKTSubjects(student.uin).some(r => Number(r.semester) === session.semester)
+    : false;
+  const isFinal = session?.entryType === 'Final Gazette';
+  return `
+    <div class="student-card">
+      <div class="sc-name">${UI.esc(student.name)}
+        ${session
+          ? isKT
+            ? '<span class="badge badge-kt" style="margin-left:8px;">KT</span>'
+            : '<span class="badge badge-regular" style="margin-left:8px;">Regular</span>'
+          : ''}
+      </div>
+      <div class="sc-meta">
+        UIN: ${UI.esc(student.uin)} · PRN: ${UI.esc(student.prn || '—')} ·
+        ${UI.esc(student.branch)} · Div ${UI.esc(student.division)} · Batch ${UI.esc(student.batchYear)}
+      </div>
+      ${session
+        ? isFinal
+          ? '<div style="margin-top:6px;"><span class="session-type-inline final-gazette">📋 Final Gazette — only ESE editable</span></div>'
+          : '<div style="margin-top:6px;"><span class="session-type-inline preliminary">📝 Preliminary</span></div>'
+        : ''}
+    </div>`;
 }
 
 function _meAdhocRenderGrid() {
   const { student, session } = meAdhocState;
   if (!student || !session) return;
 
-  const isFinal    = session.entryType === 'Final Gazette';
-  const subjects   = getSubjectsForSem(session.semester, student.branch, session);
-  const ktSubjects = new Set(
-    State.getActiveKTSubjects(student.uin)
-      .filter(r => Number(r.semester) === session.semester)
-      .map(r => r.subjectCode)
-  );
-  const isKT = ktSubjects.size > 0;
+  document.getElementById('me-adhoc-student-info').innerHTML =
+    _meStudentInfoHtml(student, session);
 
-  const info = document.getElementById('me-adhoc-student-info');
-  info.innerHTML = `
-    <div class="student-card">
-      <div class="sc-name">${UI.esc(student.name)}
-        ${isKT ? '<span class="badge badge-kt" style="margin-left:8px;">KT</span>' : '<span class="badge badge-regular" style="margin-left:8px;">Regular</span>'}
-      </div>
-      <div class="sc-meta">UIN: ${UI.esc(student.uin)} · PRN: ${UI.esc(student.prn || '—')} · ${UI.esc(student.branch)} · Div ${UI.esc(student.division)} · Batch ${UI.esc(student.batchYear)}</div>
-      ${isFinal
-        ? '<div style="margin-top:6px;"><span class="session-type-inline final-gazette">📋 Final Gazette — only ESE editable</span></div>'
-        : '<div style="margin-top:6px;"><span class="session-type-inline preliminary">📝 Preliminary</span></div>'}
-    </div>`;
+  document.getElementById('me-adhoc-grid').innerHTML =
+    _meBuildSubjectGrid(student, session, 'adhoc');
 
-  let html = `<div class="single-grid">`;
-  for (const subj of subjects) {
-    const comps       = Object.keys(subj.marks);
-    const prevEntry   = State.getLatestEntryForSubject(student.uin, subj.code, session.id);
-    const prelimEntry = isFinal && session.linkedPrelimSessionId
-      ? State.getLatestEntryForSubject(student.uin, subj.code, session.linkedPrelimSessionId)
-      : null;
-
-    // KT component-level locking: check pass status per component across all sem sessions
-    const compPassStatus = _meGetCompPassStatus(student.uin, subj.code, session.semester);
-
-    html += `
-      <div class="subj-card">
-        <div class="subj-card-header">
-          <span class="subj-code">${UI.esc(subj.code)}</span>
-          <span class="subj-name">${UI.esc(subj.name)}</span>
-          <span class="subj-credits">${subj.credits} cr</span>
-        </div>
-        <div class="subj-inputs">`;
-
-    for (const comp of comps) {
-      const passedBefore = compPassStatus[comp] === 'pass';
-      const prevVal      = compPassStatus[comp + '_val'] || '';
-
-      if (isFinal) {
-        if (comp !== 'ESE') {
-          const prelimVal = prelimEntry ? (prelimEntry[comp.toLowerCase() + 'Marks'] || '—') : '—';
-          html += _meLockedCompHtml(comp, subj.marks[comp], prelimVal);
-        } else {
-          const existingFinal = prevEntry ? (prevEntry.eseMarks || '') : '';
-          const prelimESE     = prelimEntry ? (prelimEntry.eseMarks || '') : '';
-          const defaultVal    = existingFinal || prelimESE;
-          html += _meEditableCompHtml(comp, subj.marks[comp], subj.code, student.uin, defaultVal);
-        }
-      } else if (isKT && passedBefore) {
-        // KT student — component already passed → locked
-        html += _meLockedCompHtml(comp, subj.marks[comp], prevVal);
-      } else {
-        const existingVal = prevEntry ? (prevEntry[comp.toLowerCase() + 'Marks'] || '') : '';
-        html += _meEditableCompHtml(comp, subj.marks[comp], subj.code, student.uin, existingVal);
-      }
-    }
-    html += `</div></div>`;
-  }
-  html += `</div>`;
-  document.getElementById('me-adhoc-grid').innerHTML = html;
-
-  document.querySelectorAll('.mark-input-single').forEach(i => {
-    i.addEventListener('input', _beOnCellInput);
-  });
+  _meWireGrid('me-adhoc-grid');
 }
 
 // Returns per-component pass status for a student+subject across all sessions of a semester
@@ -283,6 +357,140 @@ function _meEditableCompHtml(comp, max, code, uin, val) {
         value="${UI.esc(val)}"
         autocomplete="off">
     </label>`;
+}
+
+// ── Shared subject grid builder ───────────────────────────────
+// Builds the full single-grid HTML for a student+session.
+// context = 'adhoc' | 'queue' — used for data-context attr on inputs
+function _meBuildSubjectGrid(student, session, context) {
+  const isFinal  = session.entryType === 'Final Gazette';
+  const subjects = getSubjectsForSem(session.semester, student.branch, session);
+  const isKT     = State.getActiveKTSubjects(student.uin)
+    .some(r => Number(r.semester) === session.semester);
+
+  let html = `<div class="single-grid">`;
+
+  for (const subj of subjects) {
+    const comps          = Object.keys(subj.marks);
+    const prevEntry      = State.getLatestEntryForSubject(student.uin, subj.code, session.id);
+    const prelimEntry    = isFinal && session.linkedPrelimSessionId
+      ? State.getLatestEntryForSubject(student.uin, subj.code, session.linkedPrelimSessionId)
+      : null;
+    const compPassStatus = _meGetCompPassStatus(student.uin, subj.code, session.semester);
+
+    html += `
+      <div class="subj-card" data-subjcode="${UI.esc(subj.code)}" data-context="${context}">
+        <div class="subj-card-header">
+          <span class="subj-code">${UI.esc(subj.code)}</span>
+          <span class="subj-name">${UI.esc(subj.name)}</span>
+          <span class="subj-credits">${subj.credits} cr</span>
+        </div>
+        <div class="subj-inputs">`;
+
+    for (const comp of comps) {
+      const passedBefore = compPassStatus[comp] === 'pass';
+      const prevVal      = compPassStatus[comp + '_val'] || '';
+
+      if (isFinal) {
+        if (comp !== 'ESE') {
+          const prelimVal = prelimEntry
+            ? (prelimEntry[comp.toLowerCase() + 'Marks'] || '—') : '—';
+          html += _meLockedCompHtml(comp, subj.marks[comp], prelimVal, subj.code);
+        } else {
+          const existingFinal = prevEntry ? (prevEntry.eseMarks || '') : '';
+          const prelimESE     = prelimEntry ? (prelimEntry.eseMarks || '') : '';
+          html += _meEditableCompHtml(comp, subj.marks[comp], subj.code, student.uin, existingFinal || prelimESE);
+        }
+      } else if (isKT && passedBefore) {
+        html += _meLockedCompHtml(comp, subj.marks[comp], prevVal, subj.code);
+      } else {
+        const existingVal = prevEntry ? (prevEntry[comp.toLowerCase() + 'Marks'] || '') : '';
+        html += _meEditableCompHtml(comp, subj.marks[comp], subj.code, student.uin, existingVal);
+      }
+    }
+
+    html += `
+        </div>
+        <div class="subj-summary incomplete" id="ss-${UI.esc(subj.code)}-${context}">
+          Incomplete
+        </div>
+      </div>`;
+  }
+
+  html += `</div>`;
+  return html;
+}
+
+// ── Wire grid inputs ──────────────────────────────────────────
+function _meWireGrid(containerId) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+
+  container.querySelectorAll('.mark-input-single').forEach(input => {
+    input.addEventListener('input', e => {
+      _beOnCellInput(e);
+      _meLiveSummary(input, containerId);
+    });
+    // Trigger summary for pre-filled values on load
+    if (input.value) _meLiveSummary(input, containerId);
+  });
+}
+
+// ── Live subject summary ──────────────────────────────────────
+function _meLiveSummary(triggerInput, containerId) {
+  const card = triggerInput.closest('.subj-card');
+  if (!card) return;
+
+  const subjCode = card.dataset.subjcode;
+  const context  = card.dataset.context;
+  const summaryEl = document.getElementById(`ss-${subjCode}-${context}`);
+  if (!summaryEl) return;
+
+  // Find subject config
+  const container = document.getElementById(containerId);
+  const session   = context === 'adhoc' ? meAdhocState.session : meQueueState.session;
+  const student   = context === 'adhoc' ? meAdhocState.student
+                                        : meQueueState.students[meQueueState.currentIdx];
+  if (!session || !student) return;
+
+  const subjects = getSubjectsForSem(session.semester, student.branch, session);
+  const subj     = subjects.find(s => s.code === subjCode);
+  if (!subj) return;
+
+  // Collect current values from ALL inputs in this card (editable + locked)
+  const marksMap = {};
+  card.querySelectorAll('.mark-input-single').forEach(input => {
+    const comp = input.dataset.comp;
+    if (!comp) return;
+    const val = input.value.trim();
+    if (val && val !== '—') marksMap[comp] = val;
+  });
+
+  // Compute display result
+  const dr = computeDisplayResult(subj, marksMap);
+
+  if (dr.pending) {
+    summaryEl.className = 'subj-summary incomplete';
+    summaryEl.textContent = 'Incomplete';
+    return;
+  }
+
+  const passClass = dr.result === 'Pass' ? 'pass-state' : 'fail-state';
+  summaryEl.className = `subj-summary ${passClass}`;
+
+  const gradeCls = dr.grade === 'F' ? 'ss-fail' : dr.grade === 'O' ? 'ss-pass' : 'ss-grade';
+  const resCls   = dr.result === 'Pass' ? 'ss-pass' : 'ss-fail';
+  const resIcon  = dr.result === 'Pass' ? '✓ Pass' : '✗ Fail';
+
+  summaryEl.innerHTML = `
+    <span class="ss-pill ss-total">${dr.total} / ${dr.totalMax}</span>
+    <span class="ss-pill ss-pct">${dr.pct.toFixed(1)}%</span>
+    <span class="ss-pill ${gradeCls}">Grade: ${dr.grade}</span>
+    <span class="ss-pill ss-gp">GP: ${dr.gradePoint}</span>
+    <span class="ss-pill ss-credit">C: ${dr.creditsEarned}</span>
+    <span class="ss-pill ${resCls}">${resIcon}</span>
+    ${dr.grace ? '<span class="ss-pill" style="background:var(--grace-bg);color:var(--grace);border-color:var(--grace);">Grace</span>' : ''}
+  `;
 }
 
 async function _meAdhocSubmit() {
@@ -419,53 +627,10 @@ function _meQueueRenderCard() {
         : '<span class="session-type-inline preliminary" style="margin-left:auto;">📝 Preliminary</span>'}
     </div>`;
 
-  // Subject cards
-  let html = `<div class="single-grid">`;
-  for (const subj of subjects) {
-    const comps       = Object.keys(subj.marks);
-    const prevEntry   = State.getLatestEntryForSubject(student.uin, subj.code, session.id);
-    const prelimEntry = isFinal && session.linkedPrelimSessionId
-      ? State.getLatestEntryForSubject(student.uin, subj.code, session.linkedPrelimSessionId)
-      : null;
-    const compPassStatus = _meGetCompPassStatus(student.uin, subj.code, session.semester);
+  document.getElementById('me-queue-grid').innerHTML =
+    _meBuildSubjectGrid(student, session, 'queue');
 
-    html += `
-      <div class="subj-card">
-        <div class="subj-card-header">
-          <span class="subj-code">${UI.esc(subj.code)}</span>
-          <span class="subj-name">${UI.esc(subj.name)}</span>
-          <span class="subj-credits">${subj.credits} cr</span>
-        </div>
-        <div class="subj-inputs">`;
-
-    for (const comp of comps) {
-      const passedBefore = compPassStatus[comp] === 'pass';
-      const prevVal      = compPassStatus[comp + '_val'] || '';
-
-      if (isFinal) {
-        if (comp !== 'ESE') {
-          const prelimVal = prelimEntry ? (prelimEntry[comp.toLowerCase() + 'Marks'] || '—') : '—';
-          html += _meLockedCompHtml(comp, subj.marks[comp], prelimVal);
-        } else {
-          const existingFinal = prevEntry ? (prevEntry.eseMarks || '') : '';
-          const prelimESE     = prelimEntry ? (prelimEntry.eseMarks || '') : '';
-          html += _meEditableCompHtml(comp, subj.marks[comp], subj.code, student.uin, existingFinal || prelimESE);
-        }
-      } else if (isKT && passedBefore) {
-        html += _meLockedCompHtml(comp, subj.marks[comp], prevVal);
-      } else {
-        const existingVal = prevEntry ? (prevEntry[comp.toLowerCase() + 'Marks'] || '') : '';
-        html += _meEditableCompHtml(comp, subj.marks[comp], subj.code, student.uin, existingVal);
-      }
-    }
-    html += `</div></div>`;
-  }
-  html += `</div>`;
-  document.getElementById('me-queue-grid').innerHTML = html;
-
-  document.querySelectorAll('#me-queue-grid .mark-input-single').forEach(i => {
-    i.addEventListener('input', _beOnCellInput);
-  });
+  _meWireGrid('me-queue-grid');
 
   // Focus first editable input
   const firstInput = document.querySelector('#me-queue-grid .mark-input-single:not([disabled])');
