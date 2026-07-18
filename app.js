@@ -1187,7 +1187,12 @@ function _rptLiveResultSummary() {
       <td style="color:var(--fail);font-weight:600;">${d.fail}</td>
       <td style="color:var(--ab);font-weight:600;">${d.ab}</td>
       <td><span class="badge ${passPct >= 60 ? 'badge-pass' : passPct >= 40 ? 'badge-pending' : 'badge-fail'}">${passPct}%</span></td>
-      <td>${comp && comp !== 'All' ? avgCell : `IAT:${fmtAvg(d.avgMarks.IAT)} ESE:${fmtAvg(d.avgMarks.ESE)} TW:${fmtAvg(d.avgMarks.TW)}`}</td>
+      <td>${comp && comp !== 'All' ? avgCell : [
+        d.avgMarks.IAT  != null ? `IAT:${fmtAvg(d.avgMarks.IAT)}`   : null,
+        d.avgMarks.ESE  != null ? `ESE:${fmtAvg(d.avgMarks.ESE)}`   : null,
+        d.avgMarks.TW   != null ? `TW:${fmtAvg(d.avgMarks.TW)}`     : null,
+        d.avgMarks.Oral != null ? `Oral:${fmtAvg(d.avgMarks.Oral)}` : null,
+      ].filter(Boolean).join(' ')}</td>
     </tr>`;
   }).join('');
 }
