@@ -564,12 +564,23 @@ async function _beSubmit() {
 // ═══════════════════════════════════════════════════════════════
 let singleState = { student: null, session: null, subjects: [] };
 
+let queueState = {
+  active:   false,
+  students: [],      // sorted list of student objects
+  cursor:   0,       // index into students[]
+  session:  null,
+  semester: null,
+  doneSet:  new Set(), // UIns of fully-entered students
+};
+
 function initSingleEntry() {
+  // ── Ad-hoc mode ───────────────────────────────────────────
   const searchInput = document.getElementById('se-search');
   const resultsBox  = document.getElementById('se-results');
   searchInput.value = '';
   resultsBox.innerHTML = '';
   document.getElementById('se-student-panel').classList.add('hidden');
+  document.getElementById('se-queue-progress').classList.add('hidden');
 
   searchInput.addEventListener('input', _debounce(() => {
     const q = searchInput.value.trim();
@@ -581,7 +592,6 @@ function initSingleEntry() {
         <span>${UI.esc(s.uin)} · ${UI.esc(s.branch)} · Batch ${UI.esc(s.batchYear)}</span>
       </div>`
     ).join('') : '<div class="search-result muted">No students found.</div>';
-
     resultsBox.querySelectorAll('.search-result[data-uin]').forEach(el => {
       el.onclick = () => _seSelectStudent(el.dataset.uin);
     });
@@ -594,6 +604,63 @@ function initSingleEntry() {
     if (singleState.student) _seRenderGrid();
   };
   document.getElementById('se-submit-btn').onclick = _seSubmit;
+
+  // ── Mode toggle ───────────────────────────────────────────
+  document.getElementById('se-mode-adhoc').onclick = () => _seSetMode('adhoc');
+  document.getElementById('se-mode-queue').onclick = () => _seSetMode('queue');
+
+  // ── Queue filters ─────────────────────────────────────────
+  UI.buildSelect('se-q-session', sessions, '— select session —', 'id', 'name');
+
+  document.getElementById('se-q-session').onchange = () => {
+    const sess = State.getSession(document.getElementById('se-q-session').value);
+    queueState.session = sess;
+    const semEl = document.getElementById('se-q-semester');
+    semEl.disabled = false;
+    if (sess) { semEl.value = sess.semester; queueState.semester = sess.semester; }
+    _seQueueEnableBranch();
+  };
+
+  document.getElementById('se-q-semester').onchange = () => {
+    queueState.semester = Number(document.getElementById('se-q-semester').value);
+    _seQueueEnableBranch();
+  };
+
+  document.getElementById('se-q-branch').onchange = () => {
+    const branch = document.getElementById('se-q-branch').value;
+    const divs   = branch ? State.getDivisions(branch) : [];
+    const multiDiv = divs.length > 1;
+    UI.buildSelect('se-q-division', multiDiv ? ['All', ...divs] : divs,
+      multiDiv ? '— select division —' : '— all divisions —');
+    document.getElementById('se-q-division').disabled = false;
+    document.getElementById('se-q-sort').disabled     = false;
+    document.getElementById('se-q-load-btn').disabled = !branch;
+  };
+
+  document.getElementById('se-q-load-btn').onclick = _queueLoad;
+  document.getElementById('se-q-skip-btn').onclick  = () => _queueAdvance(true);
+}
+
+function _seSetMode(mode) {
+  const isQueue = mode === 'queue';
+  document.getElementById('se-mode-adhoc').classList.toggle('active', !isQueue);
+  document.getElementById('se-mode-queue').classList.toggle('active',  isQueue);
+  document.getElementById('se-adhoc-filters').classList.toggle('hidden',  isQueue);
+  document.getElementById('se-queue-filters').classList.toggle('hidden', !isQueue);
+  if (!isQueue) {
+    document.getElementById('se-queue-progress').classList.add('hidden');
+    queueState.active = false;
+  }
+  document.getElementById('se-student-panel').classList.add('hidden');
+}
+
+function _seQueueEnableBranch() {
+  const branchEl = document.getElementById('se-q-branch');
+  branchEl.disabled = false;
+  UI.buildSelect('se-q-branch', BRANCHES, '— select branch —');
+  document.getElementById('se-q-division').disabled = true;
+  document.getElementById('se-q-sort').disabled     = true;
+  document.getElementById('se-q-load-btn').disabled = true;
 }
 
 function _seSelectStudent(uin) {
@@ -626,8 +693,8 @@ function _seRenderGrid() {
 
   let html = `<div class="single-grid">`;
   for (const subj of subjects) {
-    const comps     = Object.keys(subj.marks);
-    const prevEntry = State.getLatestEntryForSubject(student.uin, subj.code, session.id);
+    const comps       = Object.keys(subj.marks);
+    const prevEntry   = State.getLatestEntryForSubject(student.uin, subj.code, session.id);
     const prelimEntry = isFinal && session.linkedPrelimSessionId
       ? State.getLatestEntryForSubject(student.uin, subj.code, session.linkedPrelimSessionId)
       : null;
@@ -644,7 +711,6 @@ function _seRenderGrid() {
     for (const comp of comps) {
       if (isFinal) {
         if (comp !== 'ESE') {
-          // Show prelim value greyed
           const prelimVal = prelimEntry ? (prelimEntry[comp.toLowerCase() + 'Marks'] || '—') : '—';
           html += `
             <label class="comp-label locked">
@@ -653,7 +719,6 @@ function _seRenderGrid() {
                 data-max="${subj.marks[comp]}" value="${UI.esc(prelimVal)}" disabled autocomplete="off">
             </label>`;
         } else {
-          // ESE: editable, pre-filled with existing final gazette or prelim ESE
           const existingFinal = prevEntry ? (prevEntry.eseMarks || '') : '';
           const prelimESE     = prelimEntry ? (prelimEntry.eseMarks || '') : '';
           const defaultVal    = existingFinal || prelimESE;
@@ -670,7 +735,6 @@ function _seRenderGrid() {
             </label>`;
         }
       } else {
-        // Preliminary: all editable, pre-fill existing values
         const existingVal = prevEntry ? (prevEntry[comp.toLowerCase() + 'Marks'] || '') : '';
         html += `
           <label class="comp-label">
@@ -685,14 +749,65 @@ function _seRenderGrid() {
           </label>`;
       }
     }
-    html += `</div></div>`;
+
+    html += `</div>
+      <div class="subj-preview preview-pending" id="preview-${UI.esc(subj.code)}">—</div>
+    </div>`;
   }
   html += `</div>`;
   document.getElementById('se-grid').innerHTML = html;
 
+  // Wire input listeners — validation + live preview
   document.querySelectorAll('.mark-input-single').forEach(i => {
-    i.addEventListener('input', _beOnCellInput);
+    i.addEventListener('input', e => {
+      _beOnCellInput(e);
+      _seUpdatePreview(i.dataset.code);
+    });
   });
+
+  // Fire preview for any pre-filled subjects immediately
+  for (const subj of subjects) {
+    _seUpdatePreview(subj.code);
+  }
+}
+
+function _seUpdatePreview(subjectCode) {
+  const { student, session, subjects } = singleState;
+  const el = document.getElementById('preview-' + subjectCode);
+  if (!el || !student || !session) return;
+
+  const subj = subjects.find(s => s.code === subjectCode);
+  if (!subj) return;
+
+  const isFinal = session.entryType === 'Final Gazette';
+
+  // Build marksMap from current input values
+  const marksMap = {};
+  document.querySelectorAll(`.mark-input-single[data-code="${subjectCode}"]`).forEach(input => {
+    const val = input.value.trim();
+    if (val && !input.disabled) marksMap[input.dataset.comp] = val;
+    // For Final Gazette: supplement from disabled (prelim) inputs
+    if (isFinal && input.disabled && val && val !== '—') {
+      marksMap[input.dataset.comp] = val;
+    }
+  });
+
+  const dr = computeDisplayResult(subj, marksMap);
+
+  el.className = 'subj-preview';
+  if (dr.pending) {
+    el.className += ' preview-pending';
+    el.textContent = '—';
+    return;
+  }
+  if (dr.result === 'AB') {
+    el.className += ' preview-ab';
+    el.textContent = `AB · ${UI.esc(dr.grade)}`;
+    return;
+  }
+  el.className += dr.result === 'Pass' ? ' preview-pass' : ' preview-fail';
+  const graceNote = dr.grace ? ' ✦' : '';
+  el.textContent = `${dr.total}/${dr.totalMax} · ${dr.pct.toFixed(1)}% · ${dr.grade} · ${dr.result}${graceNote}`;
 }
 
 async function _seSubmit() {
@@ -718,12 +833,125 @@ async function _seSubmit() {
     const count = await State.submitEntries(session, entries);
     UI.hideSpinner();
     UI.toast(`✓ ${count} entries saved for ${student.name}.`, 'success');
+
+    // Queue mode: mark done if all subjects entered, then advance
+    if (queueState.active) {
+      const expectedCount = State.getExpectedSubjectCount(student, session);
+      const enteredCount  = [...new Set(
+        State.ledger
+          .filter(r => r.uin === student.uin && r.examSession === session.id)
+          .map(r => r.subjectCode)
+      )].length;
+      if (expectedCount && enteredCount >= expectedCount) {
+        queueState.doneSet.add(student.uin);
+      }
+      _queueAdvance(false);
+    }
   } catch (err) {
     UI.hideSpinner();
     UI.toast('Error: ' + err.message, 'error', 8000);
   }
 }
 
+
+// ═══════════════════════════════════════════════════════════════
+// ── Queue mode helpers ────────────────────────────────────────
+function _queueLoad() {
+  const session  = queueState.session;
+  const semester = queueState.semester;
+  const branch   = document.getElementById('se-q-branch').value;
+  const divVal   = document.getElementById('se-q-division').value;
+  const division = (divVal === 'All' || !divVal) ? null : divVal;
+  const sortBy   = document.getElementById('se-q-sort').value;
+
+  if (!session || !branch) {
+    UI.toast('Select session and branch first.', 'error'); return;
+  }
+  if (session.semester === 2 && !sessionHasElectives(session)) {
+    UI.toast('This Sem II session has no electives configured. Ask an Admin.', 'error', 6000); return;
+  }
+
+  let students = State.getStudents({ branch, division: division || undefined });
+  if (session.batchYear) students = students.filter(s => s.batchYear === session.batchYear);
+
+  if (students.length === 0) {
+    UI.toast('No students found for this selection.', 'error'); return;
+  }
+
+  // Sort
+  const seatEntries = State.getSeatsForSession(session.id);
+  const seatMap = {};
+  for (const s of seatEntries) seatMap[s.uin] = s.seatNumber;
+
+  if (sortBy !== 'default') {
+    students = [...students].sort((a, b) => {
+      if (sortBy === 'name') return a.name.localeCompare(b.name);
+      if (sortBy === 'uin')  return a.uin.localeCompare(b.uin);
+      if (sortBy === 'prn')  return (a.prn||'').localeCompare(b.prn||'');
+      if (sortBy === 'seat') {
+        const sa = seatMap[a.uin] || '', sb = seatMap[b.uin] || '';
+        const na = Number(sa), nb = Number(sb);
+        if (!isNaN(na) && !isNaN(nb)) return na - nb;
+        return sa.localeCompare(sb);
+      }
+      return 0;
+    });
+  }
+
+  // Compute initial doneSet — students with all subjects entered
+  const doneSet = new Set();
+  for (const s of students) {
+    const expected = State.getExpectedSubjectCount(s, session);
+    const entered  = [...new Set(
+      State.ledger
+        .filter(r => r.uin === s.uin && r.examSession === session.id)
+        .map(r => r.subjectCode)
+    )].length;
+    if (expected && entered >= expected) doneSet.add(s.uin);
+  }
+
+  queueState.active   = true;
+  queueState.students = students;
+  queueState.cursor   = 0;
+  queueState.doneSet  = doneSet;
+
+  document.getElementById('se-queue-progress').classList.remove('hidden');
+  document.getElementById('se-student-panel').classList.remove('hidden');
+
+  // Load the session into singleState so _seRenderGrid works
+  singleState.session = session;
+
+  _queueUpdateHeader();
+  _seSelectStudent(students[0].uin);
+}
+
+function _queueAdvance(skip) {
+  const { students, cursor } = queueState;
+  const next = cursor + 1;
+  if (next >= students.length) {
+    UI.toast('🎉 End of queue — all students covered.', 'success', 5000);
+    document.getElementById('se-queue-progress').classList.add('hidden');
+    document.getElementById('se-student-panel').classList.add('hidden');
+    queueState.active = false;
+    return;
+  }
+  queueState.cursor = next;
+  _queueUpdateHeader();
+  _seSelectStudent(students[next].uin);
+}
+
+function _queueUpdateHeader() {
+  const { students, cursor, doneSet } = queueState;
+  const total   = students.length;
+  const done    = doneSet.size;
+  const pending = total - done;
+  const student = students[cursor];
+
+  document.getElementById('se-q-pos').textContent     = `${cursor + 1} / ${total}`;
+  document.getElementById('se-q-done').textContent    = `${done} done`;
+  document.getElementById('se-q-pending').textContent = ` · ${pending} pending`;
+  document.getElementById('se-q-student-name').textContent = student ? student.name : '';
+}
 
 // ═══════════════════════════════════════════════════════════════
 // TAB 3 — STUDENT PROGRESS VIEW

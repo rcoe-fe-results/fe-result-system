@@ -609,10 +609,57 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
 .session-block > div { overflow-x: auto; }
 
 /* ─── Attempt tags (computed) ────────────────────────────── */
+/* ─── Attempt tags (computed) ────────────────────────────── */
 .attempt-tag {
   display:inline-block; font-size:10px; font-weight:600;
   padding:2px 7px; border-radius:4px;
   background:var(--surface-2); color:var(--ink-3); white-space:nowrap;
+}
+
+/* ─── Single entry mode toggle ───────────────────────────── */
+.se-mode-toggle {
+  display:inline-flex; border:1px solid var(--border-2);
+  border-radius:20px; overflow:hidden; margin-bottom:14px;
+}
+.se-mode-btn {
+  padding:5px 18px; font-size:12px; font-weight:600;
+  border:none; background:transparent; color:var(--ink-3);
+  cursor:pointer; transition:all .15s; font-family:inherit;
+}
+.se-mode-btn.active {
+  background:var(--brand); color:#fff;
+}
+
+/* ─── Queue progress header ──────────────────────────────── */
+.queue-progress-bar {
+  display:flex; align-items:center; gap:12px; flex-wrap:wrap;
+  background:var(--brand-light); border:1px solid #C7D7FF;
+  border-radius:var(--radius); padding:10px 16px;
+  margin-bottom:14px; font-size:13px;
+}
+.queue-pos    { font-weight:700; color:var(--brand); font-size:15px; }
+.queue-stats  { color:var(--ink-3); font-size:12px; }
+.queue-done   { color:var(--pass); font-weight:600; }
+.queue-pending{ color:var(--ink-3); }
+.queue-actions{ margin-left:auto; display:flex; gap:8px; }
+
+/* ─── Subject preview strip ──────────────────────────────── */
+.subj-preview {
+  margin:6px 12px 10px;
+  font-family:'DM Mono', monospace; font-size:11px;
+  min-height:18px;
+}
+.subj-preview.preview-pass {
+  color:var(--pass);
+}
+.subj-preview.preview-fail {
+  color:var(--fail);
+}
+.subj-preview.preview-ab {
+  color:var(--ab);
+}
+.subj-preview.preview-pending {
+  color:var(--ink-4);
 }
 </style>
 </head>
@@ -722,10 +769,19 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
     </div>
 
     <!-- ─── TAB: Single Student Entry ─── -->
+    <!-- ─── TAB: Single Student Entry ─── -->
     <div id="tab-single-entry" class="tab-pane hidden">
       <div class="card">
         <div class="card-title">Single Student Entry</div>
-        <div class="filters">
+
+        <!-- Mode toggle -->
+        <div class="se-mode-toggle">
+          <button class="se-mode-btn active" id="se-mode-adhoc">Ad-hoc</button>
+          <button class="se-mode-btn" id="se-mode-queue">Queue</button>
+        </div>
+
+        <!-- Ad-hoc filters -->
+        <div id="se-adhoc-filters" class="filters">
           <div class="filter-group">
             <label>Session</label>
             <select id="se-session"><option value="">— select session —</option></select>
@@ -738,12 +794,63 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
             </div>
           </div>
         </div>
+
+        <!-- Queue filters -->
+        <div id="se-queue-filters" class="filters hidden">
+          <div class="filter-group">
+            <label>Session</label>
+            <select id="se-q-session"><option value="">— select session —</option></select>
+          </div>
+          <div class="filter-group">
+            <label>Semester</label>
+            <select id="se-q-semester" disabled>
+              <option value="">—</option>
+              <option value="1">Semester I</option>
+              <option value="2">Semester II</option>
+            </select>
+          </div>
+          <div class="filter-group">
+            <label>Branch</label>
+            <select id="se-q-branch" disabled><option value="">— select —</option></select>
+          </div>
+          <div class="filter-group">
+            <label>Division</label>
+            <select id="se-q-division" disabled><option value="">All divisions</option></select>
+          </div>
+          <div class="filter-group">
+            <label>Sort by</label>
+            <select id="se-q-sort" disabled>
+              <option value="default">Default (sheet order)</option>
+              <option value="seat">Seat Number ↑</option>
+              <option value="name">Name (A–Z)</option>
+              <option value="uin">UIN</option>
+              <option value="prn">PRN</option>
+            </select>
+          </div>
+          <div class="filter-group" style="justify-content:flex-end;">
+            <label>&nbsp;</label>
+            <button id="se-q-load-btn" class="btn btn-secondary" disabled>Load queue</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Queue progress bar — shown after queue loads -->
+      <div id="se-queue-progress" class="queue-progress-bar hidden" style="margin-top:14px;">
+        <span class="queue-pos" id="se-q-pos">1 / —</span>
+        <span class="queue-stats">
+          <span class="queue-done" id="se-q-done">0 done</span>
+          <span class="queue-pending" id="se-q-pending"> · — pending</span>
+        </span>
+        <span id="se-q-student-name" style="font-weight:600; color:var(--ink-2);"></span>
+        <div class="queue-actions">
+          <button id="se-q-skip-btn" class="btn btn-secondary btn-sm">Skip →</button>
+        </div>
       </div>
 
       <div id="se-student-panel" class="hidden" style="margin-top:16px;">
         <div id="se-student-info" style="margin-bottom:14px;"></div>
         <div id="se-grid"></div>
-        <div style="margin-top:14px; display:flex; justify-content:flex-end;">
+        <div style="margin-top:14px; display:flex; justify-content:flex-end; gap:10px;">
           <button id="se-submit-btn" class="btn btn-primary">Save marks →</button>
         </div>
       </div>
