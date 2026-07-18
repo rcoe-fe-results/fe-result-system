@@ -110,6 +110,14 @@ const State = (() => {
     seats.push(...seatList);
   }
 
+  async function updateSeatNumber(uin, sessionId, seatNumber) {
+    await Sheets.updateSeatNumber(uin, sessionId, seatNumber);
+    // Update in-memory
+    const existing = seats.find(s => s.uin === uin && s.sessionId === sessionId);
+    if (existing) existing.seatNumber = seatNumber;
+    else seats.push({ uin, sessionId, seatNumber });
+  }
+
   // ── Computed attempt tags (never stored, always computed) ─
   // Returns a human-readable tag string for a given ledger entry
   // in the context of all ledger history.
@@ -411,6 +419,300 @@ const State = (() => {
     return m.value !== null ? String(m.value) : '';
   }
 
+  // ── Academic computation (grades, SGPA, CGPA, credits) ───
+  //
+  // All calculations use grace-adjusted values via computeDisplayResult.
+  // Nothing stored — always recomputed from ledger component marks.
+  //
+  // Returns:
+  // {
+  //   sessionResults: [ { session, subjects: [ subjectResult ], sgpa, pendingCount } ],
+  //   semCredits:     { 1: { earned, max, completedInSession }, 2: { ... } },
+  //   consolidatedSGPA: { 1: number|null, 2: number|null },
+  //   cgpa:           number|null,
+  //   totalCredits:   { earned, max },
+  //   feCompleted:    { done: bool, session: sessionName|null },
+  // }
+  function computeStudentAcademics(uin) {
+    const student = getStudent(uin);
+    if (!student) return null;
+
+    // ── Build latest ledger entry per subject per session ──────
+    // key = sessionId + '||' + subjectCode → latest ledger row
+    const latestPerSessionSubject = {};
+    for (const r of ledger.filter(r => r.uin === uin)) {
+      const key = r.examSession + '||' + r.subjectCode;
+      if (!latestPerSessionSubject[key] || r.entryDateTime > latestPerSessionSubject[key].entryDateTime) {
+        latestPerSessionSubject[key] = r;
+      }
+    }
+
+    // ── Build latest ledger entry per subject across ALL sessions ──
+    // Used for CGPA and consolidated semester SGPA.
+    // KT entry for a subject supersedes Regular (latest entry date wins).
+    const latestPerSubject = {};
+    for (const r of Object.values(latestPerSessionSubject)) {
+      const code = r.subjectCode;
+      if (!latestPerSubject[code] || r.entryDateTime > latestPerSubject[code].entryDateTime) {
+        latestPerSubject[code] = r;
+      }
+    }
+
+    // ── Helper: build marksMap from a ledger row ───────────────
+    function _marksMapFromRow(r) {
+      const m = {};
+      if (r.iatMarks  !== '') m.IAT  = r.iatMarks;
+      if (r.eseMarks  !== '') m.ESE  = r.eseMarks;
+      if (r.twMarks   !== '') m.TW   = r.twMarks;
+      if (r.oralMarks !== '') m.Oral = r.oralMarks;
+      return m;
+    }
+
+    // ── Helper: get subject config for a ledger row ────────────
+    function _subjectForRow(r) {
+      const sess = getSession(r.examSession);
+      const subjectList = getSubjectsForSem(Number(r.semester), r.branch || student.branch, sess);
+      return subjectList.find(s => s.code === r.subjectCode) || null;
+    }
+
+    // ── Per-session results ────────────────────────────────────
+    // Sort sessions chronologically (by session creation id, which embeds timestamp)
+    const sessionOrder = sessions
+      .filter(s => Object.values(latestPerSessionSubject).some(r => r.examSession === s.id))
+      .sort((a, b) => a.id.localeCompare(b.id));
+
+    const sessionResults = [];
+
+    for (const sess of sessionOrder) {
+      const sessRows = Object.values(latestPerSessionSubject)
+        .filter(r => r.examSession === sess.id);
+
+      const subjectResults = [];
+      let sumGxC    = 0;
+      let sumC      = 0;
+      let pendingCount = 0;
+
+      for (const r of sessRows) {
+        const subj = _subjectForRow(r);
+        if (!subj) continue;
+
+        // For Final Gazette sessions: supplement ESE-only rows with Prelim IAT/TW/Oral
+        let marksMap = _marksMapFromRow(r);
+        if (sess.entryType === 'Final Gazette' && sess.linkedPrelimSessionId) {
+          const prelimKey = sess.linkedPrelimSessionId + '||' + r.subjectCode;
+          const prelimRow = latestPerSessionSubject[prelimKey];
+          if (prelimRow) {
+            if (!marksMap.IAT  && prelimRow.iatMarks)  marksMap.IAT  = prelimRow.iatMarks;
+            if (!marksMap.TW   && prelimRow.twMarks)   marksMap.TW   = prelimRow.twMarks;
+            if (!marksMap.Oral && prelimRow.oralMarks) marksMap.Oral = prelimRow.oralMarks;
+          }
+        }
+
+        const dr = computeDisplayResult(subj, marksMap);
+
+        if (dr.pending) {
+          pendingCount++;
+          subjectResults.push({ r, subj, dr, pending: true });
+          continue;
+        }
+
+        subjectResults.push({ r, subj, dr, pending: false });
+
+        if (!dr.pending && dr.grade !== 'F' && dr.creditsEarned > 0) {
+          sumGxC += dr.GxC;
+          sumC   += subj.credits;
+        }
+      }
+
+      const sgpa = sumC > 0 ? Math.round((sumGxC / sumC) * 100) / 100 : null;
+
+      sessionResults.push({
+        session:      sess,
+        subjects:     subjectResults,
+        sgpa,
+        pendingCount,
+      });
+    }
+
+    // ── Per-semester credit tracking ───────────────────────────
+    // For each semester, compute earned vs max using LATEST result per subject
+    // across ALL sessions. KT result overwrites Regular for same subject.
+    const semCredits   = { 1: { earned: 0, max: 0, completedInSession: null },
+                           2: { earned: 0, max: 0, completedInSession: null } };
+    const semSubjects  = { 1: new Set(), 2: new Set() };
+
+    // Compute max credits per semester for this student's branch
+    for (const sem of [1, 2]) {
+      // For Sem 2 we need a session to get branch-specific subjects
+      // Use the first session for this semester that the student has results in
+      const semSess = sessions.find(s =>
+        s.semester === sem &&
+        Object.values(latestPerSessionSubject).some(r => r.examSession === s.id)
+      );
+      if (!semSess && sem === 1) {
+        // Fall back to SEM1_SUBJECTS for max
+        semCredits[sem].max = SEM1_SUBJECTS.reduce((s, sub) => s + sub.credits, 0);
+      } else if (semSess) {
+        semCredits[sem].max = getSubjectsForSem(sem, student.branch, semSess)
+          .reduce((s, sub) => s + sub.credits, 0);
+      }
+    }
+
+    // Walk through all latest-per-subject rows and accumulate earned credits
+    // Also track which session completed each semester
+    // Process in session chronological order so we can find the completing session
+    for (const sess of sessionOrder) {
+      const sem = sess.semester;
+      if (!semCredits[sem]) continue;
+
+      const sessRows = Object.values(latestPerSessionSubject)
+        .filter(r => r.examSession === sess.id);
+
+      for (const r of sessRows) {
+        const subj = _subjectForRow(r);
+        if (!subj) continue;
+
+        // Only count if this IS the latest result for this subject overall
+        if (latestPerSubject[r.subjectCode]?.entryDateTime !== r.entryDateTime) continue;
+
+        let marksMap = _marksMapFromRow(r);
+        if (sess.entryType === 'Final Gazette' && sess.linkedPrelimSessionId) {
+          const prelimKey = sess.linkedPrelimSessionId + '||' + r.subjectCode;
+          const prelimRow = latestPerSessionSubject[prelimKey];
+          if (prelimRow) {
+            if (!marksMap.IAT  && prelimRow.iatMarks)  marksMap.IAT  = prelimRow.iatMarks;
+            if (!marksMap.TW   && prelimRow.twMarks)   marksMap.TW   = prelimRow.twMarks;
+            if (!marksMap.Oral && prelimRow.oralMarks) marksMap.Oral = prelimRow.oralMarks;
+          }
+        }
+
+        const dr = computeDisplayResult(subj, marksMap);
+        if (!dr.pending && dr.creditsEarned > 0) {
+          semSubjects[sem].add(r.subjectCode);
+        }
+      }
+
+      // Recompute earned total for this semester after processing this session
+      // (to detect the completing session)
+      let earnedSoFar = 0;
+      const allSemSubjects = semCredits[sem].max > 0
+        ? getSubjectsForSem(sem, student.branch, sess)
+        : [];
+
+      for (const subj of allSemSubjects) {
+        if (semSubjects[sem].has(subj.code)) earnedSoFar += subj.credits;
+      }
+
+      if (earnedSoFar >= semCredits[sem].max && semCredits[sem].max > 0 &&
+          !semCredits[sem].completedInSession) {
+        semCredits[sem].completedInSession = sess.name;
+      }
+    }
+
+    // Final earned credits per semester
+    for (const sem of [1, 2]) {
+      const semSess = sessions.find(s => s.semester === sem &&
+        Object.values(latestPerSessionSubject).some(r => r.examSession === s.id));
+      if (!semSess) continue;
+      const allSemSubjects = getSubjectsForSem(sem, student.branch, semSess);
+      semCredits[sem].earned = allSemSubjects
+        .filter(sub => semSubjects[sem].has(sub.code))
+        .reduce((s, sub) => s + sub.credits, 0);
+    }
+
+    const totalEarned = semCredits[1].earned + semCredits[2].earned;
+    const totalMax    = semCredits[1].max    + semCredits[2].max;
+
+    // ── Consolidated Semester SGPA ─────────────────────────────
+    // Computed once all credits for that semester are earned.
+    // Uses latest result per subject across all sessions for that semester.
+    const consolidatedSGPA = { 1: null, 2: null };
+    for (const sem of [1, 2]) {
+      if (semCredits[sem].earned < semCredits[sem].max) continue;  // not yet complete
+      const semSess = sessions.find(s => s.semester === sem &&
+        Object.values(latestPerSessionSubject).some(r => r.examSession === s.id));
+      if (!semSess) continue;
+
+      let sumGxC = 0, sumC = 0;
+      const allSemSubjects = getSubjectsForSem(sem, student.branch, semSess);
+      for (const subj of allSemSubjects) {
+        const r = latestPerSubject[subj.code];
+        if (!r) continue;
+        const sess = getSession(r.examSession);
+        let marksMap = _marksMapFromRow(r);
+        if (sess?.entryType === 'Final Gazette' && sess.linkedPrelimSessionId) {
+          const prelimKey = sess.linkedPrelimSessionId + '||' + r.subjectCode;
+          const prelimRow = latestPerSessionSubject[prelimKey];
+          if (prelimRow) {
+            if (!marksMap.IAT  && prelimRow.iatMarks)  marksMap.IAT  = prelimRow.iatMarks;
+            if (!marksMap.TW   && prelimRow.twMarks)   marksMap.TW   = prelimRow.twMarks;
+            if (!marksMap.Oral && prelimRow.oralMarks) marksMap.Oral = prelimRow.oralMarks;
+          }
+        }
+        const dr = computeDisplayResult(subj, marksMap);
+        if (!dr.pending) {
+          sumGxC += dr.GxC;
+          sumC   += subj.credits;
+        }
+      }
+      if (sumC > 0) consolidatedSGPA[sem] = Math.round((sumGxC / sumC) * 100) / 100;
+    }
+
+    // ── CGPA — live, all subjects, latest result ───────────────
+    let cgpaSumGxC = 0, cgpaSumC = 0;
+    for (const r of Object.values(latestPerSubject)) {
+      const subj = _subjectForRow(r);
+      if (!subj) continue;
+      const sess = getSession(r.examSession);
+      let marksMap = _marksMapFromRow(r);
+      if (sess?.entryType === 'Final Gazette' && sess.linkedPrelimSessionId) {
+        const prelimKey = sess.linkedPrelimSessionId + '||' + r.subjectCode;
+        const prelimRow = latestPerSessionSubject[prelimKey];
+        if (prelimRow) {
+          if (!marksMap.IAT  && prelimRow.iatMarks)  marksMap.IAT  = prelimRow.iatMarks;
+          if (!marksMap.TW   && prelimRow.twMarks)   marksMap.TW   = prelimRow.twMarks;
+          if (!marksMap.Oral && prelimRow.oralMarks) marksMap.Oral = prelimRow.oralMarks;
+        }
+      }
+      const dr = computeDisplayResult(subj, marksMap);
+      if (!dr.pending) {
+        cgpaSumGxC += dr.GxC;
+        cgpaSumC   += subj.credits;
+      }
+    }
+    const cgpa = cgpaSumC > 0 ? Math.round((cgpaSumGxC / cgpaSumC) * 100) / 100 : null;
+
+    // ── FE Completed ───────────────────────────────────────────
+    const feCompleted = semCredits[1].earned >= semCredits[1].max &&
+                        semCredits[1].max > 0 &&
+                        semCredits[2].earned >= semCredits[2].max &&
+                        semCredits[2].max > 0;
+
+    // Completing session = whichever semester was completed last
+    let feSession = null;
+    if (feCompleted) {
+      const s1 = semCredits[1].completedInSession;
+      const s2 = semCredits[2].completedInSession;
+      // Find which was completed later by matching session names back to session ids
+      const sess1 = sessions.find(s => s.name === s1);
+      const sess2 = sessions.find(s => s.name === s2);
+      if (sess1 && sess2) {
+        feSession = sess1.id > sess2.id ? s1 : s2;
+      } else {
+        feSession = s1 || s2;
+      }
+    }
+
+    return {
+      sessionResults,
+      semCredits,
+      consolidatedSGPA,
+      cgpa,
+      totalCredits: { earned: totalEarned, max: totalMax },
+      feCompleted:  { done: feCompleted, session: feSession },
+    };
+  }
+
   // ── Reports data ──────────────────────────────────────────
 
   // Result Summary — filters: sessionId, branch?, subjectCode?, batchYear?, component?
@@ -626,11 +928,12 @@ const State = (() => {
     loadAll, reload,
     getStudents, getStudent, searchStudents,
     getSessions, getSession, getSessionsForBatch, addSession, lockSession, linkPrelimSession,
+    computeStudentAcademics,
     getStudentResults, getActiveKTSubjects, getKTEligibleStudents,
     getLatestEntryForSubject, getLedgerForStudent,
     getSessionStatus,
     submitEntries,
-    getSeatNumber, getSeatsForSession, uploadSeats,
+    getSeatNumber, getSeatsForSession, uploadSeats, updateSeatNumber,
     computeAttemptTag,
     reportResultSummary, reportRevalImpact, reportToppers, reportCreditFilter, reportKTFilter, getMyEntries,
     getDivisions, getBatchYears, getAllSubjects,

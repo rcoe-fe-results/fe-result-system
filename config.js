@@ -150,48 +150,145 @@ function sessionHasElectives(session) {
 }
 
 // ── Marks validation ──────────────────────────────────────────
-function parseMarkValue(raw) {
+function parseMarkValue(raw, componentMax) {
+  // componentMax is optional — only needed for grace-adjusted display value
   if (!raw || raw === '') return { value: null, valid: false, grace: false, absent: false };
   const s = String(raw).trim().toUpperCase();
   if (s === 'AB') return { value: 0, valid: true, grace: false, absent: true };
   const graceMatch = s.match(/^(\d+)\*$/);
-  if (graceMatch) return { value: parseInt(graceMatch[1]), valid: true, grace: true, absent: false };
+  if (graceMatch) {
+    const raw_n = parseInt(graceMatch[1]);
+    // Grace-adjusted value = componentMax * 0.40 (exact passing mark)
+    // Used for display calculations (grade, GP, SGPA, CGPA) only — not stored
+    const adjusted = componentMax !== undefined ? Math.round(componentMax * 0.40) : raw_n;
+    return { value: raw_n, adjustedValue: adjusted, valid: true, grace: true, absent: false };
+  }
   const n = Number(s);
-  if (!isNaN(n) && n >= 0) return { value: n, valid: true, grace: false, absent: false };
+  if (!isNaN(n) && n >= 0) return { value: n, adjustedValue: n, valid: true, grace: false, absent: false };
   return { value: null, valid: false, grace: false, absent: false };
 }
 
+// computeResult — used at ENTRY TIME (stored in ledger)
+// Uses raw mark values. Grace treated as passing, value stored as-is.
 function computeResult(subject, marks) {
-  // marks = { IAT, ESE, TW, Oral } — each is parseMarkValue result or null
   const components = Object.keys(subject.marks);
   let total = 0;
   let anyAbsent = false;
-  let anyGrace = false;
+  let anyGrace  = false;
 
   for (const comp of components) {
     const m = marks[comp];
     if (!m || m.value === null) return { total: null, result: null, creditsEarned: 0 };
-    if (m.absent) { anyAbsent = true; }
-    if (m.grace)  { anyGrace = true; }
+    if (m.absent) anyAbsent = true;
+    if (m.grace)  anyGrace  = true;
     total += m.absent ? 0 : m.value;
   }
 
   if (anyAbsent) return { total: 0, result: 'AB', creditsEarned: 0, grace: false };
 
-  // Pass/Fail logic — simple: if any component below 40% of its max → Fail
+  // Pass/Fail: every component must be ≥ 40% of its own max
+  // Grace marks always pass their component (that's what grace means)
   let pass = true;
   for (const comp of components) {
     const max = subject.marks[comp];
-    const m = marks[comp];
-    const pct = m.value / max;
-    if (!m.grace && pct < 0.40) { pass = false; break; }
+    const m   = marks[comp];
+    if (!m.grace && m.value / max < 0.40) { pass = false; break; }
   }
 
   return {
     total,
-    result: pass ? 'Pass' : 'Fail',
+    result:       pass ? 'Pass' : 'Fail',
     creditsEarned: pass ? subject.credits : 0,
-    grace: anyGrace,
+    grace:         anyGrace,
+  };
+}
+
+// ── Grade scale ───────────────────────────────────────────────
+function computeGrade(pct) {
+  // pct = percentage of total obtained / total max × 100
+  if (pct >= 90) return { grade: 'O',  gradePoint: 10 };
+  if (pct >= 80) return { grade: 'A+', gradePoint:  9 };
+  if (pct >= 70) return { grade: 'A',  gradePoint:  8 };
+  if (pct >= 60) return { grade: 'B+', gradePoint:  7 };
+  if (pct >= 55) return { grade: 'B',  gradePoint:  6 };
+  if (pct >= 50) return { grade: 'C',  gradePoint:  5 };
+  if (pct >= 40) return { grade: 'D',  gradePoint:  4 };
+  return            { grade: 'F',  gradePoint:  0 };
+}
+
+// computeDisplayResult — used for DISPLAY only (progress view, reports)
+// Uses grace-adjusted values (componentMax × 0.40) for totals, %, grade, GP, SGPA, CGPA
+// Takes a subject object and a marks map built from ledger strings:
+//   marksMap = { IAT: '21*', ESE: '40', TW: '8*', Oral: '20' }  (raw ledger strings)
+// Returns: { total, totalMax, pct, grade, gradePoint, GxC, result, creditsEarned, pending, grace }
+function computeDisplayResult(subject, marksMap) {
+  const components = Object.keys(subject.marks);
+  let totalObtained = 0;
+  let totalMax      = 0;
+  let anyAbsent     = false;
+  let anyGrace      = false;
+  let anyPending    = false;
+  let pass          = true;
+
+  for (const comp of components) {
+    const compMax = subject.marks[comp];
+    const raw     = marksMap ? marksMap[comp] : undefined;
+    totalMax += compMax;
+
+    if (raw === undefined || raw === null || raw === '') {
+      anyPending = true;
+      continue;
+    }
+
+    const parsed = parseMarkValue(raw, compMax);
+
+    if (!parsed.valid) { anyPending = true; continue; }
+
+    if (parsed.absent) {
+      anyAbsent = true;
+      // AB component contributes 0 — don't add to total
+      continue;
+    }
+
+    if (parsed.grace) {
+      anyGrace = true;
+      // Grace: use adjusted value (compMax × 0.40) for all display calculations
+      totalObtained += parsed.adjustedValue;
+    } else {
+      totalObtained += parsed.value;
+      // Check component pass threshold
+      if (parsed.value / compMax < 0.40) pass = false;
+    }
+  }
+
+  // If any component still pending → result is pending
+  if (anyPending && !anyAbsent) {
+    return { pending: true, grade: '—', gradePoint: 0, GxC: 0, creditsEarned: 0, result: 'Pending' };
+  }
+
+  if (anyAbsent) {
+    return {
+      total: 0, totalMax, pct: 0,
+      grade: 'F', gradePoint: 0, GxC: 0,
+      result: 'AB', creditsEarned: 0, grace: anyGrace, pending: false,
+    };
+  }
+
+  const pct = totalMax > 0 ? (totalObtained / totalMax) * 100 : 0;
+  const { grade, gradePoint } = pass ? computeGrade(pct) : { grade: 'F', gradePoint: 0 };
+  const creditsEarned = (pass && grade !== 'F') ? subject.credits : 0;
+
+  return {
+    total:    totalObtained,
+    totalMax,
+    pct,
+    grade,
+    gradePoint,
+    GxC:          gradePoint * subject.credits,
+    result:        pass ? 'Pass' : 'Fail',
+    creditsEarned,
+    grace:         anyGrace,
+    pending:       false,
   };
 }
 

@@ -805,60 +805,87 @@ function _pvMarkTag(markStr, maxMark) {
 }
 
 function _pvShowStudent(uin) {
-  const student = State.getStudent(uin);
-  const ledger  = State.getLedgerForStudent(uin);
+  const student  = State.getStudent(uin);
+  const ledger   = State.getLedgerForStudent(uin);
   document.getElementById('pv-results').innerHTML = '';
   document.getElementById('pv-search').value = student.name;
 
-  // Build session map to get session object for each ledger group
-  const sessionMap = {};
-  State.getSessions().forEach(s => { sessionMap[s.id] = s; });
+  // Compute full academics (grades, SGPA, CGPA, credits)
+  const academics = State.computeStudentAcademics(uin);
 
-  // Group by session
-  const bySession = {};
-  for (const row of ledger) {
-    const key = row.examSession + '|' + row.semester;
-    if (!bySession[key]) bySession[key] = { sessionId: row.examSession, sessionName: row.examSession, semester: row.semester, rows: [] };
-    // Try to resolve session name from session master
-    const sess = sessionMap[row.examSession];
-    if (sess) bySession[key].sessionName = sess.name;
-    bySession[key].rows.push(row);
+  // Student info card
+  let cgpaStr = academics?.cgpa != null ? academics.cgpa.toFixed(2) : '—';
+  let credStr = academics
+    ? `${academics.totalCredits.earned} / ${academics.totalCredits.max}`
+    : '—';
+
+  let feHTML = '';
+  if (academics?.feCompleted?.done) {
+    feHTML = `<span class="fe-completed-badge">🎓 FE Completed — ${UI.esc(academics.feCompleted.session || '')}</span>`;
   }
 
-  // Student info card — with overall status badge per session computed below
-  // We'll build per-session status badges inline in the timeline
-
-  let infoHTML = `
-    <div class="student-card" style="display:flex; align-items:center; gap:16px; flex-wrap:wrap;">
+  document.getElementById('pv-student-info').innerHTML = `
+    <div class="student-card" style="display:flex; align-items:center; gap:16px; flex-wrap:wrap; justify-content:space-between;">
       <div>
         <div class="sc-name">${UI.esc(student.name)}</div>
         <div class="sc-meta">UIN: ${UI.esc(student.uin)} · PRN: ${UI.esc(student.prn || '—')} · ${UI.esc(student.branch)} · Div ${UI.esc(student.division)} · Batch ${UI.esc(student.batchYear)}</div>
       </div>
+      <div class="pv-quick-stats">
+        <div class="pv-stat"><span class="pv-stat-val">${UI.esc(cgpaStr)}</span><span class="pv-stat-lbl">CGPA</span></div>
+        <div class="pv-stat"><span class="pv-stat-val">${UI.esc(credStr)}</span><span class="pv-stat-lbl">Credits</span></div>
+        ${feHTML}
+      </div>
     </div>`;
-  document.getElementById('pv-student-info').innerHTML = infoHTML;
 
   if (ledger.length === 0) {
     document.getElementById('pv-timeline').innerHTML = '<div class="empty-state">No entries found for this student.</div>';
     return;
   }
 
-  // Component max marks lookup (from subject config via ledger type+code)
-  function getCompMax(subjectCode, comp) {
-    const allSubjects = [...SEM1_SUBJECTS];
-    // Try to find in Sem1
-    let subj = allSubjects.find(s => s.code === subjectCode);
-    if (!subj) {
-      // Try Sem2 fixed
-      subj = getSem2Subjects(student.branch, null).find(s => s.code === subjectCode);
+  // Build a quick lookup: sessionId+subjectCode → computed display result
+  const drLookup = {};
+  if (academics) {
+    for (const sr of academics.sessionResults) {
+      for (const { r, dr } of sr.subjects) {
+        drLookup[r.examSession + '||' + r.subjectCode + '||' + r.entryId] = dr;
+      }
     }
-    if (!subj) return null;
-    return subj.marks[comp] || null;
+  }
+
+  // Build session display map
+  const sessionMap = {};
+  State.getSessions().forEach(s => { sessionMap[s.id] = s; });
+
+  const bySession = {};
+  for (const row of ledger) {
+    const key = row.examSession;
+    if (!bySession[key]) bySession[key] = {
+      sessionId: row.examSession,
+      sessionName: sessionMap[row.examSession]?.name || row.examSession,
+      semester: row.semester,
+      rows: [],
+    };
+    bySession[key].rows.push(row);
   }
 
   let html = '';
 
-  for (const [, group] of Object.entries(bySession)) {
+  // Use academics.sessionResults order (chronological); fall back to bySession
+  const orderedSessions = academics
+    ? academics.sessionResults.map(sr => sr.session.id).filter(id => bySession[id])
+    : Object.keys(bySession);
+  // Also include any sessions in bySession not in academics (edge case)
+  for (const id of Object.keys(bySession)) {
+    if (!orderedSessions.includes(id)) orderedSessions.push(id);
+  }
+
+  for (const sessionId of orderedSessions) {
+    const group = bySession[sessionId];
+    if (!group) continue;
     const sess = sessionMap[group.sessionId];
+
+    // Find matching academics session result
+    const acadSess = academics?.sessionResults.find(sr => sr.session.id === sessionId);
 
     // Latest row per subject
     const latestBySubject = {};
@@ -867,72 +894,166 @@ function _pvShowStudent(uin) {
         latestBySubject[r.subjectCode] = r;
       }
     }
-    const totalCredits  = Object.values(latestBySubject).reduce((a,r) => a + (Number(r.creditsEarned)||0), 0);
-    const totalAssigned = Object.values(latestBySubject).reduce((a,r) => a + (Number(r.creditsAssigned)||0), 0);
 
-    // Session-level status
+    // Session credits from academics
+    const sessionCreditsEarned = acadSess
+      ? acadSess.subjects.filter(s => !s.pending && s.dr.creditsEarned > 0).reduce((a, s) => a + s.dr.creditsEarned, 0)
+      : Object.values(latestBySubject).reduce((a, r) => a + (Number(r.creditsEarned) || 0), 0);
+    const sessionCreditsMax = Object.values(latestBySubject).reduce((a, r) => a + (Number(r.creditsAssigned) || 0), 0);
+
     const sessionStatus = sess ? State.getSessionStatus(uin, sess) : 'pending';
     const showPerComp   = sessionStatus === 'multi-attempt';
 
-    // Status badge for session header
     let sessionBadge = '';
     if (sessionStatus === 'successful') {
-      sessionBadge = `<span class="pv-session-badge pv-session-success">🎉 Successful — First Attempt</span>`;
+      sessionBadge = `<span class="pv-session-badge pv-session-success">🎉 First Attempt</span>`;
     } else if (sessionStatus === 'pending') {
       sessionBadge = `<span class="pv-session-badge pv-session-pending">⏳ Pending</span>`;
     }
-    // multi-attempt: no session badge, show per-component tags instead
+
+    const sgpaStr = acadSess?.sgpa != null ? acadSess.sgpa.toFixed(2) : (acadSess?.pendingCount > 0 ? 'Partial' : '—');
+    const pendingNote = acadSess?.pendingCount > 0
+      ? `<span class="pv-pending-note">${acadSess.pendingCount} subject${acadSess.pendingCount > 1 ? 's' : ''} pending</span>`
+      : '';
+
+    const isFinal = sess?.entryType === 'Final Gazette';
 
     html += `
     <div class="session-block">
       <div class="session-header">
         <span class="session-name">${UI.esc(group.sessionName)}</span>
         <span class="session-sem">Sem ${UI.esc(group.semester)}</span>
+        ${isFinal ? '<span class="session-type-inline final-gazette">Final Gazette</span>' : ''}
         ${sessionBadge}
-        <span class="credit-pill">${totalCredits} / ${totalAssigned} credits</span>
+        ${pendingNote}
+        <span class="credit-pill">${sessionCreditsEarned} / ${sessionCreditsMax} cr</span>
+        <span class="sgpa-pill">SGPA: <strong>${UI.esc(sgpaStr)}</strong></span>
       </div>
+      <div style="overflow-x:auto;">
       <table class="progress-table">
         <thead><tr>
           <th>Subject</th><th>Type</th><th>Attempt</th>
           <th>IAT</th><th>ESE</th><th>TW</th><th>Oral</th>
-          <th>Total</th><th>Result</th><th>Credits</th>
+          <th>Total</th><th>%</th><th>Grade</th><th>GP</th><th>G×C</th>
+          <th>Result</th><th>Credits</th>
         </tr></thead>
         <tbody>`;
 
     for (const r of group.rows) {
       const isLatest = latestBySubject[r.subjectCode]?.entryId === r.entryId;
+      const drKey    = r.examSession + '||' + r.subjectCode + '||' + r.entryId;
+      const dr       = isLatest ? (drLookup[drKey] || null) : null;
 
-      // Build per-component cells with tags if multi-attempt
-      const comps = ['IAT','ESE','TW','Oral'];
-      const compFields = { IAT: r.iatMarks, ESE: r.eseMarks, TW: r.twMarks, Oral: r.oralMarks };
-      const compMaxKeys = { IAT: 'iatMarks', ESE: 'eseMarks', TW: 'twMarks', Oral: 'oralMarks' };
-
-      // Try to get max marks for this subject
       let subjConfig = SEM1_SUBJECTS.find(s => s.code === r.subjectCode);
       if (!subjConfig) subjConfig = getSem2Subjects(student.branch, null).find(s => s.code === r.subjectCode);
 
+      const comps      = ['IAT', 'ESE', 'TW', 'Oral'];
+      const compFields = { IAT: r.iatMarks, ESE: r.eseMarks, TW: r.twMarks, Oral: r.oralMarks };
+
       const cells = comps.map(comp => {
-        const val = compFields[comp] || '—';
-        if (!showPerComp || !isLatest) {
-          return `<td>${UI.esc(val)}</td>`;
-        }
+        const val    = compFields[comp] || '—';
         const maxMark = subjConfig?.marks?.[comp];
-        if (!maxMark) return `<td>${UI.esc(val)}</td>`; // comp not applicable for this subject
-        return `<td class="pv-comp-cell">${UI.esc(val)} ${_pvMarkTag(val === '—' ? null : val, maxMark)}</td>`;
+        if (!maxMark) return `<td class="muted">—</td>`;
+        if (showPerComp && isLatest) {
+          return `<td class="pv-comp-cell">${UI.esc(val)} ${_pvMarkTag(val === '—' ? null : val, maxMark)}</td>`;
+        }
+        return `<td>${UI.esc(val)}</td>`;
       }).join('');
 
+      // Grade / GP / GxC cells — only for latest row with all components
+      let gradeCell = '<td class="muted">—</td>';
+      let gpCell    = '<td class="muted">—</td>';
+      let gxcCell   = '<td class="muted">—</td>';
+      let pctCell   = '<td class="muted">—</td>';
+      let totalCell = `<td>${UI.esc(r.totalMarks || '—')}</td>`;
+
+      if (isLatest && dr && !dr.pending) {
+        const gradeCls = dr.grade === 'F' ? 'grade-f' : dr.grade === 'O' ? 'grade-o' : '';
+        gradeCell = `<td class="grade-cell ${gradeCls}">${UI.esc(dr.grade)}</td>`;
+        gpCell    = `<td class="gp-cell">${dr.gradePoint}</td>`;
+        gxcCell   = `<td class="gxc-cell">${dr.GxC.toFixed(1)}</td>`;
+        pctCell   = `<td>${dr.pct.toFixed(1)}%</td>`;
+        totalCell = `<td>${dr.total}<small>/${dr.totalMax}</small></td>`;
+      } else if (isLatest && dr?.pending) {
+        gradeCell = `<td class="muted">Pending</td>`;
+        gpCell    = `<td class="muted">—</td>`;
+        gxcCell   = `<td class="muted">—</td>`;
+        pctCell   = `<td class="muted">—</td>`;
+      }
+
+      const creditCls = (isLatest && dr && !dr.pending && dr.creditsEarned > 0) ? 'credit-earned' : 'credit-zero';
+      const creditVal = (isLatest && dr && !dr.pending) ? dr.creditsEarned : (isLatest ? '—' : '');
+
       html += `
-        <tr class="${isLatest ? '' : 'row-superseded'}" title="${isLatest ? 'Latest entry' : 'Superseded by later entry'}">
+        <tr class="${isLatest ? '' : 'row-superseded'}" title="${isLatest ? '' : 'Superseded by later entry'}">
           <td><span class="subj-code-small">${UI.esc(r.subjectCode)}</span> ${UI.esc(r.subjectName)}</td>
           <td>${UI.esc(r.subjectType)}</td>
           <td>${isLatest ? _pvAttemptTag(r.uin, r.subjectCode, r.examSession) : '<span class="muted">—</span>'}</td>
           ${cells}
-          <td>${UI.esc(r.totalMarks|| '—')}</td>
-          <td>${UI.resultBadge(r.result)}</td>
-          <td class="${r.creditsEarned > 0 ? 'credit-earned' : 'credit-zero'}">${UI.esc(r.creditsEarned)}</td>
+          ${totalCell}
+          ${pctCell}
+          ${gradeCell}
+          ${gpCell}
+          ${gxcCell}
+          <td>${isLatest ? UI.resultBadge(dr?.result || r.result) : '<span class="muted">—</span>'}</td>
+          <td class="${creditCls}">${creditVal}</td>
         </tr>`;
     }
-    html += `</tbody></table></div>`;
+
+    // SGPA footer row
+    html += `
+        <tr class="sgpa-row">
+          <td colspan="12" style="text-align:right; font-weight:600; color:var(--ink-2);">Session SGPA</td>
+          <td colspan="2" class="sgpa-val">${UI.esc(sgpaStr)}</td>
+        </tr>`;
+
+    html += `</tbody></table></div></div>`;
+  }
+
+  // ── Academics summary panel ──────────────────────────────────
+  if (academics) {
+    const { semCredits, consolidatedSGPA, cgpa, totalCredits, feCompleted } = academics;
+
+    html += `<div class="academics-summary">
+      <div class="acad-title">Academic Summary</div>
+      <div class="acad-grid">`;
+
+    for (const sem of [1, 2]) {
+      const sc    = semCredits[sem];
+      const cSGPA = consolidatedSGPA[sem];
+      const pct   = sc.max > 0 ? Math.round((sc.earned / sc.max) * 100) : 0;
+      const done  = sc.earned >= sc.max && sc.max > 0;
+      html += `
+        <div class="acad-sem-card${done ? ' acad-sem-done' : ''}">
+          <div class="acad-sem-title">Semester ${sem}</div>
+          <div class="acad-credits">
+            <span class="acad-credits-val">${sc.earned} <span class="acad-credits-max">/ ${sc.max}</span></span>
+            <span class="acad-credits-lbl">credits</span>
+          </div>
+          <div class="acad-progress-bar">
+            <div class="acad-progress-fill" style="width:${pct}%"></div>
+          </div>
+          ${done
+            ? `<div class="acad-done-note">✓ Completed — ${UI.esc(sc.completedInSession || '')}</div>`
+            : `<div class="acad-pending-note">${sc.max - sc.earned} credits pending</div>`}
+          ${cSGPA != null
+            ? `<div class="acad-sgpa">Semester SGPA: <strong>${cSGPA.toFixed(2)}</strong></div>`
+            : sc.earned > 0 ? `<div class="acad-sgpa muted">Semester SGPA: available after completion</div>` : ''}
+        </div>`;
+    }
+
+    html += `
+        <div class="acad-totals-card">
+          <div class="acad-sem-title">Overall</div>
+          <div class="acad-cgpa-big">${cgpa != null ? cgpa.toFixed(2) : '—'}</div>
+          <div class="acad-cgpa-lbl">CGPA</div>
+          <div class="acad-total-credits">${totalCredits.earned} / ${totalCredits.max} total credits</div>
+          ${feCompleted.done
+            ? `<div class="fe-completed-badge" style="margin-top:10px;">🎓 FE Completed<br><small>${UI.esc(feCompleted.session || '')}</small></div>`
+            : ''}
+        </div>`;
+
+    html += `</div></div>`;
   }
 
   document.getElementById('pv-timeline').innerHTML = html;
@@ -984,14 +1105,18 @@ function initReports() {
   });
 
   // Populate per-card session selects
-  UI.buildSelect('rpt-credit-session', sessions, '— select session —', 'id', 'name');
-  UI.buildSelect('rpt-my-session',     sessions, '— all sessions —',   'id', 'name');
+  UI.buildSelect('rpt-my-session', sessions, '— all sessions —', 'id', 'name');
+
+  // Credit filter branch dropdowns
+  UI.buildSelect('rpt-credit-branch', BRANCHES, '— all branches —');
+  UI.buildSelect('rpt-total-credit-branch', BRANCHES, '— all branches —');
 
   // Export buttons
   document.getElementById('rpt-result-summary-csv').onclick  = _rptExportResultSummary;
   document.getElementById('rpt-reval-impact-csv').onclick    = _rptExportRevalImpact;
   document.getElementById('rpt-toppers-csv').onclick         = _rptExportToppers;
   document.getElementById('rpt-credit-filter').onclick       = _rptCreditFilter;
+  document.getElementById('rpt-total-credit-filter').onclick = _rptTotalCreditFilter;
   document.getElementById('rpt-kt-filter').onclick           = _rptKTFilter;
   document.getElementById('rpt-my-entries').onclick          = _rptMyEntries;
 }
@@ -1164,18 +1289,147 @@ function _rptExportToppers() {
   UI.toast('Toppers exported.', 'success');
 }
 
-// ── Credit / KT / My Entries ──────────────────────────────────
+// ── Credit Eligibility Filters ────────────────────────────────
+
+// Filter 1: Students who have not completed Sem N credits
 function _rptCreditFilter() {
-  const sessionId = document.getElementById('rpt-credit-session').value;
-  if (!sessionId) { UI.toast('Select a session.', 'error'); return; }
-  const x = Number(document.getElementById('rpt-credit-x').value);
-  if (!x) { UI.toast('Enter minimum credits.', 'error'); return; }
-  const data = State.reportCreditFilter(x, sessionId);
-  UI.exportCSV(`CreditFilter_lt${x}`,
-    ['UIN','PRN','Name','Branch','Credits Earned'],
-    data.map(d => [d.uin, d.prn, d.name, d.branch, d.credits])
+  const sem    = Number(document.getElementById('rpt-credit-sem').value || 0);
+  const branch = document.getElementById('rpt-credit-branch').value || null;
+  if (!sem) { UI.toast('Select a semester.', 'error'); return; }
+
+  const students = State.getStudents({ branch: branch || undefined });
+  const rows = [];
+
+  for (const s of students) {
+    const acad = State.computeStudentAcademics(s.uin);
+    if (!acad) continue;
+    const sc = acad.semCredits[sem];
+    if (!sc || sc.max === 0) continue;
+    if (sc.earned >= sc.max) continue;  // already completed — exclude
+
+    rows.push({
+      uin:     s.uin,
+      prn:     s.prn,
+      name:    s.name,
+      branch:  s.branch,
+      division: s.division,
+      batchYear: s.batchYear,
+      semEarned: sc.earned,
+      semMax:    sc.max,
+      semPending: sc.max - sc.earned,
+      cgpa:    acad.cgpa != null ? acad.cgpa.toFixed(2) : '—',
+    });
+  }
+
+  // Display in table
+  _rptRenderCreditFilterTable(rows, sem);
+
+  // Export CSV
+  UI.exportCSV(`Sem${sem}_IncompleteCredits`,
+    ['UIN','PRN','Name','Branch','Division','Batch Year',`Sem ${sem} Earned`,`Sem ${sem} Max`,'Pending Credits','CGPA'],
+    rows.map(r => [r.uin, r.prn, r.name, r.branch, r.division, r.batchYear, r.semEarned, r.semMax, r.semPending, r.cgpa])
   );
-  UI.toast(`Exported ${data.length} students with < ${x} credits.`, 'success');
+  UI.toast(`${rows.length} students with incomplete Sem ${sem} credits exported.`, 'success');
+}
+
+// Filter 2: Students with total cumulative credits < X
+function _rptTotalCreditFilter() {
+  const threshold = Number(document.getElementById('rpt-credit-x').value || 0);
+  const branch    = document.getElementById('rpt-total-credit-branch').value || null;
+  if (!threshold) { UI.toast('Enter a credit threshold.', 'error'); return; }
+
+  const students = State.getStudents({ branch: branch || undefined });
+  const rows = [];
+
+  for (const s of students) {
+    const acad = State.computeStudentAcademics(s.uin);
+    if (!acad) continue;
+    const { earned, max } = acad.totalCredits;
+    if (earned >= threshold) continue;
+
+    rows.push({
+      uin:       s.uin,
+      prn:       s.prn,
+      name:      s.name,
+      branch:    s.branch,
+      division:  s.division,
+      batchYear: s.batchYear,
+      sem1Earned: acad.semCredits[1].earned,
+      sem1Max:    acad.semCredits[1].max,
+      sem2Earned: acad.semCredits[2].earned,
+      sem2Max:    acad.semCredits[2].max,
+      totalEarned: earned,
+      totalMax:    max,
+      cgpa:       acad.cgpa != null ? acad.cgpa.toFixed(2) : '—',
+    });
+  }
+
+  _rptRenderTotalCreditFilterTable(rows, threshold);
+
+  UI.exportCSV(`TotalCredits_lt${threshold}`,
+    ['UIN','PRN','Name','Branch','Division','Batch Year','Sem 1 Earned','Sem 1 Max','Sem 2 Earned','Sem 2 Max','Total Earned','Total Max','CGPA'],
+    rows.map(r => [r.uin, r.prn, r.name, r.branch, r.division, r.batchYear, r.sem1Earned, r.sem1Max, r.sem2Earned, r.sem2Max, r.totalEarned, r.totalMax, r.cgpa])
+  );
+  UI.toast(`${rows.length} students with < ${threshold} total credits exported.`, 'success');
+}
+
+function _rptRenderCreditFilterTable(rows, sem) {
+  const out = document.getElementById('rpt-credit-filter-output');
+  if (!out) return;
+  if (rows.length === 0) {
+    out.innerHTML = '<div class="empty-state">No students found matching this filter.</div>';
+    return;
+  }
+  out.innerHTML = `
+    <div style="margin-bottom:8px; font-size:12px; color:var(--ink-3);">${rows.length} students with incomplete Sem ${sem} credits</div>
+    <div style="overflow-x:auto;">
+    <table class="audit-table">
+      <thead><tr>
+        <th>Name</th><th>UIN</th><th>Branch</th><th>Batch</th>
+        <th>Sem ${sem} Credits</th><th>Pending</th><th>CGPA</th>
+      </tr></thead>
+      <tbody>
+        ${rows.map(r => `<tr>
+          <td>${UI.esc(r.name)}</td>
+          <td><span class="subj-code-small">${UI.esc(r.uin)}</span></td>
+          <td>${UI.esc(r.branch)}</td>
+          <td>${UI.esc(r.batchYear)}</td>
+          <td>${r.semEarned} / ${r.semMax}</td>
+          <td class="credit-zero">${r.semPending}</td>
+          <td><strong>${UI.esc(r.cgpa)}</strong></td>
+        </tr>`).join('')}
+      </tbody>
+    </table></div>`;
+}
+
+function _rptRenderTotalCreditFilterTable(rows, threshold) {
+  const out = document.getElementById('rpt-total-credit-filter-output');
+  if (!out) return;
+  if (rows.length === 0) {
+    out.innerHTML = '<div class="empty-state">No students found matching this filter.</div>';
+    return;
+  }
+  out.innerHTML = `
+    <div style="margin-bottom:8px; font-size:12px; color:var(--ink-3);">${rows.length} students with < ${threshold} total credits</div>
+    <div style="overflow-x:auto;">
+    <table class="audit-table">
+      <thead><tr>
+        <th>Name</th><th>UIN</th><th>Branch</th><th>Batch</th>
+        <th>Sem 1</th><th>Sem 2</th><th>Total Credits</th><th>CGPA</th>
+      </tr></thead>
+      <tbody>
+        ${rows.map(r => `<tr>
+          <td>${UI.esc(r.name)}</td>
+          <td><span class="subj-code-small">${UI.esc(r.uin)}</span></td>
+          <td>${UI.esc(r.branch)}</td>
+          <td>${UI.esc(r.batchYear)}</td>
+          <td>${r.sem1Earned}/${r.sem1Max}</td>
+          <td>${r.sem2Earned}/${r.sem2Max}</td>
+          <td class="${r.totalEarned < threshold ? 'credit-zero' : 'credit-earned'}">${r.totalEarned} / ${r.totalMax}</td>
+          <td><strong>${UI.esc(r.cgpa)}</strong></td>
+        </tr>`).join('')}
+      </tbody>
+    </table></div>`;
 }
 
 function _rptKTFilter() {
@@ -1230,9 +1484,12 @@ function initAdmin() {
   document.getElementById('admin-upload-btn').onclick = _adminUploadStudents;
   document.getElementById('admin-csv-file').onchange  = _adminPreviewCSV;
 
-  // Seat number upload
+  // Seat number CSV upload
   document.getElementById('admin-seat-csv-file')?.addEventListener('change', _adminPreviewSeatCSV);
   document.getElementById('admin-seat-upload-btn')?.addEventListener('click', _adminUploadSeats);
+
+  // Manual seat entry
+  _adminInitManualSeatEntry();
 
   // Session link update (for existing Final Gazette sessions)
   document.getElementById('admin-link-session-btn')?.addEventListener('click', _adminUpdateSessionLink);
@@ -1554,6 +1811,129 @@ async function _adminUploadSeats() {
       }
     }
   });
+}
+
+// ── Manual seat number entry ───────────────────────────────────
+let _manualSeatStudent = null;
+
+function _adminInitManualSeatEntry() {
+  const searchEl   = document.getElementById('admin-seat-student-search');
+  const resultsEl  = document.getElementById('admin-seat-student-results');
+  const saveBtn    = document.getElementById('admin-seat-manual-save');
+  if (!searchEl) return;
+
+  UI.buildSelect('admin-seat-session-select', State.getSessions(), '— select session —', 'id', 'name');
+
+  searchEl.addEventListener('input', _debounce(() => {
+    const q = searchEl.value.trim();
+    if (q.length < 2) { resultsEl.style.display = 'none'; resultsEl.innerHTML = ''; return; }
+    const matches = State.searchStudents(q).slice(0, 10);
+    resultsEl.innerHTML = matches.length
+      ? matches.map(s => `<div class="search-result" data-uin="${UI.esc(s.uin)}">
+          <strong>${UI.esc(s.name)}</strong>
+          <span>${UI.esc(s.uin)} · PRN: ${UI.esc(s.prn || '—')} · ${UI.esc(s.branch)}</span>
+        </div>`).join('')
+      : '<div class="search-result muted">No students found.</div>';
+    resultsEl.style.display = 'block';
+    resultsEl.querySelectorAll('.search-result[data-uin]').forEach(el => {
+      el.onclick = () => {
+        _manualSeatStudent = State.getStudent(el.dataset.uin);
+        searchEl.value = _manualSeatStudent.name;
+        resultsEl.style.display = 'none';
+        document.getElementById('admin-seat-student-name').textContent = _manualSeatStudent.name;
+        document.getElementById('admin-seat-student-ids').textContent =
+          `UIN: ${_manualSeatStudent.uin} · PRN: ${_manualSeatStudent.prn || '—'} · ${_manualSeatStudent.branch}`;
+        document.getElementById('admin-seat-student-selected').style.display = '';
+        _adminCheckManualSeatReady();
+      };
+    });
+  }, 200));
+
+  document.getElementById('admin-seat-session-select')?.addEventListener('change', _adminCheckManualSeatReady);
+  document.getElementById('admin-seat-number-input')?.addEventListener('input', _adminCheckManualSeatReady);
+  saveBtn?.addEventListener('click', _adminSaveManualSeat);
+}
+
+function _adminCheckManualSeatReady() {
+  const sess   = document.getElementById('admin-seat-session-select')?.value;
+  const seatNo = document.getElementById('admin-seat-number-input')?.value.trim();
+  const btn    = document.getElementById('admin-seat-manual-save');
+  if (btn) btn.disabled = !(_manualSeatStudent && sess && seatNo);
+}
+
+async function _adminSaveManualSeat() {
+  if (!_manualSeatStudent) return;
+  const sessionId = document.getElementById('admin-seat-session-select').value;
+  const seatNo    = document.getElementById('admin-seat-number-input').value.trim();
+  const session   = State.getSession(sessionId);
+  if (!sessionId || !seatNo || !session) { UI.toast('Fill in all fields.', 'error'); return; }
+
+  // Check if seat already exists for this student+session
+  const existing = State.getSeatsForSession(sessionId).find(s => s.uin === _manualSeatStudent.uin);
+
+  if (existing) {
+    // Show conflict modal with 3 options
+    UI.showModal(
+      '⚠ Seat number conflict',
+      `<strong>${UI.esc(_manualSeatStudent.name)}</strong> already has seat number
+       <strong>${UI.esc(existing.seatNumber)}</strong> in session
+       <strong>${UI.esc(session.name)}</strong>.<br><br>
+       New value: <strong>${UI.esc(seatNo)}</strong><br><br>
+       Which would you like to keep?`,
+      {
+        confirmLabel: 'Keep both (append)',
+        onConfirm: async () => {
+          await _doSaveSeat(_manualSeatStudent.uin, sessionId, seatNo);
+        },
+        extraButtons: [
+          {
+            label: 'Replace with new',
+            action: async () => {
+              UI.showSpinner('Updating…');
+              try {
+                await State.updateSeatNumber(_manualSeatStudent.uin, sessionId, seatNo);
+                UI.hideSpinner();
+                UI.toast('Seat number replaced.', 'success');
+                _adminResetManualSeat();
+              } catch(e) {
+                UI.hideSpinner();
+                UI.toast('Error: ' + e.message, 'error', 8000);
+              }
+            }
+          },
+          {
+            label: 'Keep existing',
+            action: () => {
+              UI.toast('Kept existing seat number. No change made.', 'info');
+            }
+          },
+        ],
+      }
+    );
+  } else {
+    await _doSaveSeat(_manualSeatStudent.uin, sessionId, seatNo);
+  }
+}
+
+async function _doSaveSeat(uin, sessionId, seatNumber) {
+  UI.showSpinner('Saving seat number…');
+  try {
+    await State.uploadSeats([{ uin, sessionId, seatNumber }]);
+    UI.hideSpinner();
+    UI.toast('Seat number saved.', 'success');
+    _adminResetManualSeat();
+  } catch(e) {
+    UI.hideSpinner();
+    UI.toast('Error saving: ' + e.message, 'error', 8000);
+  }
+}
+
+function _adminResetManualSeat() {
+  _manualSeatStudent = null;
+  document.getElementById('admin-seat-student-search').value = '';
+  document.getElementById('admin-seat-number-input').value   = '';
+  document.getElementById('admin-seat-student-selected').style.display = 'none';
+  document.getElementById('admin-seat-manual-save').disabled = true;
 }
 
 // ── Update session link (Final Gazette → Preliminary) ─────────

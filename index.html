@@ -436,7 +436,7 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
 .modal-box { background:var(--surface); border-radius:var(--radius-lg); padding:28px; min-width:340px; max-width:520px; box-shadow:var(--shadow-md); }
 .modal-box h2 { font-size:16px; font-weight:700; margin-bottom:10px; }
 #modal-body  { font-size:13px; line-height:1.6; color:var(--ink-2); margin-bottom:20px; }
-.modal-actions { display:flex; gap:10px; justify-content:flex-end; }
+.modal-actions { display:flex; flex-wrap:wrap; gap:10px; justify-content:flex-end; }
 
 /* ─── Access denied ─────────────────────────────────────── */
 .access-denied { padding:48px; text-align:center; color:var(--ink-3); font-size:14px; }
@@ -518,6 +518,71 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
   *, .spinner-ring { animation:none !important; transition:none !important; }
 }
 
+/* ─── Grade / GP / GxC cells ────────────────────────────── */
+.grade-cell  { font-weight:700; font-size:13px; text-align:center; min-width:36px; }
+.grade-f     { color:var(--fail); }
+.grade-o     { color:var(--pass); }
+.gp-cell     { text-align:center; font-variant-numeric:tabular-nums; }
+.gxc-cell    { text-align:center; font-variant-numeric:tabular-nums; }
+.sgpa-row td { background:var(--surface-2); border-top:2px solid var(--border); font-size:12px; }
+.sgpa-val    { font-weight:700; color:var(--brand); font-size:13px; }
+.sgpa-pill   { display:inline-flex; align-items:center; gap:4px; font-size:12px;
+               background:var(--surface-2); padding:2px 10px; border-radius:20px;
+               color:var(--ink-2); border:1px solid var(--border); }
+
+/* ─── Progress view quick stats ─────────────────────────── */
+.pv-quick-stats { display:flex; align-items:center; gap:20px; flex-wrap:wrap; }
+.pv-stat        { display:flex; flex-direction:column; align-items:center; }
+.pv-stat-val    { font-size:22px; font-weight:700; color:var(--brand); line-height:1; }
+.pv-stat-lbl    { font-size:11px; color:var(--ink-3); margin-top:2px; }
+.pv-pending-note{ font-size:11px; color:var(--reval); font-weight:600;
+                  background:var(--reval-bg); padding:2px 8px; border-radius:4px; }
+
+/* ─── FE Completed badge ─────────────────────────────────── */
+.fe-completed-badge {
+  display:inline-flex; align-items:center; gap:6px;
+  background:#DCFCE7; color:#166534; border:1px solid #BBF7D0;
+  padding:4px 12px; border-radius:20px; font-size:12px; font-weight:600;
+}
+
+/* ─── Academics summary panel ────────────────────────────── */
+.academics-summary {
+  margin-top:20px; background:var(--surface-1);
+  border:1px solid var(--border); border-radius:12px; padding:20px;
+}
+.acad-title  { font-size:13px; font-weight:700; color:var(--ink-2); margin-bottom:14px; }
+.acad-grid   { display:grid; grid-template-columns:1fr 1fr 200px; gap:14px; }
+@media(max-width:800px) { .acad-grid { grid-template-columns:1fr; } }
+
+.acad-sem-card {
+  background:var(--surface-0); border:1px solid var(--border);
+  border-radius:10px; padding:16px;
+}
+.acad-sem-card.acad-sem-done { border-color:#BBF7D0; background:#F0FDF4; }
+.acad-sem-title  { font-size:11px; font-weight:700; color:var(--ink-3);
+                   text-transform:uppercase; letter-spacing:.04em; margin-bottom:8px; }
+.acad-credits    { display:flex; align-items:baseline; gap:4px; margin-bottom:6px; }
+.acad-credits-val{ font-size:26px; font-weight:700; color:var(--ink-1); line-height:1; }
+.acad-credits-max{ font-size:14px; color:var(--ink-3); }
+.acad-credits-lbl{ font-size:11px; color:var(--ink-3); }
+.acad-progress-bar{
+  height:6px; background:var(--surface-2); border-radius:3px;
+  overflow:hidden; margin-bottom:8px;
+}
+.acad-progress-fill{ height:100%; background:var(--brand); border-radius:3px; transition:width .4s; }
+.acad-done-note  { font-size:11px; color:#166534; font-weight:600; }
+.acad-pending-note{ font-size:11px; color:var(--ink-3); }
+.acad-sgpa       { font-size:11px; color:var(--ink-3); margin-top:6px; }
+
+.acad-totals-card{
+  background:var(--brand); color:#fff;
+  border-radius:10px; padding:16px; text-align:center;
+  display:flex; flex-direction:column; align-items:center; justify-content:center;
+}
+.acad-cgpa-big  { font-size:42px; font-weight:700; line-height:1; }
+.acad-cgpa-lbl  { font-size:12px; opacity:.8; margin-bottom:10px; }
+.acad-total-credits{ font-size:12px; opacity:.8; }
+
 /* ─── Seat number column ─────────────────────────────────── */
 .col-seat  { min-width:56px; }
 .seat-cell { font-family:'DM Mono',monospace; font-size:12px; font-weight:600;
@@ -536,6 +601,12 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
 
 /* ─── Pre-filled cells ───────────────────────────────────── */
 .mark-input.cell-prefilled { background:#FFFBF0; border-color:#FDE68A; }
+
+/* ─── Modal extra buttons ────────────────────────────────── */
+.modal-extra-btn { margin-right: 4px; }
+
+/* ─── Progress table scrollable wrapper ──────────────────── */
+.session-block > div { overflow-x: auto; }
 
 /* ─── Attempt tags (computed) ────────────────────────────── */
 .attempt-tag {
@@ -839,19 +910,50 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
       <!-- ── Smaller report cards ── -->
       <div class="report-card-grid">
 
-        <!-- Credit Eligibility -->
-        <div class="report-card">
-          <h3>Credit Eligibility Filter</h3>
-          <p>Students whose earned credits in a session fall below a threshold.</p>
-          <div class="report-inputs">
-            <label style="font-size:12px;">Session</label>
-            <select id="rpt-credit-session" style="min-width:140px;"><option value="">— select —</option></select>
+        <!-- Credit Eligibility Filter 1: Incomplete Sem Credits -->
+        <div class="report-card" style="grid-column:1/-1;">
+          <h3>Credit Eligibility — Incomplete Semester Credits</h3>
+          <p>Students who have not yet completed all credits for a given semester. Includes current CGPA.</p>
+          <div class="report-filters" style="flex-wrap:wrap; gap:10px; margin-bottom:10px;">
+            <div class="filter-group">
+              <label>Semester</label>
+              <select id="rpt-credit-sem" style="min-width:130px;">
+                <option value="">— select —</option>
+                <option value="1">Semester I</option>
+                <option value="2">Semester II</option>
+              </select>
+            </div>
+            <div class="filter-group">
+              <label>Branch</label>
+              <select id="rpt-credit-branch" style="min-width:130px;"><option value="">— all branches —</option></select>
+            </div>
+            <div class="filter-group" style="justify-content:flex-end;">
+              <label>&nbsp;</label>
+              <button id="rpt-credit-filter" class="btn btn-secondary btn-sm">Run &amp; Export CSV</button>
+            </div>
           </div>
-          <div class="report-inputs">
-            <label style="font-size:12px;">Credits &lt;</label>
-            <input type="number" id="rpt-credit-x" placeholder="e.g. 15" min="0" style="width:90px;">
+          <div id="rpt-credit-filter-output"></div>
+        </div>
+
+        <!-- Credit Eligibility Filter 2: Total Credits < X -->
+        <div class="report-card" style="grid-column:1/-1;">
+          <h3>Credit Eligibility — Total Credits Below Threshold</h3>
+          <p>Students whose total earned credits (across both semesters) are below a given number. Includes CGPA.</p>
+          <div class="report-filters" style="flex-wrap:wrap; gap:10px; margin-bottom:10px;">
+            <div class="filter-group">
+              <label>Total credits &lt;</label>
+              <input type="number" id="rpt-credit-x" placeholder="e.g. 30" min="0" style="width:90px;">
+            </div>
+            <div class="filter-group">
+              <label>Branch</label>
+              <select id="rpt-total-credit-branch" style="min-width:130px;"><option value="">— all branches —</option></select>
+            </div>
+            <div class="filter-group" style="justify-content:flex-end;">
+              <label>&nbsp;</label>
+              <button id="rpt-total-credit-filter" class="btn btn-secondary btn-sm">Run &amp; Export CSV</button>
+            </div>
           </div>
-          <button id="rpt-credit-filter" class="btn btn-secondary btn-sm">Export CSV</button>
+          <div id="rpt-total-credit-filter-output"></div>
         </div>
 
         <!-- KT Count Filter -->
@@ -1016,7 +1118,7 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
           <button id="admin-upload-btn" class="btn btn-primary btn-sm" disabled>Upload to Sheet</button>
         </div>
 
-        <!-- Seat Number upload -->
+        <!-- Seat Number upload + manual entry -->
         <div class="admin-section">
           <h3>Seat Number Upload (CSV)</h3>
           <p style="font-size:12px; color:var(--ink-3); margin-bottom:10px; line-height:1.6;">
@@ -1030,6 +1132,32 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
           </div>
           <div id="admin-seat-preview" style="font-size:12px; color:var(--ink-3); margin-bottom:10px;"></div>
           <button id="admin-seat-upload-btn" class="btn btn-primary btn-sm" disabled>Upload Seat Numbers</button>
+
+          <div style="margin-top:20px; padding-top:16px; border-top:1px solid var(--border);">
+            <div style="font-size:12px; font-weight:600; color:var(--ink-3); margin-bottom:10px;">Manual Seat Entry (for individual KT students)</div>
+            <div class="form-group">
+              <label>Search student (PRN / Name / UIN)</label>
+              <div class="search-wrap">
+                <input type="text" id="admin-seat-student-search" class="search-input" placeholder="Type to search…" autocomplete="off">
+                <div id="admin-seat-student-results" class="search-results" style="display:none;"></div>
+              </div>
+            </div>
+            <div id="admin-seat-student-selected" style="display:none; margin-bottom:8px;">
+              <div class="student-card" style="padding:8px 12px;">
+                <span id="admin-seat-student-name" style="font-weight:600;"></span>
+                <span id="admin-seat-student-ids" style="font-size:11px; color:var(--ink-3); margin-left:8px;"></span>
+              </div>
+            </div>
+            <div class="form-group">
+              <label>Session</label>
+              <select id="admin-seat-session-select"><option value="">— select session —</option></select>
+            </div>
+            <div class="form-group">
+              <label>Seat Number</label>
+              <input type="text" id="admin-seat-number-input" placeholder="e.g. 1023" style="width:140px;">
+            </div>
+            <button id="admin-seat-manual-save" class="btn btn-primary btn-sm" disabled>Save Seat Number</button>
+          </div>
         </div>
 
         <!-- Session list -->

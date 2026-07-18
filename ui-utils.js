@@ -16,18 +16,36 @@ const UI = (() => {
   }
 
   // ── Modal ─────────────────────────────────────────────────
-  function showModal(title, bodyHTML, { onConfirm, confirmLabel = 'Confirm', danger = false } = {}) {
+  // extraButtons = [{ label, action, danger? }] — injected between Cancel and Confirm
+  function showModal(title, bodyHTML, { onConfirm, confirmLabel = 'Confirm', danger = false, extraButtons = [] } = {}) {
     document.getElementById('modal-title').textContent = title;
     document.getElementById('modal-body').innerHTML = bodyHTML;
-    const btn = document.getElementById('modal-confirm');
-    btn.textContent = confirmLabel;
-    btn.className = 'btn ' + (danger ? 'btn-danger' : 'btn-primary');
-    btn.onclick = () => { hideModal(); onConfirm && onConfirm(); };
+
+    const confirmBtn = document.getElementById('modal-confirm');
+    confirmBtn.textContent = confirmLabel;
+    confirmBtn.className = 'btn ' + (danger ? 'btn-danger' : 'btn-primary');
+    confirmBtn.onclick = () => { hideModal(); onConfirm && onConfirm(); };
+
+    // Remove any previously injected extra buttons
+    document.querySelectorAll('.modal-extra-btn').forEach(el => el.remove());
+
+    // Inject extra buttons before Confirm
+    const actions = document.querySelector('.modal-actions');
+    for (const eb of extraButtons) {
+      const btn = document.createElement('button');
+      btn.textContent = eb.label;
+      btn.className = 'btn btn-secondary modal-extra-btn' + (eb.danger ? ' btn-danger' : '');
+      btn.onclick = () => { hideModal(); eb.action && eb.action(); };
+      actions.insertBefore(btn, confirmBtn);
+    }
+
     document.getElementById('modal').classList.add('open');
   }
 
   function hideModal() {
     document.getElementById('modal').classList.remove('open');
+    // Clean up extra buttons on close
+    document.querySelectorAll('.modal-extra-btn').forEach(el => el.remove());
   }
 
   // ── Spinner ───────────────────────────────────────────────

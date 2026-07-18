@@ -201,6 +201,22 @@ const Sheets = (() => {
     return appendRows(CONFIG.TABS.SEAT, rows);
   }
 
+  // updateSeatNumber — overwrites the Seat Number cell for an existing UIN+Session row
+  async function updateSeatNumber(uin, sessionId, seatNumber) {
+    const rows = await getRange(CONFIG.TABS.SEAT, 'A:C');
+    for (let i = 1; i < rows.length; i++) {
+      if ((rows[i][0] || '') === uin && (rows[i][1] || '') === sessionId) {
+        const rowNum = i + 1;
+        const url = `${BASE}/${CONFIG.SHEET_ID}/values/${encodeURIComponent(CONFIG.TABS.SEAT + '!C' + rowNum)}?valueInputOption=USER_ENTERED`;
+        const r = await fetch(url, { method: 'PUT', headers: await _headers(), body: JSON.stringify({ values: [[seatNumber]] }) });
+        if (!r.ok) throw new Error(`Seat update failed: ${r.status}`);
+        return r.json();
+      }
+    }
+    // Row not found in sheet — append instead (handles race condition)
+    return appendRows(CONFIG.TABS.SEAT, [[uin, sessionId, seatNumber]]);
+  }
+
   // ── Utility: generate Entry ID ────────────────────────────
   function newEntryId() {
     return 'RCE-' + Date.now() + '-' + Math.random().toString(36).slice(2,6).toUpperCase();
@@ -211,7 +227,7 @@ const Sheets = (() => {
     getSessions, addSession, updateSessionStatus, updateSessionLinkedPrelim,
     getLedger, appendLedgerRows,
     getSubjectMaster,
-    getSeats, uploadSeats,
+    getSeats, uploadSeats, updateSeatNumber,
     newEntryId,
   };
 })();
