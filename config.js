@@ -34,6 +34,27 @@ const BRANCHES = ['AIDS', 'Civil', 'Computer', 'ECSE', 'Mechanical'];
 // ── Attempt types ─────────────────────────────────────────────
 const ATTEMPT_TYPES = ['Regular', 'Reval', 'KT', 'Grace'];
 
+// ── Session naming ────────────────────────────────────────────
+const SESSION_YEARS  = Array.from({ length: 10 }, (_, i) => 2024 + i); // 2024–2033
+const SESSION_MONTHS = ['December', 'May'];
+const SESSION_TYPES  = ['Preliminary', 'Final Gazette'];
+
+// Derive fresh batch year from session year + month
+// December 2025 Sem-I  → fresh batch 2025
+// May 2026     Sem-II  → fresh batch 2025 (same academic year)
+function deriveFreshBatch(year, month) {
+  return month === 'May' ? year - 1 : year;
+}
+
+// Auto-generate session name
+// e.g. "2025_Dec_Sem-I_Preliminary" or "2026_May_Sem-II_Final-Gazette"
+function buildSessionName(year, month, semester, type) {
+  const mo  = month === 'December' ? 'Dec' : 'May';
+  const sem = semester === 1 ? 'Sem-I' : 'Sem-II';
+  const typ = type === 'Final Gazette' ? 'Final-Gazette' : 'Preliminary';
+  return `${year}_${mo}_${sem}_${typ}`;
+}
+
 // ── Semester I subjects ──────────────────────────────────────
 const SEM1_SUBJECTS = [
   { code:'BSC101', name:'Applied Mathematics I',          type:'Theory+Tutorial',  credits:3,   marks:{ TW:25, ESE:60, IAT:40 } },

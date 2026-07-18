@@ -631,6 +631,48 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
   background:var(--surface-2); color:var(--ink-3); white-space:nowrap;
 }
 
+/* ─── Mode toggle (Ad-hoc / Queue) ──────────────────────── */
+.mode-toggle {
+  display:inline-flex; border:1px solid var(--border-2);
+  border-radius:var(--radius); overflow:hidden;
+}
+.mode-btn {
+  padding:6px 16px; border:none; background:var(--surface-2);
+  color:var(--ink-3); font-size:13px; font-weight:500;
+  font-family:inherit; cursor:pointer; transition:all .15s;
+}
+.mode-btn.active {
+  background:var(--brand); color:#fff; font-weight:600;
+}
+.mode-btn:not(.active):hover { background:var(--border); }
+
+/* ─── Queue seat badge ───────────────────────────────────── */
+.seat-badge {
+  min-width:52px; height:52px; border-radius:var(--radius);
+  background:var(--brand); color:#fff;
+  display:flex; align-items:center; justify-content:center;
+  font-family:'DM Mono',monospace; font-size:18px; font-weight:700;
+  flex-shrink:0;
+}
+
+/* ─── Session preview box (admin) ────────────────────────── */
+.session-preview-box {
+  background:var(--brand-light); border:1px solid #C7D7FF;
+  border-radius:var(--radius); padding:10px 14px;
+  margin:10px 0 12px; display:flex; flex-direction:column; gap:6px;
+}
+.session-preview-row {
+  display:flex; align-items:center; gap:10px;
+}
+.session-preview-lbl {
+  font-size:11px; font-weight:600; color:var(--ink-3);
+  min-width:90px; text-transform:uppercase; letter-spacing:.3px;
+}
+.session-preview-val {
+  font-size:13px; font-weight:700; color:var(--brand);
+  font-family:'DM Mono',monospace;
+}
+
 /* ─── Single entry mode toggle ───────────────────────────── */
 .se-mode-toggle {
   display:inline-flex; border:1px solid var(--border-2);
@@ -709,8 +751,7 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
       FYE Results
     </div>
     <nav class="topbar-nav">
-      <button class="tab-btn" data-tab="bulk-entry">Bulk Entry</button>
-      <button class="tab-btn" data-tab="single-entry">Single Student</button>
+      <button class="tab-btn" data-tab="mark-entry">Mark Entry</button>
       <button class="tab-btn" data-tab="progress">Progress View</button>
       <button class="tab-btn" data-tab="reports">Reports</button>
       <button class="tab-btn" data-tab="admin" data-admin-only>Admin</button>
@@ -724,159 +765,106 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
   <!-- Main content -->
   <main class="main-content">
 
-    <!-- ─── TAB: Bulk Entry ─── -->
-    <div id="tab-bulk-entry" class="tab-pane hidden">
-      <div class="card">
-        <div class="card-title">Bulk Mark Entry</div>
-        <div class="filters">
-          <div class="filter-group">
-            <label>Session</label>
-            <select id="be-session"><option value="">— select session —</option></select>
-          </div>
-          <div class="filter-group">
-            <label>Semester</label>
-            <select id="be-semester" disabled>
-              <option value="">—</option>
-              <option value="1">Semester I</option>
-              <option value="2">Semester II</option>
-            </select>
-          </div>
-          <div class="filter-group">
-            <label>Branch</label>
-            <select id="be-branch" disabled><option value="">— select —</option></select>
-          </div>
-          <div class="filter-group">
-            <label>Division</label>
-            <select id="be-division" disabled><option value="">All divisions</option></select>
-          </div>
-          <div class="filter-group">
-            <label>Gender</label>
-            <select id="be-gender">
-              <option value="">All</option>
-              <option value="Male">Male</option>
-              <option value="Female">Female</option>
-            </select>
-          </div>
-          <div class="filter-group" style="justify-content:flex-end;">
-            <label>&nbsp;</label>
-            <button id="be-load-btn" class="btn btn-secondary" disabled>Load grid</button>
-          </div>
-        </div>
+    <!-- ─── TAB: Mark Entry ─── -->
+    <div id="tab-mark-entry" class="tab-pane hidden">
 
-        <!-- Sort + Column picker — shown after grid loads -->
-        <div id="be-toolbar" class="be-toolbar hidden">
-          <span id="be-session-type-badge" style="display:none;"></span>
-          <label>Sort by</label>
-          <select id="be-sort">
-            <option value="default">Default (sheet order)</option>
-            <option value="seat">Seat Number ↑</option>
-            <option value="name">Name (A–Z)</option>
-            <option value="uin">UIN</option>
-            <option value="prn">PRN</option>
-            <option value="batch">Batch Year</option>
-          </select>
-          <div style="width:1px; height:20px; background:var(--border); margin:0 4px;"></div>
-          <label>Columns to enter</label>
-          <div id="be-col-picker" class="col-picker"></div>
+      <!-- Mode toggle -->
+      <div class="card" style="margin-bottom:16px;">
+        <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+          <div class="card-title" style="margin-bottom:0;">Mark Entry</div>
+          <div class="mode-toggle">
+            <button id="me-adhoc-btn" class="mode-btn active">Ad-hoc</button>
+            <button id="me-queue-btn" class="mode-btn">Queue</button>
+          </div>
+          <span style="font-size:12px; color:var(--ink-3);" id="me-mode-hint">
+            Search for any student by name / UIN / PRN
+          </span>
         </div>
       </div>
 
-      <div id="be-grid-area"></div>
-
-      <div style="margin-top:14px; display:flex; justify-content:flex-end; gap:10px; align-items:center;">
-        <div style="font-size:12px; color:var(--ink-3);">
-          Cells: numbers · <strong>AB</strong> (absent) · <strong>N*</strong> (grace e.g. 21*)
-        </div>
-        <button id="be-submit-btn" class="btn btn-primary" disabled>Submit marks →</button>
-      </div>
-    </div>
-
-    <!-- ─── TAB: Single Student Entry ─── -->
-    <!-- ─── TAB: Single Student Entry ─── -->
-    <div id="tab-single-entry" class="tab-pane hidden">
-      <div class="card">
-        <div class="card-title">Single Student Entry</div>
-
-        <!-- Mode toggle -->
-        <div class="se-mode-toggle">
-          <button class="se-mode-btn active" id="se-mode-adhoc">Ad-hoc</button>
-          <button class="se-mode-btn" id="se-mode-queue">Queue</button>
-        </div>
-
-        <!-- Ad-hoc filters -->
-        <div id="se-adhoc-filters" class="filters">
-          <div class="filter-group">
-            <label>Session</label>
-            <select id="se-session"><option value="">— select session —</option></select>
-          </div>
-          <div class="filter-group">
-            <label>Search student</label>
-            <div class="search-wrap">
-              <input type="text" id="se-search" class="search-input" placeholder="Name, UIN or PRN…" autocomplete="off">
-              <div id="se-results" class="search-results" style="display:none;"></div>
+      <!-- ── AD-HOC PANEL ── -->
+      <div id="me-adhoc-panel">
+        <div class="card">
+          <div class="filters">
+            <div class="filter-group">
+              <label>Session</label>
+              <select id="me-adhoc-session"><option value="">— select session —</option></select>
+            </div>
+            <div class="filter-group">
+              <label>Search student</label>
+              <div class="search-wrap">
+                <input type="text" id="me-adhoc-search" class="search-input"
+                  placeholder="Name, UIN or PRN…" autocomplete="off">
+                <div id="me-adhoc-results" class="search-results" style="display:none;"></div>
+              </div>
             </div>
           </div>
         </div>
 
-        <!-- Queue filters -->
-        <div id="se-queue-filters" class="filters hidden">
-          <div class="filter-group">
-            <label>Session</label>
-            <select id="se-q-session"><option value="">— select session —</option></select>
-          </div>
-          <div class="filter-group">
-            <label>Semester</label>
-            <select id="se-q-semester" disabled>
-              <option value="">—</option>
-              <option value="1">Semester I</option>
-              <option value="2">Semester II</option>
-            </select>
-          </div>
-          <div class="filter-group">
-            <label>Branch</label>
-            <select id="se-q-branch" disabled><option value="">— select —</option></select>
-          </div>
-          <div class="filter-group">
-            <label>Division</label>
-            <select id="se-q-division" disabled><option value="">All divisions</option></select>
-          </div>
-          <div class="filter-group">
-            <label>Sort by</label>
-            <select id="se-q-sort" disabled>
-              <option value="default">Default (sheet order)</option>
-              <option value="seat">Seat Number ↑</option>
-              <option value="name">Name (A–Z)</option>
-              <option value="uin">UIN</option>
-              <option value="prn">PRN</option>
-            </select>
-          </div>
-          <div class="filter-group" style="justify-content:flex-end;">
-            <label>&nbsp;</label>
-            <button id="se-q-load-btn" class="btn btn-secondary" disabled>Load queue</button>
+        <div id="me-adhoc-student-panel" class="hidden" style="margin-top:16px;">
+          <div id="me-adhoc-student-info" style="margin-bottom:14px;"></div>
+          <div id="me-adhoc-grid"></div>
+          <div style="margin-top:14px; display:flex; justify-content:flex-end;">
+            <button id="me-adhoc-submit-btn" class="btn btn-primary">Save marks →</button>
           </div>
         </div>
       </div>
 
-      <!-- Queue progress bar — shown after queue loads -->
-      <div id="se-queue-progress" class="queue-progress-bar hidden" style="margin-top:14px;">
-        <span class="queue-pos" id="se-q-pos">1 / —</span>
-        <span class="queue-stats">
-          <span class="queue-done" id="se-q-done">0 done</span>
-          <span class="queue-pending" id="se-q-pending"> · — pending</span>
-        </span>
-        <span id="se-q-student-name" style="font-weight:600; color:var(--ink-2);"></span>
-        <div class="queue-actions">
-          <button id="se-q-skip-btn" class="btn btn-secondary btn-sm">Skip →</button>
+      <!-- ── QUEUE PANEL ── -->
+      <div id="me-queue-panel" class="hidden">
+        <div class="card">
+          <div class="filters">
+            <div class="filter-group">
+              <label>Session</label>
+              <select id="me-queue-session"><option value="">— select session —</option></select>
+            </div>
+            <div class="filter-group">
+              <label>Branch</label>
+              <select id="me-queue-branch"><option value="">— select branch —</option></select>
+            </div>
+            <div class="filter-group">
+              <label>Sort by</label>
+              <select id="me-queue-sort">
+                <option value="seat">Seat Number ↑</option>
+                <option value="name">Name (A–Z)</option>
+                <option value="uin">UIN</option>
+                <option value="prn">PRN</option>
+              </select>
+            </div>
+            <div class="filter-group" style="justify-content:flex-end;">
+              <label>&nbsp;</label>
+              <button id="me-queue-load-btn" class="btn btn-primary" disabled>Load queue →</button>
+            </div>
+          </div>
         </div>
+
+        <!-- Progress bar -->
+        <div id="me-queue-progress-wrap" style="margin-top:12px; display:flex; align-items:center; gap:12px;">
+          <span id="me-queue-progress" style="font-size:12px; color:var(--ink-3); white-space:nowrap;"></span>
+          <div style="flex:1; height:6px; background:var(--border); border-radius:3px; overflow:hidden;">
+            <div id="me-queue-progress-bar-fill"
+              style="height:100%; background:var(--brand); border-radius:3px; width:0%; transition:width .3s;">
+            </div>
+          </div>
+        </div>
+
+        <!-- Student card -->
+        <div id="me-queue-card" class="hidden" style="margin-top:12px;">
+          <div id="me-queue-student-header" style="margin-bottom:14px;"></div>
+          <div id="me-queue-grid"></div>
+          <div style="margin-top:16px; display:flex; gap:10px; justify-content:flex-end; align-items:center;">
+            <span style="font-size:12px; color:var(--ink-3);">
+              Numbers · <strong>AB</strong> · <strong>N*</strong> grace
+            </span>
+            <button id="me-queue-skip-btn" class="btn btn-secondary">Skip →</button>
+            <button id="me-queue-save-btn" class="btn btn-primary">Save &amp; Next →</button>
+          </div>
+        </div>
+
+        <!-- Summary -->
+        <div id="me-queue-summary" class="hidden" style="margin-top:12px;"></div>
       </div>
 
-      <div id="se-student-panel" class="hidden" style="margin-top:16px;">
-        <div id="se-student-info" style="margin-bottom:14px;"></div>
-        <div id="se-grid"></div>
-        <div style="margin-top:14px; display:flex; justify-content:flex-end; gap:10px;">
-          <button id="se-submit-btn" class="btn btn-primary">Save marks →</button>
-        </div>
-      </div>
     </div>
 
     <!-- ─── TAB: Progress View ─── -->
@@ -1158,9 +1146,21 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
         <div class="admin-section">
           <h3>Create New Session</h3>
 
-          <div class="form-group">
-            <label>Session name</label>
-            <input type="text" id="admin-session-name" placeholder="e.g. May 2025">
+          <div class="form-row">
+            <div class="form-group" style="flex:1;">
+              <label>Year</label>
+              <select id="admin-session-year">
+                <option value="">—</option>
+              </select>
+            </div>
+            <div class="form-group" style="flex:1;">
+              <label>Month</label>
+              <select id="admin-session-month">
+                <option value="">—</option>
+                <option value="December">December</option>
+                <option value="May">May</option>
+              </select>
+            </div>
           </div>
           <div class="form-row">
             <div class="form-group" style="flex:1;">
@@ -1172,19 +1172,27 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
               </select>
             </div>
             <div class="form-group" style="flex:1;">
-              <label>Batch year</label>
-              <input type="text" id="admin-session-batch" placeholder="e.g. 2024">
+              <label>Type</label>
+              <select id="admin-session-entry-type">
+                <option value="Preliminary">Preliminary</option>
+                <option value="Final Gazette">Final Gazette</option>
+              </select>
             </div>
           </div>
 
-          <div class="form-group">
-            <label>Entry Type</label>
-            <select id="admin-session-entry-type">
-              <option value="Preliminary">Preliminary</option>
-              <option value="Final Gazette">Final Gazette</option>
-            </select>
+          <!-- Auto-generated preview -->
+          <div class="session-preview-box">
+            <div class="session-preview-row">
+              <span class="session-preview-lbl">Session name</span>
+              <span class="session-preview-val" id="admin-session-preview">—</span>
+            </div>
+            <div class="session-preview-row">
+              <span class="session-preview-lbl">Fresh batch</span>
+              <span class="session-preview-val" id="admin-session-batch-derived">—</span>
+            </div>
           </div>
 
+          
           <!-- Linked Preliminary Session — shown only for Final Gazette -->
           <div id="admin-linked-prelim-section" class="hidden">
             <div class="elective-section-header">
@@ -1327,7 +1335,7 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
                 <tr>
                   <th>Name</th><th>Semester</th><th>Batch</th>
                   <th>Type</th><th>Linked Preliminary</th>
-                  <th>Electives</th><th>Status</th><th>Created By</th>
+                  <th>Electives</th><th>Status</th><th>Export</th><th>Created By</th>
                 </tr>
               </thead>
               <tbody id="admin-session-tbody"></tbody>
@@ -1378,6 +1386,7 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
 </div>
 
 <!-- ─── Scripts ─────────────────────────────────────────── -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="config.js"></script>
 <script src="auth.js"></script>
 <script src="ui-utils.js"></script>
@@ -1386,10 +1395,22 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
 <script src="app.js"></script>
 
 <script>
+// Populate year dropdown
+const yearEl = document.getElementById('admin-session-year');
+if (yearEl) {
+  SESSION_YEARS.forEach(y => {
+    const opt = document.createElement('option');
+    opt.value = y; opt.textContent = y;
+    yearEl.appendChild(opt);
+  });
+}
+
 // Fix search-results visibility
-['se-search','pv-search'].forEach(id => {
+['me-adhoc-search', 'pv-search'].forEach(id => {
   const input   = document.getElementById(id);
-  const results = document.getElementById(id === 'se-search' ? 'se-results' : 'pv-results');
+  const results = document.getElementById(
+    id === 'me-adhoc-search' ? 'me-adhoc-results' : 'pv-results'
+  );
   if (!input || !results) return;
   input.addEventListener('focus', () => results.style.display = '');
   input.addEventListener('blur',  () => setTimeout(() => results.style.display = 'none', 200));

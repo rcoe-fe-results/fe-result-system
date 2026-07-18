@@ -21,7 +21,7 @@ function _onAuthChange(user) {
     UI.hideSpinner();
     _buildNav(user);
     _showScreen('app');
-    showTab('bulk-entry');
+    showTab('mark-entry');
   }).catch(err => {
     UI.hideSpinner();
     UI.toast('Failed to load data: ' + err.message, 'error', 8000);
@@ -68,11 +68,10 @@ function showTab(tabId) {
 }
 
 const TAB_INIT = {
-  'bulk-entry':    initBulkEntry,
-  'single-entry':  initSingleEntry,
-  'progress':      initProgress,
-  'reports':       initReports,
-  'admin':         initAdmin,
+  'mark-entry':   initMarkEntry,
+  'progress':     initProgress,
+  'reports':      initReports,
+  'admin':        initAdmin,
 };
 
 function _bindModalClose() {
@@ -83,27 +82,500 @@ function _bindModalClose() {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// TAB 1 — BULK ENTRY
+// TAB 1 — MARK ENTRY (Ad-hoc + Queue)
 // ═══════════════════════════════════════════════════════════════
-let bulkState = {
-  session: null, semester: null, branch: null, division: null,
-  subjects: [], students: [], seatMap: {},
-  activeComps: new Set(['IAT','ESE','TW','Oral']),
-  sortBy: 'default',
+let meMode = 'adhoc'; // 'adhoc' | 'queue'
+
+function initMarkEntry() {
+  // Toggle buttons
+  document.getElementById('me-adhoc-btn').onclick = () => _meSetMode('adhoc');
+  document.getElementById('me-queue-btn').onclick = () => _meSetMode('queue');
+  _meSetMode(meMode);
+}
+
+function _meSetMode(mode) {
+  meMode = mode;
+  document.getElementById('me-adhoc-btn').classList.toggle('active', mode === 'adhoc');
+  document.getElementById('me-queue-btn').classList.toggle('active', mode === 'queue');
+  document.getElementById('me-adhoc-panel').classList.toggle('hidden', mode !== 'adhoc');
+  document.getElementById('me-queue-panel').classList.toggle('hidden', mode !== 'queue');
+  if (mode === 'adhoc') _meInitAdhoc();
+  if (mode === 'queue') _meInitQueue();
+}
+
+// ── AD-HOC MODE ───────────────────────────────────────────────
+function _meInitAdhoc() {
+  const sessions = State.getSessions().filter(s => s.status === 'Active');
+  UI.buildSelect('me-adhoc-session', sessions, '— select session —', 'id', 'name');
+  document.getElementById('me-adhoc-session').onchange = () => {
+    meAdhocState.session = State.getSession(document.getElementById('me-adhoc-session').value);
+    if (meAdhocState.student) _meAdhocRenderGrid();
+  };
+
+  const searchInput = document.getElementById('me-adhoc-search');
+  const resultsBox  = document.getElementById('me-adhoc-results');
+  searchInput.value = '';
+  resultsBox.innerHTML = '';
+  document.getElementById('me-adhoc-student-panel').classList.add('hidden');
+
+  searchInput.addEventListener('input', _debounce(() => {
+    const q = searchInput.value.trim();
+    if (q.length < 2) { resultsBox.innerHTML = ''; return; }
+    const matches = State.searchStudents(q).slice(0, 10);
+    resultsBox.innerHTML = matches.length
+      ? matches.map(s => `
+          <div class="search-result" data-uin="${UI.esc(s.uin)}">
+            <strong>${UI.esc(s.name)}</strong>
+            <span>${UI.esc(s.uin)} · ${UI.esc(s.branch)} · Batch ${UI.esc(s.batchYear)}</span>
+          </div>`).join('')
+      : '<div class="search-result muted">No students found.</div>';
+    resultsBox.querySelectorAll('.search-result[data-uin]').forEach(el => {
+      el.onclick = () => _meAdhocSelectStudent(el.dataset.uin);
+    });
+  }, 250));
+
+  document.getElementById('me-adhoc-submit-btn').onclick = _meAdhocSubmit;
+}
+
+let meAdhocState = { student: null, session: null };
+
+function _meAdhocSelectStudent(uin) {
+  meAdhocState.student = State.getStudent(uin);
+  document.getElementById('me-adhoc-results').innerHTML = '';
+  document.getElementById('me-adhoc-search').value = meAdhocState.student.name;
+  if (!meAdhocState.session) { UI.toast('Select a session first.', 'info'); return; }
+  _meAdhocRenderGrid();
+  document.getElementById('me-adhoc-student-panel').classList.remove('hidden');
+}
+
+function _meAdhocRenderGrid() {
+  const { student, session } = meAdhocState;
+  if (!student || !session) return;
+
+  const isFinal    = session.entryType === 'Final Gazette';
+  const subjects   = getSubjectsForSem(session.semester, student.branch, session);
+  const ktSubjects = new Set(
+    State.getActiveKTSubjects(student.uin)
+      .filter(r => Number(r.semester) === session.semester)
+      .map(r => r.subjectCode)
+  );
+  const isKT = ktSubjects.size > 0;
+
+  const info = document.getElementById('me-adhoc-student-info');
+  info.innerHTML = `
+    <div class="student-card">
+      <div class="sc-name">${UI.esc(student.name)}
+        ${isKT ? '<span class="badge badge-kt" style="margin-left:8px;">KT</span>' : '<span class="badge badge-regular" style="margin-left:8px;">Regular</span>'}
+      </div>
+      <div class="sc-meta">UIN: ${UI.esc(student.uin)} · PRN: ${UI.esc(student.prn || '—')} · ${UI.esc(student.branch)} · Div ${UI.esc(student.division)} · Batch ${UI.esc(student.batchYear)}</div>
+      ${isFinal
+        ? '<div style="margin-top:6px;"><span class="session-type-inline final-gazette">📋 Final Gazette — only ESE editable</span></div>'
+        : '<div style="margin-top:6px;"><span class="session-type-inline preliminary">📝 Preliminary</span></div>'}
+    </div>`;
+
+  let html = `<div class="single-grid">`;
+  for (const subj of subjects) {
+    const comps       = Object.keys(subj.marks);
+    const prevEntry   = State.getLatestEntryForSubject(student.uin, subj.code, session.id);
+    const prelimEntry = isFinal && session.linkedPrelimSessionId
+      ? State.getLatestEntryForSubject(student.uin, subj.code, session.linkedPrelimSessionId)
+      : null;
+
+    // KT component-level locking: check pass status per component across all sem sessions
+    const compPassStatus = _meGetCompPassStatus(student.uin, subj.code, session.semester);
+
+    html += `
+      <div class="subj-card">
+        <div class="subj-card-header">
+          <span class="subj-code">${UI.esc(subj.code)}</span>
+          <span class="subj-name">${UI.esc(subj.name)}</span>
+          <span class="subj-credits">${subj.credits} cr</span>
+        </div>
+        <div class="subj-inputs">`;
+
+    for (const comp of comps) {
+      const passedBefore = compPassStatus[comp] === 'pass';
+      const prevVal      = compPassStatus[comp + '_val'] || '';
+
+      if (isFinal) {
+        if (comp !== 'ESE') {
+          const prelimVal = prelimEntry ? (prelimEntry[comp.toLowerCase() + 'Marks'] || '—') : '—';
+          html += _meLockedCompHtml(comp, subj.marks[comp], prelimVal);
+        } else {
+          const existingFinal = prevEntry ? (prevEntry.eseMarks || '') : '';
+          const prelimESE     = prelimEntry ? (prelimEntry.eseMarks || '') : '';
+          const defaultVal    = existingFinal || prelimESE;
+          html += _meEditableCompHtml(comp, subj.marks[comp], subj.code, student.uin, defaultVal);
+        }
+      } else if (isKT && passedBefore) {
+        // KT student — component already passed → locked
+        html += _meLockedCompHtml(comp, subj.marks[comp], prevVal);
+      } else {
+        const existingVal = prevEntry ? (prevEntry[comp.toLowerCase() + 'Marks'] || '') : '';
+        html += _meEditableCompHtml(comp, subj.marks[comp], subj.code, student.uin, existingVal);
+      }
+    }
+    html += `</div></div>`;
+  }
+  html += `</div>`;
+  document.getElementById('me-adhoc-grid').innerHTML = html;
+
+  document.querySelectorAll('.mark-input-single').forEach(i => {
+    i.addEventListener('input', _beOnCellInput);
+  });
+}
+
+// Returns per-component pass status for a student+subject across all sessions of a semester
+// { IAT: 'pass'|'fail'|'none', IAT_val: '31', ESE: ..., ... }
+function _meGetCompPassStatus(uin, subjectCode, semester) {
+  const allRows = State.ledger
+    .filter(r => r.uin === uin && r.subjectCode === subjectCode && Number(r.semester) === semester)
+    .sort((a, b) => a.entryDateTime.localeCompare(b.entryDateTime));
+
+  const status = {};
+  const latest = {}; // latest non-empty value per component
+  for (const r of allRows) {
+    if (r.iatMarks  !== '') latest.IAT  = r.iatMarks;
+    if (r.eseMarks  !== '') latest.ESE  = r.eseMarks;
+    if (r.twMarks   !== '') latest.TW   = r.twMarks;
+    if (r.oralMarks !== '') latest.Oral = r.oralMarks;
+  }
+
+  // Find subject config to get max marks
+  const sess    = State.getSessions().find(s =>
+    allRows.some(r => r.examSession === s.id)
+  );
+  const subjList = sess ? getSubjectsForSem(semester, allRows[0]?.branch || 'Computer', sess) : [];
+  const subj     = subjList.find(s => s.code === subjectCode);
+
+  for (const [comp, val] of Object.entries(latest)) {
+    const max    = subj?.marks[comp];
+    const parsed = parseMarkValue(val, max);
+    status[comp + '_val'] = val;
+    if (!parsed.valid)   { status[comp] = 'none'; continue; }
+    if (parsed.absent)   { status[comp] = 'fail'; continue; }
+    if (parsed.grace)    { status[comp] = 'pass'; continue; }
+    if (max && parsed.value / max >= 0.40) status[comp] = 'pass';
+    else status[comp] = 'fail';
+  }
+  return status;
+}
+
+function _meLockedCompHtml(comp, max, val) {
+  return `
+    <label class="comp-label locked">
+      <span>${comp}<small>/${max}</small></span>
+      <input type="text" class="mark-input-single" data-comp="${comp}"
+        data-max="${max}" value="${UI.esc(val)}" disabled autocomplete="off">
+    </label>`;
+}
+
+function _meEditableCompHtml(comp, max, code, uin, val) {
+  return `
+    <label class="comp-label">
+      <span>${comp}<small>/${max}</small></span>
+      <input type="text"
+        class="mark-input-single${val ? ' cell-prefilled' : ''}"
+        data-code="${UI.esc(code)}"
+        data-comp="${comp}"
+        data-max="${max}"
+        data-uin="${UI.esc(uin)}"
+        value="${UI.esc(val)}"
+        autocomplete="off">
+    </label>`;
+}
+
+async function _meAdhocSubmit() {
+  const { student, session } = meAdhocState;
+  if (!student || !session) { UI.toast('Select a student and session.', 'error'); return; }
+
+  const isFinal = session.entryType === 'Final Gazette';
+  const inputs  = [...document.querySelectorAll('#me-adhoc-grid .mark-input-single:not([disabled])')];
+  const subjectMap = {};
+  for (const input of inputs) {
+    const { code, comp } = input.dataset;
+    const val = input.value.trim();
+    if (!val) continue;
+    if (!subjectMap[code]) subjectMap[code] = {};
+    subjectMap[code][comp] = parseMarkValue(val);
+  }
+  const entries = Object.entries(subjectMap).map(([code, marks]) => ({ uin: student.uin, subjectCode: code, marks }));
+  if (entries.length === 0) { UI.toast('No marks entered.', 'info'); return; }
+
+  UI.showSpinner('Saving…');
+  try {
+    const count = await State.submitEntries(session, entries);
+    UI.hideSpinner();
+    UI.toast(`✓ ${count} entries saved for ${student.name}.`, 'success');
+  } catch (err) {
+    UI.hideSpinner();
+    UI.toast('Error: ' + err.message, 'error', 8000);
+  }
+}
+
+// ── QUEUE MODE ────────────────────────────────────────────────
+let meQueueState = {
+  session: null, branch: null, sortBy: 'seat',
+  students: [], currentIdx: 0,
+  entered: 0, skipped: 0,
 };
 
-function initBulkEntry() {
+function _meInitQueue() {
   const sessions = State.getSessions().filter(s => s.status === 'Active');
-  UI.buildSelect('be-session', sessions, '— select session —', 'id', 'name');
-  document.getElementById('be-session').onchange  = _beOnSessionChange;
-  document.getElementById('be-semester').onchange = _beOnSemesterChange;
-  document.getElementById('be-branch').onchange   = _beOnBranchChange;
-  document.getElementById('be-division').onchange = _beOnDivisionChange;
-  document.getElementById('be-load-btn').onclick  = _beLoadGrid;
-  document.getElementById('be-submit-btn').onclick = _beSubmit;
-  document.getElementById('be-grid-area').innerHTML = '';
-  document.getElementById('be-toolbar').classList.add('hidden');
-  _beResetFilters();
+  UI.buildSelect('me-queue-session', sessions, '— select session —', 'id', 'name');
+  UI.buildSelect('me-queue-branch', BRANCHES, '— select branch —');
+
+  document.getElementById('me-queue-session').onchange = _meQueueOnFilterChange;
+  document.getElementById('me-queue-branch').onchange  = _meQueueOnFilterChange;
+  document.getElementById('me-queue-sort').onchange    = _meQueueOnFilterChange;
+  document.getElementById('me-queue-load-btn').onclick = _meQueueLoad;
+  document.getElementById('me-queue-skip-btn').onclick = _meQueueSkip;
+  document.getElementById('me-queue-save-btn').onclick = _meQueueSaveAndNext;
+
+  document.getElementById('me-queue-card').classList.add('hidden');
+  document.getElementById('me-queue-summary').classList.add('hidden');
+}
+
+function _meQueueOnFilterChange() {
+  meQueueState.session = State.getSession(document.getElementById('me-queue-session').value);
+  meQueueState.branch  = document.getElementById('me-queue-branch').value || null;
+  meQueueState.sortBy  = document.getElementById('me-queue-sort').value || 'seat';
+  const ready = meQueueState.session && meQueueState.branch;
+  document.getElementById('me-queue-load-btn').disabled = !ready;
+}
+
+function _meQueueLoad() {
+  const { session, branch, sortBy } = meQueueState;
+  if (!session || !branch) { UI.toast('Select session and branch.', 'error'); return; }
+
+  let students = State.getEligibleStudents(session, branch);
+
+  // Sort
+  const seatMap = State.getSeatsForSession(session.id);
+  const seatLookup = {};
+  for (const s of seatMap) seatLookup[s.uin] = s.seatNumber;
+
+  students = students.sort((a, b) => {
+    if (sortBy === 'seat') {
+      const sa = seatLookup[a.uin] || '';
+      const sb = seatLookup[b.uin] || '';
+      const na = Number(sa), nb = Number(sb);
+      if (!isNaN(na) && !isNaN(nb)) return na - nb;
+      return sa.localeCompare(sb);
+    }
+    if (sortBy === 'name') return a.name.localeCompare(b.name);
+    if (sortBy === 'uin')  return a.uin.localeCompare(b.uin);
+    if (sortBy === 'prn')  return (a.prn || '').localeCompare(b.prn || '');
+    return 0;
+  });
+
+  if (students.length === 0) {
+    UI.toast('No eligible students found for this session + branch.', 'error'); return;
+  }
+
+  meQueueState.students   = students;
+  meQueueState.currentIdx = 0;
+  meQueueState.entered    = 0;
+  meQueueState.skipped    = 0;
+  meQueueState.seatLookup = seatLookup;
+
+  document.getElementById('me-queue-summary').classList.add('hidden');
+  _meQueueRenderCard();
+}
+
+function _meQueueRenderCard() {
+  const { students, currentIdx, session, seatLookup } = meQueueState;
+  const student = students[currentIdx];
+  if (!student) { _meQueueShowSummary(); return; }
+
+  const card    = document.getElementById('me-queue-card');
+  card.classList.remove('hidden');
+
+  const seatNum  = seatLookup[student.uin] || '—';
+  const isFinal  = session.entryType === 'Final Gazette';
+  const subjects = getSubjectsForSem(session.semester, student.branch, session);
+  const isKT     = student.attemptFlag === 'KT';
+
+  // Progress indicator
+  document.getElementById('me-queue-progress').textContent =
+    `Student ${currentIdx + 1} of ${students.length}`;
+  document.getElementById('me-queue-progress-bar-fill').style.width =
+    `${Math.round((currentIdx / students.length) * 100)}%`;
+
+  // Student header
+  document.getElementById('me-queue-student-header').innerHTML = `
+    <div class="student-card" style="display:flex; align-items:center; gap:16px; flex-wrap:wrap;">
+      <div class="seat-badge">${UI.esc(seatNum)}</div>
+      <div>
+        <div class="sc-name">${UI.esc(student.name)}
+          ${isKT
+            ? '<span class="badge badge-kt" style="margin-left:8px;">KT</span>'
+            : '<span class="badge badge-regular" style="margin-left:8px;">Regular</span>'}
+        </div>
+        <div class="sc-meta">UIN: ${UI.esc(student.uin)} · PRN: ${UI.esc(student.prn || '—')} · Batch ${UI.esc(student.batchYear)}</div>
+      </div>
+      ${isFinal
+        ? '<span class="session-type-inline final-gazette" style="margin-left:auto;">📋 Final Gazette</span>'
+        : '<span class="session-type-inline preliminary" style="margin-left:auto;">📝 Preliminary</span>'}
+    </div>`;
+
+  // Subject cards
+  let html = `<div class="single-grid">`;
+  for (const subj of subjects) {
+    const comps       = Object.keys(subj.marks);
+    const prevEntry   = State.getLatestEntryForSubject(student.uin, subj.code, session.id);
+    const prelimEntry = isFinal && session.linkedPrelimSessionId
+      ? State.getLatestEntryForSubject(student.uin, subj.code, session.linkedPrelimSessionId)
+      : null;
+    const compPassStatus = _meGetCompPassStatus(student.uin, subj.code, session.semester);
+
+    html += `
+      <div class="subj-card">
+        <div class="subj-card-header">
+          <span class="subj-code">${UI.esc(subj.code)}</span>
+          <span class="subj-name">${UI.esc(subj.name)}</span>
+          <span class="subj-credits">${subj.credits} cr</span>
+        </div>
+        <div class="subj-inputs">`;
+
+    for (const comp of comps) {
+      const passedBefore = compPassStatus[comp] === 'pass';
+      const prevVal      = compPassStatus[comp + '_val'] || '';
+
+      if (isFinal) {
+        if (comp !== 'ESE') {
+          const prelimVal = prelimEntry ? (prelimEntry[comp.toLowerCase() + 'Marks'] || '—') : '—';
+          html += _meLockedCompHtml(comp, subj.marks[comp], prelimVal);
+        } else {
+          const existingFinal = prevEntry ? (prevEntry.eseMarks || '') : '';
+          const prelimESE     = prelimEntry ? (prelimEntry.eseMarks || '') : '';
+          html += _meEditableCompHtml(comp, subj.marks[comp], subj.code, student.uin, existingFinal || prelimESE);
+        }
+      } else if (isKT && passedBefore) {
+        html += _meLockedCompHtml(comp, subj.marks[comp], prevVal);
+      } else {
+        const existingVal = prevEntry ? (prevEntry[comp.toLowerCase() + 'Marks'] || '') : '';
+        html += _meEditableCompHtml(comp, subj.marks[comp], subj.code, student.uin, existingVal);
+      }
+    }
+    html += `</div></div>`;
+  }
+  html += `</div>`;
+  document.getElementById('me-queue-grid').innerHTML = html;
+
+  document.querySelectorAll('#me-queue-grid .mark-input-single').forEach(i => {
+    i.addEventListener('input', _beOnCellInput);
+  });
+
+  // Focus first editable input
+  const firstInput = document.querySelector('#me-queue-grid .mark-input-single:not([disabled])');
+  if (firstInput) firstInput.focus();
+}
+
+function _meQueueSkip() {
+  meQueueState.skipped++;
+  meQueueState.currentIdx++;
+  if (meQueueState.currentIdx >= meQueueState.students.length) {
+    _meQueueShowSummary();
+  } else {
+    _meQueueRenderCard();
+  }
+}
+
+async function _meQueueSaveAndNext() {
+  const { session, students, currentIdx } = meQueueState;
+  const student = students[currentIdx];
+  if (!student) return;
+
+  const inputs = [...document.querySelectorAll('#me-queue-grid .mark-input-single:not([disabled])')];
+  const subjectMap = {};
+  for (const input of inputs) {
+    const { code, comp } = input.dataset;
+    const val = input.value.trim();
+    if (!val) continue;
+    if (!subjectMap[code]) subjectMap[code] = {};
+    subjectMap[code][comp] = parseMarkValue(val);
+  }
+
+  const entries = Object.entries(subjectMap).map(([code, marks]) => ({
+    uin: student.uin, subjectCode: code, marks,
+  }));
+
+  if (entries.length > 0) {
+    UI.showSpinner('Saving…');
+    try {
+      await State.submitEntries(session, entries);
+      UI.hideSpinner();
+      meQueueState.entered++;
+    } catch (err) {
+      UI.hideSpinner();
+      UI.toast('Error saving: ' + err.message, 'error', 8000);
+      return; // Don't advance on error
+    }
+  } else {
+    meQueueState.skipped++;
+  }
+
+  meQueueState.currentIdx++;
+  if (meQueueState.currentIdx >= meQueueState.students.length) {
+    _meQueueShowSummary();
+  } else {
+    _meQueueRenderCard();
+  }
+}
+
+function _meQueueShowSummary() {
+  document.getElementById('me-queue-card').classList.add('hidden');
+  const summary = document.getElementById('me-queue-summary');
+  summary.classList.remove('hidden');
+
+  const { students, entered, skipped } = meQueueState;
+
+  // Find skipped students for follow-up list
+  // (students where no marks were saved in this queue run)
+  const skippedStudents = students.filter((s, i) => {
+    // A rough proxy: no entry exists for this student in this session
+    const hasEntry = State.ledger.some(r =>
+      r.uin === s.uin && r.examSession === meQueueState.session.id
+    );
+    return !hasEntry;
+  });
+
+  summary.innerHTML = `
+    <div class="card">
+      <div class="card-title">✅ Queue Complete</div>
+      <div style="display:flex; gap:24px; margin-bottom:16px; flex-wrap:wrap;">
+        <div class="pv-stat">
+          <span class="pv-stat-val" style="color:var(--pass);">${students.length}</span>
+          <span class="pv-stat-lbl">Total students</span>
+        </div>
+        <div class="pv-stat">
+          <span class="pv-stat-val" style="color:var(--brand);">${entered}</span>
+          <span class="pv-stat-lbl">Saved</span>
+        </div>
+        <div class="pv-stat">
+          <span class="pv-stat-val" style="color:var(--grace);">${skipped}</span>
+          <span class="pv-stat-lbl">Skipped</span>
+        </div>
+      </div>
+      ${skippedStudents.length > 0 ? `
+        <div style="font-size:12px; font-weight:600; color:var(--ink-3); margin-bottom:8px;">
+          Students with no entries yet (${skippedStudents.length}):
+        </div>
+        <div style="display:flex; flex-direction:column; gap:4px;">
+          ${skippedStudents.map(s => `
+            <div style="font-size:12px; padding:6px 10px; background:var(--surface-2);
+                        border-radius:var(--radius); border:1px solid var(--border);">
+              <strong>${UI.esc(s.name)}</strong>
+              <span style="color:var(--ink-3); margin-left:8px;">${UI.esc(s.uin)}</span>
+              ${s.attemptFlag === 'KT' ? '<span class="badge badge-kt" style="margin-left:6px;">KT</span>' : ''}
+            </div>`).join('')}
+        </div>` : ''}
+      <div style="margin-top:16px; display:flex; gap:10px;">
+        <button class="btn btn-primary" onclick="_meQueueLoad()">Start over</button>
+        <button class="btn btn-secondary" onclick="_meSetMode('adhoc')">Switch to Ad-hoc</button>
+      </div>
+    </div>`;
 }
 
 function _beResetFilters() {
@@ -561,301 +1033,6 @@ async function _beSubmit() {
 
 
 // ═══════════════════════════════════════════════════════════════
-// TAB 2 — SINGLE STUDENT ENTRY
-// ═══════════════════════════════════════════════════════════════
-let singleState = { student: null, session: null, subjects: [] };
-
-let queueState = {
-  active:   false,
-  students: [],      // sorted list of student objects
-  cursor:   0,       // index into students[]
-  session:  null,
-  semester: null,
-  doneSet:  new Set(), // UIns of fully-entered students
-};
-
-function initSingleEntry() {
-  // ── Ad-hoc mode ───────────────────────────────────────────
-  const searchInput = document.getElementById('se-search');
-  const resultsBox  = document.getElementById('se-results');
-  searchInput.value = '';
-  resultsBox.innerHTML = '';
-  document.getElementById('se-student-panel').classList.add('hidden');
-  document.getElementById('se-queue-progress').classList.add('hidden');
-
-  searchInput.addEventListener('input', _debounce(() => {
-    const q = searchInput.value.trim();
-    if (q.length < 2) { resultsBox.innerHTML = ''; return; }
-    const matches = State.searchStudents(q).slice(0, 10);
-    resultsBox.innerHTML = matches.length ? matches.map(s =>
-      `<div class="search-result" data-uin="${UI.esc(s.uin)}">
-        <strong>${UI.esc(s.name)}</strong>
-        <span>${UI.esc(s.uin)} · ${UI.esc(s.branch)} · Batch ${UI.esc(s.batchYear)}</span>
-      </div>`
-    ).join('') : '<div class="search-result muted">No students found.</div>';
-    resultsBox.querySelectorAll('.search-result[data-uin]').forEach(el => {
-      el.onclick = () => _seSelectStudent(el.dataset.uin);
-    });
-  }, 250));
-
-  const sessions = State.getSessions().filter(s => s.status === 'Active');
-  UI.buildSelect('se-session', sessions, '— select session —', 'id', 'name');
-  document.getElementById('se-session').onchange = () => {
-    singleState.session = State.getSession(document.getElementById('se-session').value);
-    if (singleState.student) _seRenderGrid();
-  };
-  document.getElementById('se-submit-btn').onclick = _seSubmit;
-
-  // ── Mode toggle ───────────────────────────────────────────
-  document.getElementById('se-mode-adhoc').onclick = () => _seSetMode('adhoc');
-  document.getElementById('se-mode-queue').onclick = () => _seSetMode('queue');
-
-  // ── Queue filters ─────────────────────────────────────────
-  UI.buildSelect('se-q-session', sessions, '— select session —', 'id', 'name');
-
-  document.getElementById('se-q-session').onchange = () => {
-    const sess = State.getSession(document.getElementById('se-q-session').value);
-    queueState.session = sess;
-    const semEl = document.getElementById('se-q-semester');
-    semEl.disabled = false;
-    if (sess) { semEl.value = sess.semester; queueState.semester = sess.semester; }
-    _seQueueEnableBranch();
-  };
-
-  document.getElementById('se-q-semester').onchange = () => {
-    queueState.semester = Number(document.getElementById('se-q-semester').value);
-    _seQueueEnableBranch();
-  };
-
-  document.getElementById('se-q-branch').onchange = () => {
-    const branch = document.getElementById('se-q-branch').value;
-    const divs   = branch ? State.getDivisions(branch) : [];
-    const multiDiv = divs.length > 1;
-    UI.buildSelect('se-q-division', multiDiv ? ['All', ...divs] : divs,
-      multiDiv ? '— select division —' : '— all divisions —');
-    document.getElementById('se-q-division').disabled = false;
-    document.getElementById('se-q-sort').disabled     = false;
-    document.getElementById('se-q-load-btn').disabled = !branch;
-  };
-
-  document.getElementById('se-q-load-btn').onclick = _queueLoad;
-  document.getElementById('se-q-skip-btn').onclick  = () => _queueAdvance(true);
-}
-
-function _seSetMode(mode) {
-  const isQueue = mode === 'queue';
-  document.getElementById('se-mode-adhoc').classList.toggle('active', !isQueue);
-  document.getElementById('se-mode-queue').classList.toggle('active',  isQueue);
-  document.getElementById('se-adhoc-filters').classList.toggle('hidden',  isQueue);
-  document.getElementById('se-queue-filters').classList.toggle('hidden', !isQueue);
-  if (!isQueue) {
-    document.getElementById('se-queue-progress').classList.add('hidden');
-    queueState.active = false;
-  }
-  document.getElementById('se-student-panel').classList.add('hidden');
-}
-
-function _seQueueEnableBranch() {
-  const branchEl = document.getElementById('se-q-branch');
-  branchEl.disabled = false;
-  UI.buildSelect('se-q-branch', BRANCHES, '— select branch —');
-  document.getElementById('se-q-division').disabled = true;
-  document.getElementById('se-q-sort').disabled     = true;
-  document.getElementById('se-q-load-btn').disabled = true;
-}
-
-function _seSelectStudent(uin) {
-  singleState.student = State.getStudent(uin);
-  document.getElementById('se-results').innerHTML = '';
-  document.getElementById('se-search').value = singleState.student.name;
-
-  if (!singleState.session) {
-    UI.toast('Select a session first.', 'info'); return;
-  }
-  _seRenderGrid();
-  document.getElementById('se-student-panel').classList.remove('hidden');
-}
-
-function _seRenderGrid() {
-  const { student, session } = singleState;
-  if (!student || !session) return;
-
-  const isFinal  = session.entryType === 'Final Gazette';
-  const subjects = getSubjectsForSem(session.semester, student.branch, session);
-  singleState.subjects = subjects;
-
-  const info = document.getElementById('se-student-info');
-  info.innerHTML = `
-    <div class="student-card">
-      <div class="sc-name">${UI.esc(student.name)}</div>
-      <div class="sc-meta">UIN: ${UI.esc(student.uin)} · PRN: ${UI.esc(student.prn || '—')} · ${UI.esc(student.branch)} · Div ${UI.esc(student.division)} · Batch ${UI.esc(student.batchYear)} · ${UI.esc(student.gender || '—')}</div>
-      ${isFinal ? '<div style="margin-top:6px;"><span class="session-type-inline final-gazette">📋 Final Gazette — only ESE editable</span></div>' : '<div style="margin-top:6px;"><span class="session-type-inline preliminary">📝 Preliminary — all components editable</span></div>'}
-    </div>`;
-
-  let html = `<div class="single-grid">`;
-  for (const subj of subjects) {
-    const comps       = Object.keys(subj.marks);
-    const prevEntry   = State.getLatestEntryForSubject(student.uin, subj.code, session.id);
-    const prelimEntry = isFinal && session.linkedPrelimSessionId
-      ? State.getLatestEntryForSubject(student.uin, subj.code, session.linkedPrelimSessionId)
-      : null;
-
-    html += `
-    <div class="subj-card">
-      <div class="subj-card-header">
-        <span class="subj-code">${UI.esc(subj.code)}</span>
-        <span class="subj-name">${UI.esc(subj.name)}</span>
-        <span class="subj-credits">${subj.credits} cr</span>
-      </div>
-      <div class="subj-inputs">`;
-
-    for (const comp of comps) {
-      if (isFinal) {
-        if (comp !== 'ESE') {
-          const prelimVal = prelimEntry ? (prelimEntry[comp.toLowerCase() + 'Marks'] || '—') : '—';
-          html += `
-            <label class="comp-label locked">
-              <span>${comp}<small>/${subj.marks[comp]}</small></span>
-              <input type="text" class="mark-input-single" data-code="${UI.esc(subj.code)}" data-comp="${comp}"
-                data-max="${subj.marks[comp]}" value="${UI.esc(prelimVal)}" disabled autocomplete="off">
-            </label>`;
-        } else {
-          const existingFinal = prevEntry ? (prevEntry.eseMarks || '') : '';
-          const prelimESE     = prelimEntry ? (prelimEntry.eseMarks || '') : '';
-          const defaultVal    = existingFinal || prelimESE;
-          html += `
-            <label class="comp-label">
-              <span>${comp}<small>/${subj.marks[comp]}</small></span>
-              <input type="text"
-                class="mark-input-single${defaultVal ? ' cell-prefilled' : ''}"
-                data-code="${UI.esc(subj.code)}"
-                data-comp="${comp}"
-                data-max="${subj.marks[comp]}"
-                value="${UI.esc(defaultVal)}"
-                autocomplete="off">
-            </label>`;
-        }
-      } else {
-        const existingVal = prevEntry ? (prevEntry[comp.toLowerCase() + 'Marks'] || '') : '';
-        html += `
-          <label class="comp-label">
-            <span>${comp}<small>/${subj.marks[comp]}</small></span>
-            <input type="text"
-              class="mark-input-single${existingVal ? ' cell-prefilled' : ''}"
-              data-code="${UI.esc(subj.code)}"
-              data-comp="${comp}"
-              data-max="${subj.marks[comp]}"
-              value="${UI.esc(existingVal)}"
-              autocomplete="off">
-          </label>`;
-      }
-    }
-
-    html += `</div>
-      <div class="subj-preview preview-pending" id="preview-${UI.esc(subj.code)}">—</div>
-    </div>`;
-  }
-  html += `</div>`;
-  document.getElementById('se-grid').innerHTML = html;
-
-  // Wire input listeners — validation + live preview
-  document.querySelectorAll('.mark-input-single').forEach(i => {
-    i.addEventListener('input', e => {
-      _beOnCellInput(e);
-      _seUpdatePreview(i.dataset.code);
-    });
-  });
-
-  // Fire preview for any pre-filled subjects immediately
-  for (const subj of subjects) {
-    _seUpdatePreview(subj.code);
-  }
-}
-
-function _seUpdatePreview(subjectCode) {
-  const { student, session, subjects } = singleState;
-  const el = document.getElementById('preview-' + subjectCode);
-  if (!el || !student || !session) return;
-
-  const subj = subjects.find(s => s.code === subjectCode);
-  if (!subj) return;
-
-  const isFinal = session.entryType === 'Final Gazette';
-
-  // Build marksMap from current input values
-  const marksMap = {};
-  document.querySelectorAll(`.mark-input-single[data-code="${subjectCode}"]`).forEach(input => {
-    const val = input.value.trim();
-    if (val && !input.disabled) marksMap[input.dataset.comp] = val;
-    // For Final Gazette: supplement from disabled (prelim) inputs
-    if (isFinal && input.disabled && val && val !== '—') {
-      marksMap[input.dataset.comp] = val;
-    }
-  });
-
-  const dr = computeDisplayResult(subj, marksMap);
-
-  el.className = 'subj-preview';
-  if (dr.pending) {
-    el.className += ' preview-pending';
-    el.textContent = '—';
-    return;
-  }
-  if (dr.result === 'AB') {
-    el.className += ' preview-ab';
-    el.textContent = `AB · ${UI.esc(dr.grade)}`;
-    return;
-  }
-  el.className += dr.result === 'Pass' ? ' preview-pass' : ' preview-fail';
-  const graceNote = dr.grace ? ' ✦' : '';
-  el.textContent = `${dr.total}/${dr.totalMax} · ${dr.pct.toFixed(1)}% · ${dr.grade} · ${dr.result}${graceNote}`;
-}
-
-async function _seSubmit() {
-  const { student, session, subjects } = singleState;
-  if (!student || !session) { UI.toast('Select a student and session.', 'error'); return; }
-
-  const isFinal = session.entryType === 'Final Gazette';
-  const inputs  = [...document.querySelectorAll('.mark-input-single:not([disabled])')];
-
-  const subjectMap = {};
-  for (const input of inputs) {
-    const { code, comp } = input.dataset;
-    const val = input.value.trim();
-    if (!val) continue;
-    if (!subjectMap[code]) subjectMap[code] = {};
-    subjectMap[code][comp] = parseMarkValue(val);
-  }
-
-  const entries = Object.entries(subjectMap).map(([code, marks]) => ({ uin: student.uin, subjectCode: code, marks }));
-
-  UI.showSpinner('Saving…');
-  try {
-    const count = await State.submitEntries(session, entries);
-    UI.hideSpinner();
-    UI.toast(`✓ ${count} entries saved for ${student.name}.`, 'success');
-
-    // Queue mode: mark done if all subjects entered, then advance
-    if (queueState.active) {
-      const expectedCount = State.getExpectedSubjectCount(student, session);
-      const enteredCount  = [...new Set(
-        State.ledger
-          .filter(r => r.uin === student.uin && r.examSession === session.id)
-          .map(r => r.subjectCode)
-      )].length;
-      if (expectedCount && enteredCount >= expectedCount) {
-        queueState.doneSet.add(student.uin);
-      }
-      _queueAdvance(false);
-    }
-  } catch (err) {
-    UI.hideSpinner();
-    UI.toast('Error: ' + err.message, 'error', 8000);
-  }
-}
-
-
-// ═══════════════════════════════════════════════════════════════
 // ── Queue mode helpers ────────────────────────────────────────
 function _queueLoad() {
   const session  = queueState.session;
@@ -955,7 +1132,7 @@ function _queueUpdateHeader() {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// TAB 3 — STUDENT PROGRESS VIEW
+// TAB 2 — STUDENT PROGRESS VIEW
 // ═══════════════════════════════════════════════════════════════
 function initProgress() {
   const searchInput = document.getElementById('pv-search');
@@ -1809,6 +1986,11 @@ function initAdmin() {
   document.getElementById('admin-add-session').onclick  = _adminAddSession;
   document.getElementById('admin-lock-session').onclick = _adminLockSession;
 
+  // Session form — all fields update preview on change
+  ['admin-session-year','admin-session-month','admin-session-sem','admin-session-entry-type'].forEach(id => {
+    document.getElementById(id)?.addEventListener('change', _adminUpdateSessionPreview);
+  });
+
   const semEl = document.getElementById('admin-session-sem');
   semEl.onchange = _adminToggleElectives;
   _adminToggleElectives();
@@ -1818,9 +2000,12 @@ function initAdmin() {
   // Entry type dropdown — show/hide linked prelim selector
   const entryTypeEl = document.getElementById('admin-session-entry-type');
   if (entryTypeEl) {
-    entryTypeEl.onchange = _adminToggleLinkedPrelim;
+    entryTypeEl.onchange = () => { _adminToggleLinkedPrelim(); _adminUpdateSessionPreview(); };
     _adminToggleLinkedPrelim();
   }
+
+  // Initial preview state
+  _adminUpdateSessionPreview();
 
   document.getElementById('admin-upload-btn').onclick = _adminUploadStudents;
   document.getElementById('admin-csv-file').onchange  = _adminPreviewCSV;
@@ -1853,19 +2038,22 @@ function _adminToggleLinkedPrelim() {
 }
 
 function _adminPopulateLinkedPrelimSelect() {
-  const semEl    = document.getElementById('admin-session-sem');
-  const batchEl  = document.getElementById('admin-session-batch');
-  const sem      = Number(semEl?.value) || 0;
-  const batch    = batchEl?.value.trim() || '';
-  const selEl    = document.getElementById('admin-linked-prelim-select');
+  const sem    = Number(document.getElementById('admin-session-sem')?.value) || 0;
+  const year   = document.getElementById('admin-session-year')?.value || '';
+  const month  = document.getElementById('admin-session-month')?.value || '';
+  const selEl  = document.getElementById('admin-linked-prelim-select');
   if (!selEl) return;
-  const prelims  = State.getSessions().filter(s =>
+
+  // Derive fresh batch to match sessions of same semester + academic year
+  const batch = (year && month) ? String(deriveFreshBatch(Number(year), month)) : '';
+
+  const prelims = State.getSessions().filter(s =>
     s.entryType !== 'Final Gazette' &&
-    (sem === 0 || s.semester === sem) &&
+    (sem === 0   || s.semester  === sem) &&
     (batch === '' || s.batchYear === batch)
   );
   selEl.innerHTML = '<option value="">— none (skip reval detection) —</option>' +
-    prelims.map(s => `<option value="${UI.esc(s.id)}">${UI.esc(s.name)} (Sem ${s.semester}, ${s.batchYear})</option>`).join('');
+    prelims.map(s => `<option value="${UI.esc(s.id)}">${UI.esc(s.name)}</option>`).join('');
 }
 
 function _adminPopulateLinkDropdowns() {
@@ -1894,6 +2082,30 @@ function _adminToggleElectives() {
   const sem     = document.getElementById('admin-session-sem').value;
   const section = document.getElementById('admin-electives-section');
   if (section) section.classList.toggle('hidden', sem !== '2');
+  // Update preview name and derived batch whenever any field changes
+  _adminUpdateSessionPreview();
+}
+
+function _adminUpdateSessionPreview() {
+  const year  = document.getElementById('admin-session-year')?.value  || '';
+  const month = document.getElementById('admin-session-month')?.value || '';
+  const sem   = document.getElementById('admin-session-sem')?.value   || '';
+  const type  = document.getElementById('admin-session-entry-type')?.value || 'Preliminary';
+  const previewEl = document.getElementById('admin-session-preview');
+  const batchEl   = document.getElementById('admin-session-batch-derived');
+  if (!previewEl) return;
+
+  if (!year || !month || !sem) {
+    previewEl.textContent = '—';
+    if (batchEl) batchEl.textContent = '—';
+    return;
+  }
+
+  const name  = buildSessionName(Number(year), month, Number(sem), type);
+  const batch = deriveFreshBatch(Number(year), month);
+  previewEl.textContent = name;
+  if (batchEl) batchEl.textContent = batch;
+  _adminPopulateLinkedPrelimSelect();
 }
 
 function _buildElectiveSelects() {
@@ -1934,17 +2146,20 @@ function _buildElectiveSelects() {
 }
 
 async function _adminAddSession() {
-  const name      = document.getElementById('admin-session-name').value.trim();
+  const year      = document.getElementById('admin-session-year')?.value || '';
+  const month     = document.getElementById('admin-session-month')?.value || '';
   const semester  = document.getElementById('admin-session-sem').value;
-  const batch     = document.getElementById('admin-session-batch').value.trim();
   const entryType = document.getElementById('admin-session-entry-type')?.value || 'Preliminary';
   const linkedPrelimSessionId = entryType === 'Final Gazette'
     ? (document.getElementById('admin-linked-prelim-select')?.value || '')
     : '';
 
-  if (!name || !semester || !batch) {
-    UI.toast('Fill in session name, semester, and batch year.', 'error'); return;
+  if (!year || !month || !semester) {
+    UI.toast('Select year, month and semester.', 'error'); return;
   }
+
+  const name  = buildSessionName(Number(year), month, Number(semester), entryType);
+  const batch = String(deriveFreshBatch(Number(year), month));
 
   let electives = {};
   if (semester === '2') {
@@ -1963,8 +2178,9 @@ async function _adminAddSession() {
   const linkedSession = linkedPrelimSessionId ? State.getSession(linkedPrelimSessionId) : null;
 
   let confirmBody = `Create session <strong>${UI.esc(name)}</strong>?<br>
-    Semester: <strong>${semester === '1' ? 'I' : 'II'}</strong> &nbsp;·&nbsp; Batch: <strong>${UI.esc(batch)}</strong>
-    &nbsp;·&nbsp; Type: <strong>${UI.esc(entryType)}</strong>`;
+    Semester: <strong>${semester === '1' ? 'I' : 'II'}</strong> &nbsp;·&nbsp;
+    Fresh batch: <strong>${UI.esc(batch)}</strong> &nbsp;·&nbsp;
+    Type: <strong>${UI.esc(entryType)}</strong>`;
 
   if (linkedSession) {
     confirmBody += `<br>Linked preliminary: <strong>${UI.esc(linkedSession.name)}</strong>`;
@@ -1988,12 +2204,17 @@ async function _adminAddSession() {
     onConfirm: async () => {
       UI.showSpinner('Creating session…');
       try {
-        const s = await State.addSession(name, semester, batch, electives, entryType, linkedPrelimSessionId);
+        const s = await State.addSession(year, month, semester, electives, entryType, linkedPrelimSessionId);
         UI.hideSpinner();
         UI.toast(`Session "${s.name}" created.`, 'success');
-        ['admin-session-name','admin-session-batch'].forEach(id => document.getElementById(id).value = '');
-        document.getElementById('admin-session-sem').value = '';
-        if (document.getElementById('admin-session-entry-type')) document.getElementById('admin-session-entry-type').value = 'Preliminary';
+        // Reset form
+        ['admin-session-year','admin-session-month','admin-session-sem'].forEach(id => {
+          const el = document.getElementById(id);
+          if (el) el.value = '';
+        });
+        document.getElementById('admin-session-entry-type').value = 'Preliminary';
+        document.getElementById('admin-session-preview').textContent = '—';
+        document.getElementById('admin-session-batch-derived').textContent = '—';
         _adminToggleElectives();
         _adminToggleLinkedPrelim();
         initAdmin();
@@ -2044,6 +2265,11 @@ function _adminRenderSessionList() {
       <td>${linkedInfo}</td>
       <td>${electiveInfo}</td>
       <td><span class="badge ${s.status === 'Active' ? 'badge-pass' : 'badge-pending'}">${UI.esc(s.status)}</span></td>
+      <td>
+        ${s.status === 'Locked'
+          ? `<button class="btn btn-secondary btn-sm" onclick="exportGazette('${UI.esc(s.id)}')">⬇ Gazette</button>`
+          : ''}
+      </td>
       <td class="muted" style="font-size:11px;">${UI.esc(s.createdBy)}</td>
     </tr>`;
   }).join('');
@@ -2053,21 +2279,30 @@ async function _adminLockSession() {
   const id = document.getElementById('admin-session-lock-select').value;
   if (!id) { UI.toast('Select a session to lock.', 'error'); return; }
   const session = State.getSession(id);
-  UI.showModal('Lock session', `Lock <strong>${UI.esc(session.name)}</strong>? No further entries will be accepted.`, {
-    confirmLabel: 'Lock session', danger: true,
-    onConfirm: async () => {
-      UI.showSpinner('Locking…');
-      try {
-        await State.lockSession(id);
-        UI.hideSpinner();
-        UI.toast(`Session "${session.name}" locked.`, 'success');
-        initAdmin();
-      } catch(e) {
-        UI.hideSpinner();
-        UI.toast('Error: ' + e.message, 'error');
+  UI.showModal(
+    'Lock session',
+    `Lock <strong>${UI.esc(session.name)}</strong>? No further entries will be accepted.<br><br>
+     <span style="font-size:12px; color:var(--ink-3);">
+       The gazette Excel file will be generated and downloaded automatically on lock.
+     </span>`,
+    {
+      confirmLabel: 'Lock &amp; Export Gazette', danger: true,
+      onConfirm: async () => {
+        UI.showSpinner('Locking session…');
+        try {
+          await State.lockSession(id);
+          UI.hideSpinner();
+          UI.toast(`Session "${session.name}" locked.`, 'success');
+          // Small delay so toast is visible before file download dialog
+          setTimeout(() => exportGazette(id), 400);
+          initAdmin();
+        } catch(e) {
+          UI.hideSpinner();
+          UI.toast('Error: ' + e.message, 'error');
+        }
       }
     }
-  });
+  );
 }
 
 let _csvStudents = [];
@@ -2325,6 +2560,326 @@ function _adminRenderAudit() {
   `}).join('');
 }
 
+
+// ═══════════════════════════════════════════════════════════════
+// GAZETTE EXPORT
+// ═══════════════════════════════════════════════════════════════
+function exportGazette(sessionId) {
+  const session = State.getSession(sessionId);
+  if (!session) { UI.toast('Session not found.', 'error'); return; }
+
+  const wb = XLSX.utils.book_new();
+
+  for (const branch of BRANCHES) {
+    const students = State.getEligibleStudents(session, branch);
+    if (students.length === 0) continue;
+
+    // Seat lookup
+    const seatEntries = State.getSeatsForSession(sessionId);
+    const seatLookup  = {};
+    for (const s of seatEntries) seatLookup[s.uin] = s.seatNumber;
+
+    // Sort by seat number
+    students.sort((a, b) => {
+      const sa = seatLookup[a.uin] || '';
+      const sb = seatLookup[b.uin] || '';
+      const na = Number(sa), nb = Number(sb);
+      if (!isNaN(na) && !isNaN(nb)) return na - nb;
+      return sa.localeCompare(sb);
+    });
+
+    const subjects = getSubjectsForSem(session.semester, branch, session);
+
+    // ── Build header rows ──────────────────────────────────
+    // Row 1: session info
+    // Row 2: fixed cols + subject code spanning (Seat, UIN, PRN, Name, Status)
+    // Row 3: component headers per subject + summary headers
+    // Row 4: max marks per component
+
+    const FIXED_COLS  = ['Seat No', 'UIN', 'PRN', 'Name', 'Batch', 'Status'];
+    const FIXED_COUNT = FIXED_COLS.length;
+
+    // Per-subject component columns
+    const subjCols = []; // [{ subj, comp, max }]
+    for (const subj of subjects) {
+      for (const [comp, max] of Object.entries(subj.marks)) {
+        subjCols.push({ subj, comp, max });
+      }
+      // Total per subject
+      subjCols.push({ subj, comp: 'Total', max: Object.values(subj.marks).reduce((a, b) => a + b, 0), isTotal: true });
+      subjCols.push({ subj, comp: 'Grade', max: null, isGrade: true });
+    }
+
+    const SUMMARY_COLS = ['Total Marks', 'Credits Earned', 'SGPA', 'Result'];
+
+    // Row 1 — title
+    const titleRow = [
+      `${session.name} — ${branch}`,
+      ...Array(FIXED_COUNT - 1 + subjCols.length + SUMMARY_COLS.length - 1).fill(''),
+    ];
+
+    // Row 2 — fixed col names + subject codes (merged header)
+    const subjectHeaderRow = [...FIXED_COLS];
+    for (const subj of subjects) {
+      const compCount = Object.keys(subj.marks).length + 2; // comps + Total + Grade
+      subjectHeaderRow.push(subj.code);
+      for (let i = 1; i < compCount; i++) subjectHeaderRow.push('');
+    }
+    subjectHeaderRow.push(...SUMMARY_COLS);
+
+    // Row 3 — component headers
+    const compHeaderRow = [...Array(FIXED_COUNT).fill('')];
+    for (const { comp } of subjCols) compHeaderRow.push(comp);
+    compHeaderRow.push(...Array(SUMMARY_COLS.length).fill(''));
+
+    // Row 4 — max marks
+    const maxRow = [...Array(FIXED_COUNT).fill('')];
+    for (const { max, isGrade } of subjCols) {
+      maxRow.push(isGrade ? '' : (max !== null ? `/${max}` : ''));
+    }
+    maxRow.push(...Array(SUMMARY_COLS.length).fill(''));
+
+    const wsData = [titleRow, subjectHeaderRow, compHeaderRow, maxRow];
+
+    // ── Build student rows ─────────────────────────────────
+    let branchPass = 0, branchFail = 0, branchAB = 0, branchTopper = null;
+
+    for (const student of students) {
+      const seatNum = seatLookup[student.uin] || '—';
+      const acad    = State.computeStudentAcademics(student.uin);
+
+      // Find this session's result in academics
+      const sessResult = acad?.sessionResults.find(sr => sr.session.id === sessionId);
+
+      const row = [
+        seatNum,
+        student.uin,
+        student.prn || '—',
+        student.name,
+        student.batchYear,
+        student.attemptFlag || 'Regular',
+      ];
+
+      let studentTotalMarks  = 0;
+      let studentCredits     = 0;
+      let studentAllPass     = true;
+      let studentAnyAB       = false;
+
+      for (const subj of subjects) {
+        const dr = sessResult?.subjects.find(s => s.r.subjectCode === subj.code)?.dr;
+
+        // Fill component marks from ledger
+        const latestEntry = State.getLatestEntryForSubject(student.uin, subj.code, sessionId);
+
+        // For Final Gazette — supplement with prelim
+        let iatVal = '', eseVal = '', twVal = '', oralVal = '';
+        if (latestEntry) {
+          iatVal  = latestEntry.iatMarks  || '';
+          eseVal  = latestEntry.eseMarks  || '';
+          twVal   = latestEntry.twMarks   || '';
+          oralVal = latestEntry.oralMarks || '';
+        }
+        if (session.entryType === 'Final Gazette' && session.linkedPrelimSessionId) {
+          const prelim = State.getLatestEntryForSubject(student.uin, subj.code, session.linkedPrelimSessionId);
+          if (prelim) {
+            if (!iatVal)  iatVal  = prelim.iatMarks  || '';
+            if (!twVal)   twVal   = prelim.twMarks   || '';
+            if (!oralVal) oralVal = prelim.oralMarks || '';
+          }
+        }
+
+        const compValMap = { IAT: iatVal, ESE: eseVal, TW: twVal, Oral: oralVal };
+
+        for (const comp of Object.keys(subj.marks)) {
+          row.push(compValMap[comp] || '—');
+        }
+
+        // Total + Grade per subject
+        if (dr && !dr.pending) {
+          row.push(dr.total);
+          row.push(dr.grade);
+          studentTotalMarks += dr.total;
+          studentCredits    += dr.creditsEarned;
+          if (dr.result === 'Fail') studentAllPass = false;
+          if (dr.result === 'AB')   { studentAllPass = false; studentAnyAB = true; }
+        } else {
+          row.push('—');
+          row.push('—');
+          studentAllPass = false;
+        }
+      }
+
+      // Summary columns
+      const sessAcad  = acad?.sessionResults.find(sr => sr.session.id === sessionId);
+      const sgpaStr   = sessAcad?.sgpa != null ? sessAcad.sgpa.toFixed(2) : '—';
+      const resultStr = studentAnyAB ? 'AB' : studentAllPass ? 'Pass' : 'Fail';
+
+      row.push(studentTotalMarks || '—');
+      row.push(studentCredits    || '—');
+      row.push(sgpaStr);
+      row.push(resultStr);
+
+      wsData.push(row);
+
+      // Branch stats
+      if (resultStr === 'Pass') branchPass++;
+      else if (resultStr === 'AB') branchAB++;
+      else branchFail++;
+
+      if (resultStr === 'Pass') {
+        if (!branchTopper || studentTotalMarks > branchTopper.totalMarks) {
+          branchTopper = { name: student.name, uin: student.uin, totalMarks: studentTotalMarks };
+        }
+      }
+    }
+
+    // ── Summary footer rows ────────────────────────────────
+    wsData.push(Array(FIXED_COUNT + subjCols.length + SUMMARY_COLS.length).fill(''));
+
+    const total = students.length;
+    wsData.push([
+      'Summary', '', '', '', '', '',
+      ...Array(subjCols.length).fill(''),
+      `Total: ${total}`,
+      `Pass: ${branchPass} (${total ? Math.round(branchPass/total*100) : 0}%)`,
+      `Fail: ${branchFail}`,
+      `AB: ${branchAB}`,
+    ]);
+
+    if (branchTopper) {
+      wsData.push([
+        'Topper', '', '', branchTopper.name, '', branchTopper.uin,
+        ...Array(subjCols.length).fill(''),
+        branchTopper.totalMarks, '', '', '',
+      ]);
+    }
+
+    // ── Create worksheet ───────────────────────────────────
+    const ws = XLSX.utils.aoa_to_sheet(wsData);
+
+    // Column widths
+    const colWidths = [
+      { wch: 8 },  // Seat
+      { wch: 12 }, // UIN
+      { wch: 12 }, // PRN
+      { wch: 28 }, // Name
+      { wch: 8 },  // Batch
+      { wch: 9 },  // Status
+      ...subjCols.map(({ comp }) =>
+        comp === 'Grade' ? { wch: 6 } : comp === 'Total' ? { wch: 7 } : { wch: 6 }
+      ),
+      { wch: 12 }, // Total Marks
+      { wch: 10 }, // Credits
+      { wch: 8 },  // SGPA
+      { wch: 8 },  // Result
+    ];
+    ws['!cols'] = colWidths;
+
+    // Merge subject header cells (row 2, index 1)
+    const merges = [];
+    let colIdx = FIXED_COUNT;
+    for (const subj of subjects) {
+      const span = Object.keys(subj.marks).length + 2; // comps + Total + Grade
+      if (span > 1) {
+        merges.push({
+          s: { r: 1, c: colIdx },
+          e: { r: 1, c: colIdx + span - 1 },
+        });
+      }
+      colIdx += span;
+    }
+    ws['!merges'] = merges;
+
+    XLSX.utils.book_append_sheet(wb, ws, branch.slice(0, 31));
+  }
+
+  // ── Summary sheet ──────────────────────────────────────
+  const summaryData = [
+    [`Gazette Summary — ${session.name}`],
+    ['Branch', 'Total Students', 'Pass', 'Fail', 'AB', 'Pass %', 'Topper', 'Topper Marks'],
+  ];
+
+  for (const branch of BRANCHES) {
+    const students = State.getEligibleStudents(session, branch);
+    if (students.length === 0) continue;
+
+    const seatEntries = State.getSeatsForSession(sessionId);
+    const seatLookup  = {};
+    for (const s of seatEntries) seatLookup[s.uin] = s.seatNumber;
+
+    let pass = 0, fail = 0, ab = 0, topper = null;
+    for (const student of students) {
+      const acad     = State.computeStudentAcademics(student.uin);
+      const sessAcad = acad?.sessionResults.find(sr => sr.session.id === sessionId);
+      if (!sessAcad) continue;
+
+      const allSubjs  = sessAcad.subjects;
+      const anyAB     = allSubjs.some(s => s.dr?.result === 'AB');
+      const anyFail   = allSubjs.some(s => s.dr?.result === 'Fail' || s.dr?.pending);
+      const result    = anyAB ? 'AB' : anyFail ? 'Fail' : 'Pass';
+      const total     = allSubjs.reduce((s, sub) => s + (sub.dr?.total || 0), 0);
+
+      if (result === 'Pass') { pass++; if (!topper || total > topper.marks) topper = { name: student.name, marks: total }; }
+      else if (result === 'AB') ab++;
+      else fail++;
+    }
+
+    const t = students.length;
+    summaryData.push([
+      branch, t, pass, fail, ab,
+      t ? Math.round(pass/t*100) + '%' : '—',
+      topper?.name || '—',
+      topper?.marks ?? '—',
+    ]);
+  }
+
+  // KT sheet — students with remaining active KTs after this session
+  const ktData = [
+    [`Active KTs after — ${session.name}`],
+    ['UIN', 'PRN', 'Name', 'Branch', 'Batch', 'Subject Code', 'Subject Name', 'Component', 'Last Mark'],
+  ];
+
+  for (const branch of BRANCHES) {
+    const students = State.getEligibleStudents(session, branch);
+    for (const student of students) {
+      const activeKTs = State.getActiveKTSubjects(student.uin)
+        .filter(r => Number(r.semester) === session.semester);
+      for (const kt of activeKTs) {
+        // List which components are still failing
+        const compStatus = _meGetCompPassStatus(student.uin, kt.subjectCode, session.semester);
+        for (const comp of ['IAT', 'ESE', 'TW', 'Oral']) {
+          if (compStatus[comp] && compStatus[comp] !== 'pass') {
+            ktData.push([
+              student.uin, student.prn || '—', student.name,
+              student.branch, student.batchYear,
+              kt.subjectCode, kt.subjectName,
+              comp, compStatus[comp + '_val'] || '—',
+            ]);
+          }
+        }
+      }
+    }
+  }
+
+  const summaryWs = XLSX.utils.aoa_to_sheet(summaryData);
+  summaryWs['!cols'] = [
+    { wch: 12 }, { wch: 10 }, { wch: 8 }, { wch: 8 }, { wch: 6 },
+    { wch: 8 }, { wch: 28 }, { wch: 14 },
+  ];
+  XLSX.utils.book_append_sheet(wb, summaryWs, 'Summary');
+
+  const ktWs = XLSX.utils.aoa_to_sheet(ktData);
+  ktWs['!cols'] = [
+    { wch: 12 }, { wch: 12 }, { wch: 28 }, { wch: 12 },
+    { wch: 8 }, { wch: 12 }, { wch: 32 }, { wch: 8 }, { wch: 10 },
+  ];
+  XLSX.utils.book_append_sheet(wb, ktWs, 'Active KTs');
+
+  // ── Write file ─────────────────────────────────────────
+  const filename = `${session.name}_Gazette.xlsx`;
+  XLSX.writeFile(wb, filename);
+  UI.toast(`✓ Gazette exported: ${filename}`, 'success');
+}
 
 // ═══════════════════════════════════════════════════════════════
 // Utilities

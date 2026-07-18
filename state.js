@@ -54,9 +54,16 @@ const State = (() => {
     return sessions.filter(s => s.batchYear === batchYear || s.status === 'Active');
   }
 
-  async function addSession(name, semester, batchYear, electives = {}, entryType = 'Preliminary', linkedPrelimSessionId = '') {
-    const user = Auth.getUser();
-    const sem  = Number(semester);
+  async function addSession(year, month, semester, electives = {}, entryType = 'Preliminary', linkedPrelimSessionId = '') {
+    const user      = Auth.getUser();
+    const sem       = Number(semester);
+    const name      = buildSessionName(year, month, sem, entryType);
+    const batchYear = String(deriveFreshBatch(Number(year), month));
+
+    // Duplicate check
+    if (sessions.find(s => s.name === name)) {
+      throw new Error(`Session "${name}" already exists.`);
+    }
 
     if (sem === 2) {
       const required = ['physicsTheoryCode','physicsLabCode','chemTheoryCode','chemLabCode'];
@@ -66,16 +73,17 @@ const State = (() => {
     }
 
     const session = {
-      id:        'SES-' + Date.now(),
+      id:                    'SES-' + Date.now(),
       name,
-      semester:  sem,
+      semester:              sem,
       batchYear,
-      status:    'Active',
-      createdBy: user.email,
-      physicsTheoryCode:     electives.physicsTheoryCode    || '',
-      physicsLabCode:        electives.physicsLabCode       || '',
-      chemTheoryCode:        electives.chemTheoryCode       || '',
-      chemLabCode:           electives.chemLabCode          || '',
+      month,
+      status:                'Active',
+      createdBy:             user.email,
+      physicsTheoryCode:     electives.physicsTheoryCode || '',
+      physicsLabCode:        electives.physicsLabCode    || '',
+      chemTheoryCode:        electives.chemTheoryCode    || '',
+      chemLabCode:           electives.chemLabCode       || '',
       entryType:             entryType || 'Preliminary',
       linkedPrelimSessionId: linkedPrelimSessionId || '',
     };
@@ -954,6 +962,63 @@ function reportResultSummary({ sessionId, branch, batchYear, subjectCode, compon
     return ledger.filter(r => r.enteredBy === email && (!sessionId || r.examSession === sessionId));
   }
 
+  // ── Session student eligibility ───────────────────────────
+  // Returns all students eligible for a session, merged and flagged.
+  // Fresh batch students (batchYear === derivedFreshBatch) are included.
+  // Any student with an active KT in any subject of session.semester is included.
+  // Flag: 'KT' if student has any active fail/AB in any sem-N subject,
+  //       'Regular' otherwise.
+  function getEligibleStudents(session, branch) {
+    const freshBatch  = String(deriveFreshBatch(
+      Number(session.name.slice(0, 4)),   // year from name prefix
+      session.month || (session.name.includes('Dec') ? 'December' : 'May')
+    ));
+    const sem = session.semester;
+
+    // All students for this branch
+    const branchStudents = students.filter(s =>
+      !branch || s.branch === branch
+    );
+
+    // Build set of subject codes for this semester
+    // (use a neutral session ref for Sem-I; for Sem-II we need elective codes)
+    const semSubjectCodes = new Set(
+      getSubjectsForSem(sem, branch || 'Computer', session).map(s => s.code)
+    );
+
+    // For each student, compute active KT subjects in this semester
+    const ktSubjectsByStudent = {};
+    for (const s of branchStudents) {
+      const activeKTs = getActiveKTSubjects(s.uin)
+        .filter(r => {
+          // Must belong to this semester's subject list
+          // Check via stored semester on ledger row
+          return Number(r.semester) === sem;
+        });
+      if (activeKTs.length > 0) {
+        ktSubjectsByStudent[s.uin] = activeKTs;
+      }
+    }
+
+    // Merge: fresh batch OR has KT in this semester
+    const eligible = new Map();
+
+    for (const s of branchStudents) {
+      const isFresh = s.batchYear === freshBatch;
+      const hasKT   = !!ktSubjectsByStudent[s.uin];
+
+      if (!isFresh && !hasKT) continue;
+
+      eligible.set(s.uin, {
+        ...s,
+        attemptFlag:  hasKT ? 'KT' : 'Regular',
+        ktSubjects:   ktSubjectsByStudent[s.uin] || [],
+      });
+    }
+
+    return [...eligible.values()];
+  }
+
   // ── Divisions ─────────────────────────────────────────────
   function getDivisions(branch) {
     return [...new Set(students.filter(s => s.branch === branch).map(s => s.division))].sort();
@@ -976,6 +1041,7 @@ function reportResultSummary({ sessionId, branch, batchYear, subjectCode, compon
     loadAll, reload,
     getStudents, getStudent, searchStudents,
     getSessions, getSession, getSessionsForBatch, addSession, lockSession, linkPrelimSession,
+    getEligibleStudents,
     computeStudentAcademics,
     getStudentResults, getActiveKTSubjects, getKTEligibleStudents,
     getLatestEntryForSubject, getLedgerForStudent,
