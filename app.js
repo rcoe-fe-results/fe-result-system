@@ -1172,11 +1172,13 @@ function _rptLiveResultSummary() {
   }
 
   tbody.innerHTML = data.map(d => {
-    const avgCell = comp === 'IAT'  ? d.avgIAT
-                  : comp === 'ESE'  ? d.avgESE
-                  : comp === 'TW'   ? d.avgTW
-                  : comp === 'Oral' ? d.avgOral
-                  : '—';
+    const passPct  = Math.round(d.passRate * 100);
+    const fmtAvg   = (v) => v != null ? v.toFixed(1) : '—';
+    const avgCell  = comp === 'IAT'  ? fmtAvg(d.avgMarks.IAT)
+                   : comp === 'ESE'  ? fmtAvg(d.avgMarks.ESE)
+                   : comp === 'TW'   ? fmtAvg(d.avgMarks.TW)
+                   : comp === 'Oral' ? fmtAvg(d.avgMarks.Oral)
+                   : '—';
     return `<tr>
       <td><span class="subj-code-small">${UI.esc(d.code)}</span></td>
       <td>${UI.esc(d.name)}</td>
@@ -1184,8 +1186,8 @@ function _rptLiveResultSummary() {
       <td style="color:var(--pass);font-weight:600;">${d.pass}</td>
       <td style="color:var(--fail);font-weight:600;">${d.fail}</td>
       <td style="color:var(--ab);font-weight:600;">${d.ab}</td>
-      <td><span class="badge ${d.passPct >= 60 ? 'badge-pass' : d.passPct >= 40 ? 'badge-pending' : 'badge-fail'}">${d.passPct}%</span></td>
-      <td>${comp ? avgCell : `IAT:${d.avgIAT} ESE:${d.avgESE} TW:${d.avgTW}`}</td>
+      <td><span class="badge ${passPct >= 60 ? 'badge-pass' : passPct >= 40 ? 'badge-pending' : 'badge-fail'}">${passPct}%</span></td>
+      <td>${comp && comp !== 'All' ? avgCell : `IAT:${fmtAvg(d.avgMarks.IAT)} ESE:${fmtAvg(d.avgMarks.ESE)} TW:${fmtAvg(d.avgMarks.TW)}`}</td>
     </tr>`;
   }).join('');
 }
@@ -1195,7 +1197,13 @@ function _rptExportResultSummary() {
   const data    = State.reportResultSummary(filters);
   UI.exportCSV(`ResultSummary`,
     ['Subject Code','Subject Name','Total','Pass','Fail','AB','Pass %','Avg IAT','Avg ESE','Avg TW','Avg Oral'],
-    data.map(d => [d.code, d.name, d.total, d.pass, d.fail, d.ab, d.passPct+'%', d.avgIAT, d.avgESE, d.avgTW, d.avgOral])
+    data.map(d => [d.code, d.name, d.total, d.pass, d.fail, d.ab,
+      Math.round(d.passRate * 100) + '%',
+      d.avgMarks.IAT  != null ? d.avgMarks.IAT.toFixed(1)  : '—',
+      d.avgMarks.ESE  != null ? d.avgMarks.ESE.toFixed(1)  : '—',
+      d.avgMarks.TW   != null ? d.avgMarks.TW.toFixed(1)   : '—',
+      d.avgMarks.Oral != null ? d.avgMarks.Oral.toFixed(1) : '—',
+    ])
   );
   UI.toast('Result summary exported.', 'success');
 }
