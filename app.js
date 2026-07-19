@@ -289,9 +289,17 @@ function _meAdhocShowSessionPicker(sessions) {
         latestBySubject[r.subjectCode] = r;
       }
     }
+
     const hasFailOrAB = Object.values(latestBySubject)
       .some(r => r.result === 'Fail' || r.result === 'AB');
-    return hasFailOrAB ? 'unsuccessful' : 'cleared';
+    if (hasFailOrAB) return 'unsuccessful';
+
+    // Also check: are all expected subjects entered?
+    const expectedCount = getSubjectsForSem(session.semester, student.branch, session).length;
+    const enteredCount  = Object.keys(latestBySubject).length;
+    if (enteredCount < expectedCount) return 'pending';
+
+    return 'cleared';
   }
 
   function _sessionTag(status) {
