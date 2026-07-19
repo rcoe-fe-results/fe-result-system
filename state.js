@@ -302,6 +302,15 @@ const State = (() => {
     const student = getStudent(uin);
     if (!student) return 'pending';
 
+    // KT session — always multi-attempt by definition
+    const isKTSess = ledger.some(r =>
+      r.uin === uin &&
+      Number(r.semester) === session.semester &&
+      r.examSession !== session.id &&
+      r.entryDateTime < rows[0].entryDateTime
+    );
+    if (isKTSess) return 'multi-attempt';
+
     const expectedCount = getExpectedSubjectCount(student, session);
 
     // Latest entry per subject
