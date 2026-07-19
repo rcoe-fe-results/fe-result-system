@@ -511,75 +511,140 @@ const State = (() => {
 
     const sessionResults = [];
 
-    for (const sess of sessionOrder) {
-      const sessRows = Object.values(latestPerSessionSubject)
-        .filter(r => r.examSession === sess.id);
+   for (const sess of sessionOrder) {
+      const isKTSess = sess.batchYear !== student.batchYear;
 
       const subjectResults = [];
-      let sumGxC    = 0;
-      let sumC      = 0;
+      let sumGxC       = 0;
+      let sumC         = 0;
       let pendingCount = 0;
 
-      for (const r of sessRows) {
-        const subj = _subjectForRow(r);
-        if (!subj) continue;
+      if (isKTSess) {
+        // ── KT session: synthesise a full subject list ─────────
+        // For every subject in this semester, build a merged marksMap:
+        //   - Per component: use the latest PASSING value from any prior session
+        //     of this semester (carry forward '+'), OR the new value entered in
+        //     this KT session (overrides only if the prior component was failing).
+        //   - If this KT session has a new entry for the component → always use it
+        //     (student may have improved a previously-passed component too).
+        // Display note: carried marks are flagged with `carried: true` per component
+        // so the Progress View can render them with a '+' indicator.
 
-        // For Final Gazette sessions: supplement ESE-only rows with Prelim IAT/TW/Oral
-        let marksMap = _marksMapFromRow(r);
-        if (sess.entryType === 'Final Gazette' && sess.linkedPrelimSessionId) {
-          const prelimKey = sess.linkedPrelimSessionId + '||' + r.subjectCode;
-          const prelimRow = latestPerSessionSubject[prelimKey];
-          if (prelimRow) {
-            if (!marksMap.IAT  && prelimRow.iatMarks)  marksMap.IAT  = prelimRow.iatMarks;
-            if (!marksMap.TW   && prelimRow.twMarks)   marksMap.TW   = prelimRow.twMarks;
-            if (!marksMap.Oral && prelimRow.oralMarks) marksMap.Oral = prelimRow.oralMarks;
+        const allSubjects = getSubjectsForSem(sess.semester, student.branch, sess);
+
+        // Build per-subject latest prior component values (from ALL prior sessions of this sem)
+        // Key: subjectCode → { IAT, ESE, TW, Oral } — latest non-empty value per component
+        const priorCompValues = {}; // subjectCode → { comp → value string }
+        for (const [key, row] of Object.entries(latestPerSessionSubject)) {
+          if (row.examSession === sess.id) continue;
+          if (Number(row.semester) !== sess.semester) continue;
+          const code = row.subjectCode;
+          if (!priorCompValues[code]) priorCompValues[code] = {};
+          const p = priorCompValues[code];
+          if (row.iatMarks  !== '') p.IAT  = row.iatMarks;
+          if (row.eseMarks  !== '') p.ESE  = row.eseMarks;
+          if (row.twMarks   !== '') p.TW   = row.twMarks;
+          if (row.oralMarks !== '') p.Oral = row.oralMarks;
+        }
+
+        // This KT session's own entries per subject
+        const ktEntries = {}; // subjectCode → merged row
+        for (const [key, row] of Object.entries(latestPerSessionSubject)) {
+          if (row.examSession !== sess.id) continue;
+          ktEntries[row.subjectCode] = row;
+        }
+
+        for (const subj of allSubjects) {
+          const prior   = priorCompValues[subj.code] || {};
+          const ktRow   = ktEntries[subj.code] || null;
+          const ktMarks = ktRow ? _marksMapFromRow(ktRow) : {};
+
+          // Build merged marksMap and carried flags
+          const marksMap  = {};
+          const carriedMap = {}; // comp → true if carried from prior
+
+          for (const comp of Object.keys(subj.marks)) {
+            const priorVal = prior[comp] || '';
+            const ktVal    = ktMarks[comp] || '';
+
+            if (ktVal !== '') {
+              // New value entered in this KT session — always use it
+              marksMap[comp]   = ktVal;
+              carriedMap[comp] = false;
+            } else if (priorVal !== '') {
+              // No new entry — carry forward from prior session
+              marksMap[comp]   = priorVal;
+              carriedMap[comp] = true;
+            }
+            // else: neither prior nor new → component absent from marksMap → pending
+          }
+
+          // Use ktRow as the canonical ledger row reference if available,
+          // otherwise synthesise a minimal row from prior data for display
+          const canonicalRow = ktRow || {
+            ...Object.values(latestPerSessionSubject)
+              .find(r => r.subjectCode === subj.code && Number(r.semester) === sess.semester) || {},
+            examSession:  sess.id,
+            subjectCode:  subj.code,
+            subjectName:  subj.name,
+            subjectType:  subj.type,
+            iatMarks:     marksMap.IAT  || '',
+            eseMarks:     marksMap.ESE  || '',
+            twMarks:      marksMap.TW   || '',
+            oralMarks:    marksMap.Oral || '',
+          };
+
+          const dr = computeDisplayResult(subj, marksMap);
+
+          if (dr.pending) {
+            pendingCount++;
+            subjectResults.push({ r: canonicalRow, subj, dr, pending: true, carriedMap });
+            continue;
+          }
+
+          subjectResults.push({ r: canonicalRow, subj, dr, pending: false, carriedMap });
+
+          if (dr.grade !== 'F' && dr.creditsEarned > 0) {
+            sumGxC += dr.GxC;
+            sumC   += subj.credits;
           }
         }
 
-        // For KT sessions (different batchYear from student): carry forward
-        // passing component marks from prior sessions of the same semester.
-        // Only failed components get new marks; passed ones are carried forward.
-        if (sess.batchYear !== student.batchYear) {
-          const priorSessRows = Object.values(latestPerSessionSubject).filter(pr =>
-            pr.subjectCode === r.subjectCode &&
-            pr.examSession !== sess.id &&
-            Number(pr.semester) === Number(r.semester)
-          ).sort((a, b) => a.entryDateTime.localeCompare(b.entryDateTime));
+      } else {
+        // ── Regular / Final Gazette session ────────────────────
+        const sessRows = Object.values(latestPerSessionSubject)
+          .filter(r => r.examSession === sess.id);
 
-          // Build latest prior component values
-          const priorMarks = {};
-          for (const pr of priorSessRows) {
-            if (pr.iatMarks  !== '') priorMarks.IAT  = pr.iatMarks;
-            if (pr.eseMarks  !== '') priorMarks.ESE  = pr.eseMarks;
-            if (pr.twMarks   !== '') priorMarks.TW   = pr.twMarks;
-            if (pr.oralMarks !== '') priorMarks.Oral = pr.oralMarks;
-          }
-
-          // Carry forward only components that were passing in prior attempts
+        for (const r of sessRows) {
           const subj = _subjectForRow(r);
-          for (const [comp, priorVal] of Object.entries(priorMarks)) {
-            if (marksMap[comp]) continue; // already has a value in this session
-            const max = subj?.marks[comp];
-            const parsed = parseMarkValue(priorVal, max);
-            const priorPassed = parsed.valid && !parsed.absent &&
-              (parsed.grace || (max && parsed.value / max >= 0.40));
-            if (priorPassed) marksMap[comp] = priorVal;
+          if (!subj) continue;
+
+          // For Final Gazette sessions: supplement ESE-only rows with Prelim IAT/TW/Oral
+          let marksMap = _marksMapFromRow(r);
+          if (sess.entryType === 'Final Gazette' && sess.linkedPrelimSessionId) {
+            const prelimKey = sess.linkedPrelimSessionId + '||' + r.subjectCode;
+            const prelimRow = latestPerSessionSubject[prelimKey];
+            if (prelimRow) {
+              if (!marksMap.IAT  && prelimRow.iatMarks)  marksMap.IAT  = prelimRow.iatMarks;
+              if (!marksMap.TW   && prelimRow.twMarks)   marksMap.TW   = prelimRow.twMarks;
+              if (!marksMap.Oral && prelimRow.oralMarks) marksMap.Oral = prelimRow.oralMarks;
+            }
           }
-        }
 
-        const dr = computeDisplayResult(subj, marksMap);
+          const dr = computeDisplayResult(subj, marksMap);
 
-        if (dr.pending) {
-          pendingCount++;
-          subjectResults.push({ r, subj, dr, pending: true });
-          continue;
-        }
+          if (dr.pending) {
+            pendingCount++;
+            subjectResults.push({ r, subj, dr, pending: true });
+            continue;
+          }
 
-        subjectResults.push({ r, subj, dr, pending: false });
+          subjectResults.push({ r, subj, dr, pending: false });
 
-        if (!dr.pending && dr.grade !== 'F' && dr.creditsEarned > 0) {
-          sumGxC += dr.GxC;
-          sumC   += subj.credits;
+          if (dr.grade !== 'F' && dr.creditsEarned > 0) {
+            sumGxC += dr.GxC;
+            sumC   += subj.credits;
+          }
         }
       }
 
