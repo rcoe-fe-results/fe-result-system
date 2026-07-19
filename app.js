@@ -171,25 +171,46 @@ function _meSearchBySeat(seatQuery) {
 
 // Check if a student is eligible for a given session
 function _isStudentEligibleForSession(student, session) {
-  if (session.batchYear === student.batchYear) {
-    // If student has already cleared this semester (has entries + no active KTs),
-    // don't show additional same-semester sessions from this batch year
-    const semRows = State.ledger.filter(r =>
-      r.uin === student.uin && Number(r.semester) === session.semester
-    );
-    if (semRows.length > 0) {
-      const activeKTsInSem = State.getActiveKTSubjects(student.uin)
-        .filter(r => Number(r.semester) === session.semester);
-      if (activeKTsInSem.length === 0) {
-        // Cleared — only show the session they actually sat (has entries in it)
-        return State.ledger.some(r =>
-          r.uin === student.uin && r.examSession === session.id
-        );
-      }
-    }
-    return true;
+  const studentLedger = State.ledger.filter(r => r.uin === student.uin);
+  const hasAnyEntries = studentLedger.length > 0;
+
+  if (!hasAnyEntries) {
+    // Fresh student — only show the single "canonical" own-batch session per semester:
+    // the earliest Active own-batch session for Sem-I, and earliest for Sem-II.
+    if (session.batchYear !== student.batchYear) return false;
+    const allSessions = State.getSessions();
+    const canonicalForSem = allSessions
+      .filter(s => s.batchYear === student.batchYear &&
+                   s.semester === session.semester &&
+                   s.status === 'Active')
+      .sort((a, b) => a.id.localeCompare(b.id))[0];
+    return canonicalForSem?.id === session.id;
   }
-  // Different batch year → only if active KT in this semester
+
+  // Student has entries — show sessions they actually sat
+  const satThisSession = studentLedger.some(r => r.examSession === session.id);
+  if (satThisSession) return true;
+
+  // Show own-batch sessions for semesters not yet sat at all
+  if (session.batchYear === student.batchYear) {
+    const satThisSem = studentLedger.some(r => Number(r.semester) === session.semester);
+    if (!satThisSem) {
+      // Haven't sat this semester yet — show canonical session only
+      const allSessions = State.getSessions();
+      const canonicalForSem = allSessions
+        .filter(s => s.batchYear === student.batchYear &&
+                     s.semester === session.semester &&
+                     s.status === 'Active')
+        .sort((a, b) => a.id.localeCompare(b.id))[0];
+      return canonicalForSem?.id === session.id;
+    }
+    // Has sat this semester — only show if they have active KTs in it
+    const activeKTsInSem = State.getActiveKTSubjects(student.uin)
+      .filter(r => Number(r.semester) === session.semester);
+    return activeKTsInSem.length > 0;
+  }
+
+  // Different batch year — only if active KT in this semester
   const activeKTs = State.getActiveKTSubjects(student.uin);
   return activeKTs.some(r => Number(r.semester) === session.semester);
 }
