@@ -512,7 +512,14 @@ const State = (() => {
     const sessionResults = [];
 
    for (const sess of sessionOrder) {
-      const isKTSess = sess.batchYear !== student.batchYear;
+      // A session is a KT session for this student if they have prior Fail/AB
+      // records for this semester — regardless of batchYear
+      const priorFailsInSem = Object.values(latestPerSessionSubject).some(r =>
+        Number(r.semester) === sess.semester &&
+        r.examSession !== sess.id &&
+        (r.result === 'Fail' || r.result === 'AB')
+      );
+      const isKTSess = priorFailsInSem;
 
       const subjectResults = [];
       let sumGxC       = 0;
