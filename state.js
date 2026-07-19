@@ -514,7 +514,8 @@ const State = (() => {
    for (const sess of sessionOrder) {
       // A session is a KT session for this student if they have prior Fail/AB
       // records for this semester — regardless of batchYear
-      const priorFailsInSem = Object.values(latestPerSessionSubject).some(r =>
+      // KT session = this semester has prior ledger entries with Fail/AB result
+      const priorFailsInSem = allStudentRows.some(r =>
         Number(r.semester) === sess.semester &&
         r.examSession !== sess.id &&
         (r.result === 'Fail' || r.result === 'AB')
