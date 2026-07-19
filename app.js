@@ -276,95 +276,112 @@ function _meAdhocShowSessionPicker(sessions) {
 
   // Tag is based on THIS SESSION's entries for this student — not overall KT status
   function _sessionStatus(session) {
-    const sessionRows = State.ledger.filter(r =>
-      r.uin === student.uin && r.examSession === session.id
-    );
-    if (sessionRows.length === 0) return 'pending';
-
-    // Latest entry per subject within this session
-    const latestBySubject = {};
-    for (const r of sessionRows) {
-      if (!latestBySubject[r.subjectCode] ||
-          r.entryDateTime > latestBySubject[r.subjectCode].entryDateTime) {
-        latestBySubject[r.subjectCode] = r;
-      }
-    }
-
-    // For KT sessions: carry forward Pass component marks from prior sessions
-    // of the same semester — exactly as the university does.
-    // This lets computeDisplayResult produce a real Pass/Fail instead of Pending.
     const isKTSession = session.batchYear !== student.batchYear;
-    if (isKTSession) {
-      // All prior ledger rows for this student+semester, sorted ascending
-      const priorRows = State.ledger
-        .filter(r =>
-          r.uin === student.uin &&
-          Number(r.semester) === session.semester &&
-          r.examSession !== session.id
-        )
-        .sort((a, b) => a.entryDateTime.localeCompare(b.entryDateTime));
+    const subjects    = getSubjectsForSem(session.semester, student.branch, session);
 
-      // Build latest-per-component from prior sessions per subject
-      const priorBySubject = {};
-      for (const r of priorRows) {
-        if (!priorBySubject[r.subjectCode]) priorBySubject[r.subjectCode] = {};
-        const p = priorBySubject[r.subjectCode];
-        if (r.iatMarks  !== '') p.iatMarks  = r.iatMarks;
-        if (r.eseMarks  !== '') p.eseMarks  = r.eseMarks;
-        if (r.twMarks   !== '') p.twMarks   = r.twMarks;
-        if (r.oralMarks !== '') p.oralMarks = r.oralMarks;
+    // All ledger rows for this student+semester across ALL sessions, sorted ascending
+    const allSemRows = State.ledger
+      .filter(r => r.uin === student.uin && Number(r.semester) === session.semester)
+      .sort((a, b) => a.entryDateTime.localeCompare(b.entryDateTime));
+
+    if (allSemRows.length === 0) return 'pending';
+
+    // This session's rows
+    const thisSessionRows = allSemRows.filter(r => r.examSession === session.id);
+
+    // For non-KT own-batch sessions: simple check on this session's entries only
+    if (!isKTSession) {
+      if (thisSessionRows.length === 0) return 'pending';
+      const latestBySubject = {};
+      for (const r of thisSessionRows) {
+        if (!latestBySubject[r.subjectCode] ||
+            r.entryDateTime > latestBySubject[r.subjectCode].entryDateTime) {
+          latestBySubject[r.subjectCode] = r;
+        }
       }
+      const hasFailOrAB = Object.values(latestBySubject)
+        .some(r => r.result === 'Fail' || r.result === 'AB');
+      if (hasFailOrAB) return 'unsuccessful';
+      if (Object.keys(latestBySubject).length < subjects.length) return 'pending';
+      return 'cleared';
+    }
 
-      // Merge: fill blank components in this session's entries from prior sessions
-      for (const [code, row] of Object.entries(latestBySubject)) {
-        const prior = priorBySubject[code];
-        if (!prior) continue;
-        if (!row.iatMarks  && prior.iatMarks)  row.iatMarks  = prior.iatMarks;
-        if (!row.eseMarks  && prior.eseMarks)  row.eseMarks  = prior.eseMarks;
-        if (!row.twMarks   && prior.twMarks)   row.twMarks   = prior.twMarks;
-        if (!row.oralMarks && prior.oralMarks) row.oralMarks = prior.oralMarks;
+    // ── KT session logic ──────────────────────────────────────
+    // Find which subjects had Fail/AB in prior sessions of this semester
+    const priorRows = allSemRows.filter(r => r.examSession !== session.id);
+
+    // Latest prior entry per subject
+    const priorLatest = {};
+    for (const r of priorRows) {
+      if (!priorLatest[r.subjectCode] ||
+          r.entryDateTime > priorLatest[r.subjectCode].entryDateTime) {
+        priorLatest[r.subjectCode] = r;
       }
     }
 
-    // Now evaluate each subject with the supplemented marks
-    const subjects = getSubjectsForSem(session.semester, student.branch, session);
+    // KT subjects = those with Fail/AB in latest prior entry
+    const ktSubjectCodes = new Set(
+      Object.values(priorLatest)
+        .filter(r => r.result === 'Fail' || r.result === 'AB')
+        .map(r => r.subjectCode)
+    );
+
+    if (ktSubjectCodes.size === 0) return 'pending';
+
+    // Latest entry per subject IN THIS SESSION
+    const thisLatest = {};
+    for (const r of thisSessionRows) {
+      if (!thisLatest[r.subjectCode] ||
+          r.entryDateTime > thisLatest[r.subjectCode].entryDateTime) {
+        thisLatest[r.subjectCode] = r;
+      }
+    }
+
+    // For each KT subject, build merged component marks:
+    // - Start with prior session's component values
+    // - For each component: if it was FAILING in prior, replace with this session's value
+    // - Then run computeDisplayResult on the merged map
+    let allEntered  = true;
     let hasFailOrAB = false;
 
-    for (const [code, row] of Object.entries(latestBySubject)) {
-      const subj = subjects.find(s => s.code === code);
+    for (const code of ktSubjectCodes) {
+      const subj  = subjects.find(s => s.code === code);
       if (!subj) continue;
-      const marksMap = {};
-      if (row.iatMarks)  marksMap.IAT  = row.iatMarks;
-      if (row.eseMarks)  marksMap.ESE  = row.eseMarks;
-      if (row.twMarks)   marksMap.TW   = row.twMarks;
-      if (row.oralMarks) marksMap.Oral = row.oralMarks;
-      const dr = computeDisplayResult(subj, marksMap);
-      if (!dr.pending && (dr.result === 'Fail' || dr.result === 'AB')) {
-        hasFailOrAB = true;
-        break;
+
+      const prior = priorLatest[code];
+      const curr  = thisLatest[code]; // may be undefined if not yet entered this session
+
+      if (!curr) { allEntered = false; continue; }
+
+      // Per-component: build the merged mark map
+      const mergedMap = {};
+      for (const comp of Object.keys(subj.marks)) {
+        const compField = comp.toLowerCase() + 'Marks';
+        const priorVal  = prior?.[compField] || '';
+        const currVal   = curr[compField]    || '';
+
+        // Was this component passing in the prior attempt?
+        const priorParsed = priorVal ? parseMarkValue(priorVal, subj.marks[comp]) : null;
+        const priorPassed = priorParsed &&
+          priorParsed.valid && !priorParsed.absent &&
+          (priorParsed.grace || priorParsed.value / subj.marks[comp] >= 0.40);
+
+        if (priorPassed) {
+          // Carry forward the prior passing mark
+          mergedMap[comp] = priorVal;
+        } else {
+          // Use new mark from this session (may be empty if not entered)
+          if (currVal) mergedMap[comp] = currVal;
+        }
       }
+
+      const dr = computeDisplayResult(subj, mergedMap);
+      if (dr.pending) { allEntered = false; continue; }
+      if (dr.result === 'Fail' || dr.result === 'AB') hasFailOrAB = true;
     }
 
     if (hasFailOrAB) return 'unsuccessful';
-
-    // Expected count: for KT session, only the subjects that had prior Fail/AB
-    const expectedCount = isKTSession
-      ? new Set(
-          State.ledger
-            .filter(r =>
-              r.uin === student.uin &&
-              Number(r.semester) === session.semester &&
-              r.examSession !== session.id &&
-              (r.result === 'Fail' || r.result === 'AB')
-            )
-            .map(r => r.subjectCode)
-        ).size
-      : subjects.length;
-
-    if (expectedCount === 0 || Object.keys(latestBySubject).length < expectedCount) {
-      return 'pending';
-    }
-
+    if (!allEntered)  return 'pending';
     return 'cleared';
   }
 
