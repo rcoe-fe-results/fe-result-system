@@ -171,9 +171,25 @@ function _meSearchBySeat(seatQuery) {
 
 // Check if a student is eligible for a given session
 function _isStudentEligibleForSession(student, session) {
-  // Same batch year → always eligible (Sem-I and Sem-II for fresh students)
-  if (session.batchYear === student.batchYear) return true;
-  // Different batch year → only if student has an active KT in this semester
+  if (session.batchYear === student.batchYear) {
+    // If student has already cleared this semester (has entries + no active KTs),
+    // don't show additional same-semester sessions from this batch year
+    const semRows = State.ledger.filter(r =>
+      r.uin === student.uin && Number(r.semester) === session.semester
+    );
+    if (semRows.length > 0) {
+      const activeKTsInSem = State.getActiveKTSubjects(student.uin)
+        .filter(r => Number(r.semester) === session.semester);
+      if (activeKTsInSem.length === 0) {
+        // Cleared — only show the session they actually sat (has entries in it)
+        return State.ledger.some(r =>
+          r.uin === student.uin && r.examSession === session.id
+        );
+      }
+    }
+    return true;
+  }
+  // Different batch year → only if active KT in this semester
   const activeKTs = State.getActiveKTSubjects(student.uin);
   return activeKTs.some(r => Number(r.semester) === session.semester);
 }
