@@ -439,7 +439,7 @@ function _meAdhocShowSessionPicker(sessions) {
       _meAdhocRenderGrid();
     };
   });
-}
+
 
 function _meStudentInfoHtml(student, session) {
   const isKT = session
