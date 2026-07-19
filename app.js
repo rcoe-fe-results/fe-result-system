@@ -290,32 +290,76 @@ function _meAdhocShowSessionPicker(sessions) {
       }
     }
 
-    const hasFailOrAB = Object.values(latestBySubject)
-      .some(r => r.result === 'Fail' || r.result === 'AB');
+    // For KT sessions: carry forward Pass component marks from prior sessions
+    // of the same semester — exactly as the university does.
+    // This lets computeDisplayResult produce a real Pass/Fail instead of Pending.
+    const isKTSession = session.batchYear !== student.batchYear;
+    if (isKTSession) {
+      // All prior ledger rows for this student+semester, sorted ascending
+      const priorRows = State.ledger
+        .filter(r =>
+          r.uin === student.uin &&
+          Number(r.semester) === session.semester &&
+          r.examSession !== session.id
+        )
+        .sort((a, b) => a.entryDateTime.localeCompare(b.entryDateTime));
+
+      // Build latest-per-component from prior sessions per subject
+      const priorBySubject = {};
+      for (const r of priorRows) {
+        if (!priorBySubject[r.subjectCode]) priorBySubject[r.subjectCode] = {};
+        const p = priorBySubject[r.subjectCode];
+        if (r.iatMarks  !== '') p.iatMarks  = r.iatMarks;
+        if (r.eseMarks  !== '') p.eseMarks  = r.eseMarks;
+        if (r.twMarks   !== '') p.twMarks   = r.twMarks;
+        if (r.oralMarks !== '') p.oralMarks = r.oralMarks;
+      }
+
+      // Merge: fill blank components in this session's entries from prior sessions
+      for (const [code, row] of Object.entries(latestBySubject)) {
+        const prior = priorBySubject[code];
+        if (!prior) continue;
+        if (!row.iatMarks  && prior.iatMarks)  row.iatMarks  = prior.iatMarks;
+        if (!row.eseMarks  && prior.eseMarks)  row.eseMarks  = prior.eseMarks;
+        if (!row.twMarks   && prior.twMarks)   row.twMarks   = prior.twMarks;
+        if (!row.oralMarks && prior.oralMarks) row.oralMarks = prior.oralMarks;
+      }
+    }
+
+    // Now evaluate each subject with the supplemented marks
+    const subjects = getSubjectsForSem(session.semester, student.branch, session);
+    let hasFailOrAB = false;
+
+    for (const [code, row] of Object.entries(latestBySubject)) {
+      const subj = subjects.find(s => s.code === code);
+      if (!subj) continue;
+      const marksMap = {};
+      if (row.iatMarks)  marksMap.IAT  = row.iatMarks;
+      if (row.eseMarks)  marksMap.ESE  = row.eseMarks;
+      if (row.twMarks)   marksMap.TW   = row.twMarks;
+      if (row.oralMarks) marksMap.Oral = row.oralMarks;
+      const dr = computeDisplayResult(subj, marksMap);
+      if (!dr.pending && (dr.result === 'Fail' || dr.result === 'AB')) {
+        hasFailOrAB = true;
+        break;
+      }
+    }
+
     if (hasFailOrAB) return 'unsuccessful';
 
-    // Determine expected subject count:
-    // KT session (different batchYear) → only KT subjects are expected, not full semester
-    // Own-batch session → all subjects expected
-    const isKTSession = session.batchYear !== student.batchYear;
-    let expectedCount;
-    if (isKTSession) {
-      // Only subjects where student had an active KT going INTO this session
-      // = subjects with Fail/AB in any prior session of this semester
-      const priorFailCodes = new Set(
-        State.ledger
-          .filter(r =>
-            r.uin === student.uin &&
-            Number(r.semester) === session.semester &&
-            r.examSession !== session.id &&
-            (r.result === 'Fail' || r.result === 'AB')
-          )
-          .map(r => r.subjectCode)
-      );
-      expectedCount = priorFailCodes.size;
-    } else {
-      expectedCount = getSubjectsForSem(session.semester, student.branch, session).length;
-    }
+    // Expected count: for KT session, only the subjects that had prior Fail/AB
+    const expectedCount = isKTSession
+      ? new Set(
+          State.ledger
+            .filter(r =>
+              r.uin === student.uin &&
+              Number(r.semester) === session.semester &&
+              r.examSession !== session.id &&
+              (r.result === 'Fail' || r.result === 'AB')
+            )
+            .map(r => r.subjectCode)
+        ).size
+      : subjects.length;
 
     if (expectedCount === 0 || Object.keys(latestBySubject).length < expectedCount) {
       return 'pending';
