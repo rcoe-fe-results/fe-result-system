@@ -295,114 +295,7 @@ function _meAdhocShowSessionPicker(sessions) {
 
     return 'cleared';
   }
-    const isKTSession = session.batchYear !== student.batchYear;
-    const subjects    = getSubjectsForSem(session.semester, student.branch, session);
 
-    // All ledger rows for this student+semester across ALL sessions, sorted ascending
-    const allSemRows = State.ledger
-      .filter(r => r.uin === student.uin && Number(r.semester) === session.semester)
-      .sort((a, b) => a.entryDateTime.localeCompare(b.entryDateTime));
-
-    if (allSemRows.length === 0) return 'pending';
-
-    // This session's rows
-    const thisSessionRows = allSemRows.filter(r => r.examSession === session.id);
-
-    // For non-KT own-batch sessions: simple check on this session's entries only
-    if (!isKTSession) {
-      if (thisSessionRows.length === 0) return 'pending';
-      const latestBySubject = {};
-      for (const r of thisSessionRows) {
-        if (!latestBySubject[r.subjectCode] ||
-            r.entryDateTime > latestBySubject[r.subjectCode].entryDateTime) {
-          latestBySubject[r.subjectCode] = r;
-        }
-      }
-      const hasFailOrAB = Object.values(latestBySubject)
-        .some(r => r.result === 'Fail' || r.result === 'AB');
-      if (hasFailOrAB) return 'unsuccessful';
-      if (Object.keys(latestBySubject).length < subjects.length) return 'pending';
-      return 'cleared';
-    }
-
-    // ── KT session logic ──────────────────────────────────────
-    // Find which subjects had Fail/AB in prior sessions of this semester
-    const priorRows = allSemRows.filter(r => r.examSession !== session.id);
-
-    // Latest prior entry per subject
-    const priorLatest = {};
-    for (const r of priorRows) {
-      if (!priorLatest[r.subjectCode] ||
-          r.entryDateTime > priorLatest[r.subjectCode].entryDateTime) {
-        priorLatest[r.subjectCode] = r;
-      }
-    }
-
-    // KT subjects = those with Fail/AB in latest prior entry
-    const ktSubjectCodes = new Set(
-      Object.values(priorLatest)
-        .filter(r => r.result === 'Fail' || r.result === 'AB')
-        .map(r => r.subjectCode)
-    );
-
-    if (ktSubjectCodes.size === 0) return 'pending';
-
-    // Latest entry per subject IN THIS SESSION
-    const thisLatest = {};
-    for (const r of thisSessionRows) {
-      if (!thisLatest[r.subjectCode] ||
-          r.entryDateTime > thisLatest[r.subjectCode].entryDateTime) {
-        thisLatest[r.subjectCode] = r;
-      }
-    }
-
-    // For each KT subject, build merged component marks:
-    // - Start with prior session's component values
-    // - For each component: if it was FAILING in prior, replace with this session's value
-    // - Then run computeDisplayResult on the merged map
-    let allEntered  = true;
-    let hasFailOrAB = false;
-
-    for (const code of ktSubjectCodes) {
-      const subj  = subjects.find(s => s.code === code);
-      if (!subj) continue;
-
-      const prior = priorLatest[code];
-      const curr  = thisLatest[code]; // may be undefined if not yet entered this session
-
-      if (!curr) { allEntered = false; continue; }
-
-      // Per-component: build the merged mark map
-      const mergedMap = {};
-      for (const comp of Object.keys(subj.marks)) {
-        const compField = comp.toLowerCase() + 'Marks';
-        const priorVal  = prior?.[compField] || '';
-        const currVal   = curr[compField]    || '';
-
-        // Was this component passing in the prior attempt?
-        const priorParsed = priorVal ? parseMarkValue(priorVal, subj.marks[comp]) : null;
-        const priorPassed = priorParsed &&
-          priorParsed.valid && !priorParsed.absent &&
-          (priorParsed.grace || priorParsed.value / subj.marks[comp] >= 0.40);
-
-        if (priorPassed) {
-          // Carry forward the prior passing mark
-          mergedMap[comp] = priorVal;
-        } else {
-          // Use new mark from this session (may be empty if not entered)
-          if (currVal) mergedMap[comp] = currVal;
-        }
-      }
-
-      const dr = computeDisplayResult(subj, mergedMap);
-      if (dr.pending) { allEntered = false; continue; }
-      if (dr.result === 'Fail' || dr.result === 'AB') hasFailOrAB = true;
-    }
-
-    if (hasFailOrAB) return 'unsuccessful';
-    if (!allEntered)  return 'pending';
-    return 'cleared';
-  }
 
   function _sessionTag(status) {
     if (status === 'cleared') {
@@ -439,7 +332,7 @@ function _meAdhocShowSessionPicker(sessions) {
       _meAdhocRenderGrid();
     };
   });
-
+}
 
 function _meStudentInfoHtml(student, session) {
   const isKT = session
