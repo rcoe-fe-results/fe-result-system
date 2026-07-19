@@ -276,6 +276,25 @@ function _meAdhocShowSessionPicker(sessions) {
 
   // Tag is based on THIS SESSION's entries for this student — not overall KT status
   function _sessionStatus(session) {
+    const acad = State.computeStudentAcademics(student.uin);
+    const sessResult = acad?.sessionResults.find(sr => sr.session.id === session.id);
+
+    if (!sessResult) return 'pending';
+
+    const total = sessResult.subjects.length;
+    if (total === 0) return 'pending';
+
+    if (sessResult.pendingCount === total) return 'pending';
+
+    const hasFailOrAB = sessResult.subjects.some(s =>
+      !s.pending && (s.dr.result === 'Fail' || s.dr.result === 'AB')
+    );
+    if (hasFailOrAB) return 'unsuccessful';
+
+    if (sessResult.pendingCount > 0) return 'pending';
+
+    return 'cleared';
+  }
     const isKTSession = session.batchYear !== student.batchYear;
     const subjects    = getSubjectsForSem(session.semester, student.branch, session);
 
