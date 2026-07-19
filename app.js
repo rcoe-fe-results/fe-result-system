@@ -294,10 +294,32 @@ function _meAdhocShowSessionPicker(sessions) {
       .some(r => r.result === 'Fail' || r.result === 'AB');
     if (hasFailOrAB) return 'unsuccessful';
 
-    // Also check: are all expected subjects entered?
-    const expectedCount = getSubjectsForSem(session.semester, student.branch, session).length;
-    const enteredCount  = Object.keys(latestBySubject).length;
-    if (enteredCount < expectedCount) return 'pending';
+    // Determine expected subject count:
+    // KT session (different batchYear) → only KT subjects are expected, not full semester
+    // Own-batch session → all subjects expected
+    const isKTSession = session.batchYear !== student.batchYear;
+    let expectedCount;
+    if (isKTSession) {
+      // Only subjects where student had an active KT going INTO this session
+      // = subjects with Fail/AB in any prior session of this semester
+      const priorFailCodes = new Set(
+        State.ledger
+          .filter(r =>
+            r.uin === student.uin &&
+            Number(r.semester) === session.semester &&
+            r.examSession !== session.id &&
+            (r.result === 'Fail' || r.result === 'AB')
+          )
+          .map(r => r.subjectCode)
+      );
+      expectedCount = priorFailCodes.size;
+    } else {
+      expectedCount = getSubjectsForSem(session.semester, student.branch, session).length;
+    }
+
+    if (expectedCount === 0 || Object.keys(latestBySubject).length < expectedCount) {
+      return 'pending';
+    }
 
     return 'cleared';
   }
