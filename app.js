@@ -237,46 +237,48 @@ function _meAdhocShowSessionPicker(sessions) {
   const student = meAdhocState.student;
   const picker  = document.getElementById('me-adhoc-session-picker');
 
-  // Compute per-semester status for this student
-  // 'cleared'  — has entries, zero active KT/Fail/AB in that semester
-  // 'pending'  — no ledger entries at all for that semester
-  // 'kt'       — has active Fail/AB in that semester
-  function _semStatus(sem) {
-    const semRows = State.ledger.filter(r =>
-      r.uin === student.uin && Number(r.semester) === sem
+  // Tag is based on THIS SESSION's entries for this student — not overall KT status
+  function _sessionStatus(session) {
+    const sessionRows = State.ledger.filter(r =>
+      r.uin === student.uin && r.examSession === session.id
     );
-    if (semRows.length === 0) return 'pending';
-    const activeKTs = State.getActiveKTSubjects(student.uin)
-      .filter(r => Number(r.semester) === sem);
-    return activeKTs.length > 0 ? 'kt' : 'cleared';
+    if (sessionRows.length === 0) return 'pending';
+
+    // Latest entry per subject within this session
+    const latestBySubject = {};
+    for (const r of sessionRows) {
+      if (!latestBySubject[r.subjectCode] ||
+          r.entryDateTime > latestBySubject[r.subjectCode].entryDateTime) {
+        latestBySubject[r.subjectCode] = r;
+      }
+    }
+    const hasFailOrAB = Object.values(latestBySubject)
+      .some(r => r.result === 'Fail' || r.result === 'AB');
+    return hasFailOrAB ? 'unsuccessful' : 'cleared';
   }
 
-  function _sessionTag(session) {
-    const status = _semStatus(session.semester);
+  function _sessionTag(status) {
     if (status === 'cleared') {
       return `<span class="session-status-tag tag-cleared">✓ Cleared</span>`;
     }
-    if (status === 'kt') {
-      return `<span class="session-status-tag tag-kt">⚠ Active KT</span>`;
+    if (status === 'unsuccessful') {
+      return `<span class="session-status-tag tag-unsuccessful">✗ Unsuccessful</span>`;
     }
     return `<span class="session-status-tag tag-pending">Marks entry pending</span>`;
-  }
-
-  function _isCleared(session) {
-    return _semStatus(session.semester) === 'cleared';
   }
 
   picker.innerHTML = `
     <div class="session-picker">
       <div class="session-picker-label">Select session</div>
       ${sessions.map(s => {
-        const cleared = _isCleared(s);
+        const status  = _sessionStatus(s);
+        const cleared = status === 'cleared';
         return `
         <div class="session-option${cleared ? ' session-option-cleared' : ''}"
              ${cleared ? '' : `data-session-id="${UI.esc(s.id)}"`}>
           <span class="session-option-name">${UI.esc(s.name)}</span>
           <span class="session-option-meta">Sem ${s.semester} · ${UI.esc(s.batchYear)} · ${UI.esc(s.entryType)}</span>
-          ${_sessionTag(s)}
+          ${_sessionTag(status)}
         </div>`;
       }).join('')}
     </div>`;
