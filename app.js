@@ -1699,16 +1699,24 @@ function _pvShowStudent(uin) {
       if (!subjConfig) subjConfig = getSem2Subjects(student.branch, null).find(s => s.code === r.subjectCode);
 
       const comps      = ['IAT', 'ESE', 'TW', 'Oral'];
-      const compFields = { IAT: r.iatMarks, ESE: r.eseMarks, TW: r.twMarks, Oral: r.oralMarks };
+      const acadSubj   = acadSess?.subjects.find(s => s.r.subjectCode === r.subjectCode);
+      const mm         = acadSubj?.mergedMarks;
+      const compFields = {
+        IAT:  mm?.IAT  ?? r.iatMarks,
+        ESE:  mm?.ESE  ?? r.eseMarks,
+        TW:   mm?.TW   ?? r.twMarks,
+        Oral: mm?.Oral ?? r.oralMarks,
+      };
 
       const cells = comps.map(comp => {
-        const val     = compFields[comp] || '—';
-        const maxMark = subjConfig?.marks?.[comp];
+        const val      = compFields[comp] || '—';
+        const maxMark  = subjConfig?.marks?.[comp];
+        const isCarried = acadSubj?.carriedMap?.[comp] === true;
         if (!maxMark) return `<td class="muted">—</td>`;
         if (showPerComp) {
-          return `<td class="pv-comp-cell">${UI.esc(val)} ${_pvMarkTag(val === '—' ? null : val, maxMark)}</td>`;
+          return `<td class="pv-comp-cell">${UI.esc(val)}${isCarried ? '<sup class="carried-mark">+</sup>' : ''} ${_pvMarkTag(val === '—' ? null : val, maxMark)}</td>`;
         }
-        return `<td>${UI.esc(val)}</td>`;
+        return `<td>${UI.esc(val)}${isCarried ? '<sup class="carried-mark">+</sup>' : ''}</td>`;
       }).join('');
 
       let gradeCell  = '<td class="muted">—</td>';

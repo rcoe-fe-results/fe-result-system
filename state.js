@@ -605,11 +605,11 @@ const State = (() => {
 
           if (dr.pending) {
             pendingCount++;
-            subjectResults.push({ r: canonicalRow, subj, dr, pending: true, carriedMap });
+            subjectResults.push({ r: canonicalRow, subj, dr, pending: true, carriedMap, mergedMarks: marksMap });
             continue;
           }
 
-          subjectResults.push({ r: canonicalRow, subj, dr, pending: false, carriedMap });
+          subjectResults.push({ r: canonicalRow, subj, dr, pending: false, carriedMap, mergedMarks: marksMap });
 
           if (dr.grade !== 'F' && dr.creditsEarned > 0) {
             sumGxC += dr.GxC;
