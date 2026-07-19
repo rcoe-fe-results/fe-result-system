@@ -676,6 +676,22 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
 .session-option:hover { border-color:var(--brand); background:var(--brand-light); }
 .session-option-name { font-size:13px; font-weight:600; color:var(--ink); flex:1; }
 .session-option-meta { font-size:11px; color:var(--ink-3); }
+.session-status-tag {
+  font-size: 11px; font-weight: 600; padding: 2px 8px;
+  border-radius: 20px; white-space: nowrap;
+}
+.tag-cleared {
+  background: var(--pass-bg); color: var(--pass); border: 1px solid #6EE7B7;
+}
+.tag-pending {
+  background: var(--surface-2); color: var(--ink-3); border: 1px solid var(--border-2);
+}
+.tag-kt {
+  background: var(--kt-bg); color: var(--kt); border: 1px solid #FCD34D;
+}
+.session-option-cleared {
+  cursor: default; opacity: 0.65; border-color: var(--pass) !important;
+}
 .session-auto-badge {
   font-size:11px; font-weight:600; color:var(--pass);
   background:var(--pass-bg); padding:2px 8px; border-radius:10px;

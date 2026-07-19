@@ -171,12 +171,9 @@ function _meSearchBySeat(seatQuery) {
 
 // Check if a student is eligible for a given session
 function _isStudentEligibleForSession(student, session) {
-  // Fresh batch check
-  const year  = Number(session.name.slice(0, 4));
-  const month = session.month || (session.name.includes('Dec') ? 'December' : 'May');
-  const freshBatch = String(deriveFreshBatch(year, month));
-  if (student.batchYear === freshBatch) return true;
-  // KT check — has active fail/AB in any subject of this semester
+  // Same batch year → always eligible (Sem-I and Sem-II for fresh students)
+  if (session.batchYear === student.batchYear) return true;
+  // Different batch year → only if student has an active KT in this semester
   const activeKTs = State.getActiveKTSubjects(student.uin);
   return activeKTs.some(r => Number(r.semester) === session.semester);
 }
@@ -237,21 +234,56 @@ function _meAdhocShowAutoSession(session, seatNum) {
 }
 
 function _meAdhocShowSessionPicker(sessions) {
-  const picker = document.getElementById('me-adhoc-session-picker');
+  const student = meAdhocState.student;
+  const picker  = document.getElementById('me-adhoc-session-picker');
+
+  // Compute per-semester status for this student
+  // 'cleared'  — has entries, zero active KT/Fail/AB in that semester
+  // 'pending'  — no ledger entries at all for that semester
+  // 'kt'       — has active Fail/AB in that semester
+  function _semStatus(sem) {
+    const semRows = State.ledger.filter(r =>
+      r.uin === student.uin && Number(r.semester) === sem
+    );
+    if (semRows.length === 0) return 'pending';
+    const activeKTs = State.getActiveKTSubjects(student.uin)
+      .filter(r => Number(r.semester) === sem);
+    return activeKTs.length > 0 ? 'kt' : 'cleared';
+  }
+
+  function _sessionTag(session) {
+    const status = _semStatus(session.semester);
+    if (status === 'cleared') {
+      return `<span class="session-status-tag tag-cleared">✓ Cleared</span>`;
+    }
+    if (status === 'kt') {
+      return `<span class="session-status-tag tag-kt">⚠ Active KT</span>`;
+    }
+    return `<span class="session-status-tag tag-pending">Marks entry pending</span>`;
+  }
+
+  function _isCleared(session) {
+    return _semStatus(session.semester) === 'cleared';
+  }
+
   picker.innerHTML = `
     <div class="session-picker">
       <div class="session-picker-label">Select session</div>
-      ${sessions.map(s => `
-        <div class="session-option" data-session-id="${UI.esc(s.id)}">
+      ${sessions.map(s => {
+        const cleared = _isCleared(s);
+        return `
+        <div class="session-option${cleared ? ' session-option-cleared' : ''}"
+             ${cleared ? '' : `data-session-id="${UI.esc(s.id)}"`}>
           <span class="session-option-name">${UI.esc(s.name)}</span>
           <span class="session-option-meta">Sem ${s.semester} · ${UI.esc(s.batchYear)} · ${UI.esc(s.entryType)}</span>
-        </div>`).join('')}
+          ${_sessionTag(s)}
+        </div>`;
+      }).join('')}
     </div>`;
 
   picker.querySelectorAll('.session-option[data-session-id]').forEach(el => {
     el.onclick = () => {
       meAdhocState.session = State.getSession(el.dataset.sessionId);
-      // Highlight selected
       picker.querySelectorAll('.session-option').forEach(o =>
         o.style.borderColor = o === el ? 'var(--brand)' : ''
       );
