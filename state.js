@@ -512,15 +512,14 @@ const State = (() => {
     const sessionResults = [];
 
    for (const sess of sessionOrder) {
-      // A session is a KT session for this student if they have prior Fail/AB
-      // records for this semester — regardless of batchYear
-      // KT session = this semester has prior ledger entries with Fail/AB result
-      const priorFailsInSem = allStudentRows.some(r =>
+      // A session is a KT session for this student if ANY earlier session
+      // exists for the same semester — regardless of result or batchYear.
+      const firstSessEntry = allStudentRows.find(r => r.examSession === sess.id);
+      const isKTSess = firstSessEntry && allStudentRows.some(r =>
         Number(r.semester) === sess.semester &&
         r.examSession !== sess.id &&
-        (r.result === 'Fail' || r.result === 'AB')
+        r.entryDateTime < firstSessEntry.entryDateTime
       );
-      const isKTSess = priorFailsInSem;
 
       const subjectResults = [];
       let sumGxC       = 0;
