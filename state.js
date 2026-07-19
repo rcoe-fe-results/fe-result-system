@@ -699,6 +699,7 @@ const State = (() => {
         // Only count if this IS the latest result for this subject overall
         if (latestPerSubject[r.subjectCode]?.entryDateTime !== r.entryDateTime) continue;
 
+        // For Final Gazette sessions: supplement ESE-only rows with Prelim IAT/TW/Oral
         let marksMap = _marksMapFromRow(r);
         if (sess.entryType === 'Final Gazette' && sess.linkedPrelimSessionId) {
           const prelimKey = sess.linkedPrelimSessionId + '||' + r.subjectCode;
@@ -707,6 +708,37 @@ const State = (() => {
             if (!marksMap.IAT  && prelimRow.iatMarks)  marksMap.IAT  = prelimRow.iatMarks;
             if (!marksMap.TW   && prelimRow.twMarks)   marksMap.TW   = prelimRow.twMarks;
             if (!marksMap.Oral && prelimRow.oralMarks) marksMap.Oral = prelimRow.oralMarks;
+          }
+        }
+
+        // For KT sessions (different batchYear from student): carry forward
+        // passing component marks from prior sessions of the same semester.
+        // Only failed components get new marks; passed ones are carried forward.
+        if (sess.batchYear !== student.batchYear) {
+          const priorSessRows = Object.values(latestPerSessionSubject).filter(pr =>
+            pr.subjectCode === r.subjectCode &&
+            pr.examSession !== sess.id &&
+            Number(pr.semester) === Number(r.semester)
+          ).sort((a, b) => a.entryDateTime.localeCompare(b.entryDateTime));
+
+          // Build latest prior component values
+          const priorMarks = {};
+          for (const pr of priorSessRows) {
+            if (pr.iatMarks  !== '') priorMarks.IAT  = pr.iatMarks;
+            if (pr.eseMarks  !== '') priorMarks.ESE  = pr.eseMarks;
+            if (pr.twMarks   !== '') priorMarks.TW   = pr.twMarks;
+            if (pr.oralMarks !== '') priorMarks.Oral = pr.oralMarks;
+          }
+
+          // Carry forward only components that were passing in prior attempts
+          const subj = _subjectForRow(r);
+          for (const [comp, priorVal] of Object.entries(priorMarks)) {
+            if (marksMap[comp]) continue; // already has a value in this session
+            const max = subj?.marks[comp];
+            const parsed = parseMarkValue(priorVal, max);
+            const priorPassed = parsed.valid && !parsed.absent &&
+              (parsed.grace || (max && parsed.value / max >= 0.40));
+            if (priorPassed) marksMap[comp] = priorVal;
           }
         }
 
