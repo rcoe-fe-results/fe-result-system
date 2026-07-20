@@ -645,7 +645,12 @@ function _meQueueLoad() {
   // Sort
   const seatMap = State.getSeatsForSession(session.id);
   const seatLookup = {};
-  for (const s of seatMap) seatLookup[s.uin] = s.seatNumber;
+  // Fall back to linked Preliminary seats if this is a Final Gazette
+  if (session.linkedPrelimSessionId) {
+    for (const s of State.getSeatsForSession(session.linkedPrelimSessionId))
+      seatLookup[s.uin] = s.seatNumber;
+  }
+  for (const s of seatMap) seatLookup[s.uin] = s.seatNumber; // own seats win
 
   students = students.sort((a, b) => {
     if (sortBy === 'seat') {
@@ -3334,7 +3339,11 @@ function exportGazette(sessionId) {
     // Seat lookup
     const seatEntries = State.getSeatsForSession(sessionId);
     const seatLookup  = {};
-    for (const s of seatEntries) seatLookup[s.uin] = s.seatNumber;
+    if (session.linkedPrelimSessionId) {
+      for (const s of State.getSeatsForSession(session.linkedPrelimSessionId))
+        seatLookup[s.uin] = s.seatNumber;
+    }
+    for (const s of seatEntries) seatLookup[s.uin] = s.seatNumber; // own seats win
 
     // Sort by seat number
     students.sort((a, b) => {
