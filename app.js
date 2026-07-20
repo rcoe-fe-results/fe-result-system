@@ -1775,7 +1775,11 @@ function _dashActiveKTs() {
   const students = State.getStudents();
   let   ktCount  = 0;
   for (const student of students) {
-    if (State.getActiveKTSubjects(student.uin).length > 0) ktCount++;
+    const acad = State.computeStudentAcademics(student.uin);
+    const hasActiveKT = acad?.sessionResults.some(sr =>
+      sr.subjects.some(s => !s.pending && (s.dr.result === 'Fail' || s.dr.result === 'AB'))
+    );
+    if (hasActiveKT) ktCount++;
   }
   document.getElementById('dash-kt-count').textContent = ktCount;
   document.getElementById('dash-kt-sub').textContent   = `students with active KT / backlog`;
