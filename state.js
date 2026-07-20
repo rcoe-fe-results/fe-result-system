@@ -1030,13 +1030,10 @@ function reportResultSummary({ sessionId, branch, batchYear, subjectCode, compon
 
         if (!prelimRow) continue;
 
-        // Only include if any of IAT/ESE/TW/Oral changed
-        const anyChanged =
-          String(finalRow.eseMarks).trim()  !== String(prelimRow.eseMarks).trim()  ||
-          String(finalRow.iatMarks).trim()  !== String(prelimRow.iatMarks).trim()  ||
-          String(finalRow.twMarks).trim()   !== String(prelimRow.twMarks).trim()   ||
-          String(finalRow.oralMarks).trim() !== String(prelimRow.oralMarks).trim();
-        if (!anyChanged) continue;
+        // Only include if ESE actually changed (gazette only enters ESE)
+        const eseChanged = String(finalRow.eseMarks).trim() !== String(prelimRow.eseMarks).trim()
+          && finalRow.eseMarks !== '' && prelimRow.eseMarks !== '';
+        if (!eseChanged) continue;
 
         // Use computed results (not raw ledger result which is unreliable for gazette)
         if (!acadCache[finalRow.uin]) acadCache[finalRow.uin] = computeStudentAcademics(finalRow.uin);
