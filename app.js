@@ -1793,13 +1793,28 @@ function _dashBranchPassRates() {
   for (const branch of BRANCHES) {
     const branchStudents = students.filter(s => s.branch === branch);
     if (!branchStudents.length) continue;
-    const passed = branchStudents.filter(s => State.getActiveKTSubjects(s.uin).length === 0).length;
-    const pct    = Math.round(passed / branchStudents.length * 100);
-    const color  = pct >= 80 ? 'var(--pass)' : pct >= 60 ? 'var(--kt)' : 'var(--fail)';
+
+    // Only count students who have at least some ledger data
+    const studentsWithData = branchStudents.filter(s =>
+      State.ledger.some(r => r.uin === s.uin)
+    );
+    if (!studentsWithData.length) continue;
+
+    let passed = 0;
+    for (const student of studentsWithData) {
+      const acad = State.computeStudentAcademics(student.uin);
+      const hasActiveKT = acad?.sessionResults.some(sr =>
+        sr.subjects.some(s => !s.pending && (s.dr.result === 'Fail' || s.dr.result === 'AB'))
+      );
+      if (!hasActiveKT) passed++;
+    }
+
+    const pct   = Math.round(passed / studentsWithData.length * 100);
+    const color = pct >= 80 ? 'var(--pass)' : pct >= 60 ? 'var(--kt)' : 'var(--fail)';
     html += `
       <div class="dash-branch-row">
         <span>${UI.esc(branch)}</span>
-        <span class="dash-pass-pct" style="color:${color}">${pct}% <small>(${passed}/${branchStudents.length})</small></span>
+        <span class="dash-pass-pct" style="color:${color}">${pct}% <small>(${passed}/${studentsWithData.length})</small></span>
       </div>`;
   }
   el.innerHTML = html || '<div class="muted">No data.</div>';
