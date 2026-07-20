@@ -692,6 +692,12 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
 .tag-unsuccessful {
   background: var(--fail-bg); color: var(--fail); border: 1px solid #FCA5A5;
 }
+.bc-section { margin-bottom: 28px; }
+.bc-section-title { font-size: 14px; font-weight: 700; color: var(--ink-2); margin-bottom: 10px; padding-bottom: 6px; border-bottom: 1px solid var(--border-2); }
+.bc-overall-row { font-size: 13px; color: var(--ink-3); margin-bottom: 10px; }
+.bc-table th { white-space: nowrap; font-size: 11px; }
+.bc-better { color: var(--pass); font-weight: 700; }
+.bc-worse  { color: var(--fail); font-weight: 700; }
 .carried-mark {
   color: var(--brand); font-size: 10px; font-weight: 700; margin-left: 1px;
 }
@@ -1215,6 +1221,37 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
           </div>
           <button id="rpt-my-entries" class="btn btn-secondary btn-sm">Export CSV</button>
         </div>
+      </div>
+
+      <!-- ── Batch Comparison ── -->
+      <div class="report-section" id="rpt-batch-compare-section">
+        <h3>Batch Comparison</h3>
+        <p>Compare two batches side-by-side — pass rates, average marks, and CGPA distribution.</p>
+        <div class="filter-row" style="flex-wrap:wrap; gap:12px; align-items:flex-end;">
+          <div class="filter-group">
+            <label>Batch A</label>
+            <select id="rpt-bc-batch-a" style="min-width:120px;"><option value="">— select —</option></select>
+          </div>
+          <div class="filter-group">
+            <label>Session A</label>
+            <select id="rpt-bc-session-a" style="min-width:200px;"><option value="">— select —</option></select>
+          </div>
+          <div class="filter-group">
+            <label>Batch B</label>
+            <select id="rpt-bc-batch-b" style="min-width:120px;"><option value="">— select —</option></select>
+          </div>
+          <div class="filter-group">
+            <label>Session B</label>
+            <select id="rpt-bc-session-b" style="min-width:200px;"><option value="">— select —</option></select>
+          </div>
+          <div class="filter-group">
+            <label>Branch</label>
+            <select id="rpt-bc-branch" style="min-width:130px;"><option value="">— all branches —</option></select>
+          </div>
+          <button id="rpt-bc-run" class="btn btn-primary btn-sm">Compare</button>
+          <button id="rpt-bc-csv" class="btn btn-secondary btn-sm">⬇ Export CSV</button>
+        </div>
+        <div id="rpt-bc-output" style="margin-top:20px;"></div>
       </div>
     </div>
 

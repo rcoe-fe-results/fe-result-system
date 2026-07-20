@@ -1785,6 +1785,328 @@ function initReports() {
   document.getElementById('rpt-total-credit-filter').onclick = _rptTotalCreditFilter;
   document.getElementById('rpt-kt-filter').onclick           = _rptKTFilter;
   document.getElementById('rpt-my-entries').onclick          = _rptMyEntries;
+
+  // Batch comparison
+  const bcYears = State.getBatchYears();
+  UI.buildSelect('rpt-bc-batch-a', bcYears, '— select —');
+  UI.buildSelect('rpt-bc-batch-b', bcYears, '— select —');
+  UI.buildSelect('rpt-bc-branch',  BRANCHES, '— all branches —');
+  // Session selects are populated when batch is chosen
+  document.getElementById('rpt-bc-batch-a').addEventListener('change', () => _bcPopulateSessions('a'));
+  document.getElementById('rpt-bc-batch-b').addEventListener('change', () => _bcPopulateSessions('b'));
+  document.getElementById('rpt-bc-run').onclick = _rptBatchCompare;
+  document.getElementById('rpt-bc-csv').onclick = _rptBatchCompareCsv;
+}
+
+// ── Batch Comparison ──────────────────────────────────────────
+function _bcPopulateSessions(side) {
+  const batchYear = document.getElementById(`rpt-bc-batch-${side}`).value;
+  const sessions  = sortSessions(State.getSessions().filter(s =>
+    !batchYear || s.batchYear === batchYear
+  ));
+  const el = document.getElementById(`rpt-bc-session-${side}`);
+  el.innerHTML = '<option value="">— select session —</option>' +
+    sessions.map(s => `<option value="${UI.esc(s.id)}">${UI.esc(s.name)}</option>`).join('');
+}
+
+function _bcGetData(batchYear, sessionId, branch) {
+  // Returns { students, sessionResults } for the given batch+session+branch
+  let students = State.getStudents({ branch: branch || undefined });
+  if (batchYear) students = students.filter(s => s.batchYear === batchYear);
+
+  const sess = sessionId ? State.getSession(sessionId) : null;
+  const sem  = sess?.semester || 1;
+
+  const subjects = sess
+    ? getSubjectsForSem(sem, null, sess)
+    : SEM1_SUBJECTS;
+
+  // Per-student academics
+  const studentData = students.map(student => {
+    const acad    = State.computeStudentAcademics(student.uin);
+    const sessRes = acad?.sessionResults.find(sr => sr.session.id === sessionId);
+    const activeKTs = State.getActiveKTSubjects(student.uin);
+    const cleared   = activeKTs.filter(r => Number(r.semester) === sem).length === 0 &&
+                      (sessRes?.subjects.length > 0);
+    return { student, acad, sessRes, cleared };
+  }).filter(d => d.sessRes); // only students with data in this session
+
+  return { studentData, subjects, sess, sem };
+}
+
+function _bcSubjectPassRates(studentData, subjects, sessionId) {
+  // Per-subject pass rates
+  const result = {};
+  for (const subj of subjects) {
+    let pass = 0, fail = 0, ab = 0;
+    for (const { sessRes } of studentData) {
+      const subjEntry = sessRes?.subjects.find(s => s.r.subjectCode === subj.code);
+      if (!subjEntry || subjEntry.pending) continue;
+      if (subjEntry.dr.result === 'Pass') pass++;
+      else if (subjEntry.dr.result === 'AB') ab++;
+      else fail++;
+    }
+    const total = pass + fail + ab;
+    result[subj.code] = { name: subj.name, pass, fail, ab, total, pct: total > 0 ? Math.round(pass / total * 100) : null };
+  }
+  return result;
+}
+
+function _bcAvgMarks(studentData, subjects, sessionId) {
+  // Per-subject per-component average marks
+  const result = {};
+  for (const subj of subjects) {
+    const comps = Object.keys(subj.marks);
+    result[subj.code] = { name: subj.name, comps: {} };
+    for (const comp of comps) {
+      const vals = [];
+      for (const { sessRes } of studentData) {
+        const subjEntry = sessRes?.subjects.find(s => s.r.subjectCode === subj.code);
+        if (!subjEntry) continue;
+        const mm  = subjEntry.mergedMarks || {};
+        const val = mm[comp] || subjEntry.r[comp.toLowerCase() + 'Marks'];
+        if (val && val !== '' && val !== 'AB') {
+          const n = parseFloat(String(val).replace('*', ''));
+          if (!isNaN(n)) vals.push(n);
+        }
+      }
+      result[subj.code].comps[comp] = vals.length > 0
+        ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length * 10) / 10
+        : null;
+    }
+  }
+  return result;
+}
+
+function _bcCgpaDistribution(studentData) {
+  const ranges = ['< 5', '5–6', '6–7', '7–8', '8–9', '9–10'];
+  const counts = { '< 5': 0, '5–6': 0, '6–7': 0, '7–8': 0, '8–9': 0, '9–10': 0 };
+  let sum = 0, n = 0;
+  for (const { acad } of studentData) {
+    const cgpa = acad?.cgpa;
+    if (cgpa == null) continue;
+    sum += cgpa; n++;
+    if      (cgpa < 5)  counts['< 5']++;
+    else if (cgpa < 6)  counts['5–6']++;
+    else if (cgpa < 7)  counts['6–7']++;
+    else if (cgpa < 8)  counts['7–8']++;
+    else if (cgpa < 9)  counts['8–9']++;
+    else                counts['9–10']++;
+  }
+  return { ranges, counts, avg: n > 0 ? Math.round(sum / n * 100) / 100 : null, total: n };
+}
+
+function _bcOverallPassRate(studentData, sem) {
+  // % students who cleared ALL subjects in this semester
+  let pass = 0;
+  for (const { cleared } of studentData) {
+    if (cleared) pass++;
+  }
+  return { pass, total: studentData.length, pct: studentData.length > 0 ? Math.round(pass / studentData.length * 100) : null };
+}
+
+function _rptBatchCompare() {
+  const batchA   = document.getElementById('rpt-bc-batch-a').value;
+  const batchB   = document.getElementById('rpt-bc-batch-b').value;
+  const sessAId  = document.getElementById('rpt-bc-session-a').value;
+  const sessBId  = document.getElementById('rpt-bc-session-b').value;
+  const branch   = document.getElementById('rpt-bc-branch').value;
+  const output   = document.getElementById('rpt-bc-output');
+
+  if (!sessAId || !sessBId) {
+    UI.toast('Please select sessions for both batches.', 'error'); return;
+  }
+
+  const A = _bcGetData(batchA, sessAId, branch);
+  const B = _bcGetData(batchB, sessBId, branch);
+
+  if (A.studentData.length === 0 && B.studentData.length === 0) {
+    output.innerHTML = '<div class="empty-state">No data found for selected filters.</div>'; return;
+  }
+
+  // Merge subject list from both sessions
+  const allSubjCodes = [...new Set([...A.subjects, ...B.subjects].map(s => s.code))];
+  const allSubjects  = allSubjCodes.map(code =>
+    A.subjects.find(s => s.code === code) || B.subjects.find(s => s.code === code)
+  );
+
+  const passA    = _bcSubjectPassRates(A.studentData, allSubjects, sessAId);
+  const passB    = _bcSubjectPassRates(B.studentData, allSubjects, sessBId);
+  const avgA     = _bcAvgMarks(A.studentData, allSubjects, sessAId);
+  const avgB     = _bcAvgMarks(B.studentData, allSubjects, sessBId);
+  const cgpaA    = _bcCgpaDistribution(A.studentData);
+  const cgpaB    = _bcCgpaDistribution(B.studentData);
+  const overallA = _bcOverallPassRate(A.studentData, A.sem);
+  const overallB = _bcOverallPassRate(B.studentData, B.sem);
+
+  const sessAName = A.sess?.name || sessAId;
+  const sessBName = B.sess?.name || sessBId;
+  const labelA    = `${batchA || 'Batch A'} — ${sessAName}`;
+  const labelB    = `${batchB || 'Batch B'} — ${sessBName}`;
+
+  function _pctCell(pct, otherPct) {
+    if (pct == null) return `<td class="muted">—</td>`;
+    const better = otherPct != null && pct > otherPct;
+    const worse  = otherPct != null && pct < otherPct;
+    const cls    = better ? 'bc-better' : worse ? 'bc-worse' : '';
+    return `<td class="${cls}">${pct}%</td>`;
+  }
+
+  // Section 1: Subject-level pass %
+  let html = `
+    <div class="bc-section">
+      <div class="bc-section-title">Subject-level Pass %</div>
+      <div class="bc-overall-row">
+        <span>Overall semester pass rate — <strong>${labelA}</strong>: ${overallA.pct != null ? overallA.pct + '%' : '—'} (${overallA.pass}/${overallA.total})</span>
+        <span style="margin-left:24px;">— <strong>${labelB}</strong>: ${overallB.pct != null ? overallB.pct + '%' : '—'} (${overallB.pass}/${overallB.total})</span>
+      </div>
+      <div style="overflow-x:auto;">
+      <table class="progress-table bc-table">
+        <thead><tr>
+          <th>Subject</th>
+          <th colspan="3">${UI.esc(labelA)}</th>
+          <th colspan="3">${UI.esc(labelB)}</th>
+        </tr>
+        <tr>
+          <th></th>
+          <th>Pass%</th><th>Pass</th><th>Fail/AB</th>
+          <th>Pass%</th><th>Pass</th><th>Fail/AB</th>
+        </tr></thead>
+        <tbody>`;
+
+  for (const subj of allSubjects) {
+    const a = passA[subj.code] || {};
+    const b = passB[subj.code] || {};
+    html += `<tr>
+      <td><span class="subj-code-small">${UI.esc(subj.code)}</span> ${UI.esc(subj.name)}</td>
+      ${_pctCell(a.pct ?? null, b.pct ?? null)}
+      <td>${a.pass ?? '—'}</td><td>${(a.fail ?? 0) + (a.ab ?? 0) || '—'}</td>
+      ${_pctCell(b.pct ?? null, a.pct ?? null)}
+      <td>${b.pass ?? '—'}</td><td>${(b.fail ?? 0) + (b.ab ?? 0) || '—'}</td>
+    </tr>`;
+  }
+  html += `</tbody></table></div></div>`;
+
+  // Section 2: Average marks
+  const allComps = [...new Set(allSubjects.flatMap(s => Object.keys(s.marks || {})))];
+  html += `
+    <div class="bc-section">
+      <div class="bc-section-title">Average Marks per Subject</div>
+      <div style="overflow-x:auto;">
+      <table class="progress-table bc-table">
+        <thead><tr>
+          <th>Subject</th>
+          ${allComps.map(c => `<th colspan="2">${UI.esc(c)}</th>`).join('')}
+        </tr>
+        <tr>
+          <th></th>
+          ${allComps.map(() => `<th>${UI.esc(labelA.slice(0,12))}…</th><th>${UI.esc(labelB.slice(0,12))}…</th>`).join('')}
+        </tr></thead>
+        <tbody>`;
+
+  for (const subj of allSubjects) {
+    html += `<tr><td><span class="subj-code-small">${UI.esc(subj.code)}</span> ${UI.esc(subj.name)}</td>`;
+    for (const comp of allComps) {
+      const a = avgA[subj.code]?.comps[comp] ?? null;
+      const b = avgB[subj.code]?.comps[comp] ?? null;
+      const max = subj.marks?.[comp];
+      html += `<td>${a != null ? `${a}${max ? `<small>/${max}</small>` : ''}` : '—'}</td>`;
+      html += `<td>${b != null ? `${b}${max ? `<small>/${max}</small>` : ''}` : '—'}</td>`;
+    }
+    html += `</tr>`;
+  }
+  html += `</tbody></table></div></div>`;
+
+  // Section 3: CGPA Distribution
+  html += `
+    <div class="bc-section">
+      <div class="bc-section-title">CGPA Distribution</div>
+      <div style="overflow-x:auto;">
+      <table class="progress-table bc-table">
+        <thead><tr>
+          <th>CGPA Range</th>
+          <th>${UI.esc(labelA)}</th>
+          <th>${UI.esc(labelB)}</th>
+        </tr></thead>
+        <tbody>`;
+
+  for (const range of cgpaA.ranges) {
+    const a = cgpaA.counts[range] || 0;
+    const b = cgpaB.counts[range] || 0;
+    html += `<tr><td>${UI.esc(range)}</td><td>${a}</td><td>${b}</td></tr>`;
+  }
+  html += `
+        <tr class="sgpa-row">
+          <td><strong>Avg CGPA</strong></td>
+          <td><strong>${cgpaA.avg ?? '—'}</strong></td>
+          <td><strong>${cgpaB.avg ?? '—'}</strong></td>
+        </tr>
+        <tr>
+          <td><strong>Students</strong></td>
+          <td>${cgpaA.total}</td>
+          <td>${cgpaB.total}</td>
+        </tr>
+        </tbody></table></div></div>`;
+
+  output.innerHTML = html;
+
+  // Store for CSV export
+  window._bcLastResult = { A, B, allSubjects, passA, passB, avgA, avgB, cgpaA, cgpaB,
+    overallA, overallB, labelA, labelB, allComps };
+}
+
+function _rptBatchCompareCsv() {
+  const d = window._bcLastResult;
+  if (!d) { UI.toast('Run a comparison first.', 'error'); return; }
+
+  const rows = [];
+
+  // Section 1: Subject pass %
+  rows.push(['SUBJECT PASS RATES']);
+  rows.push(['Subject', `${d.labelA} Pass%`, `${d.labelA} Pass`, `${d.labelA} Fail/AB`,
+                        `${d.labelB} Pass%`, `${d.labelB} Pass`, `${d.labelB} Fail/AB`]);
+  for (const subj of d.allSubjects) {
+    const a = d.passA[subj.code] || {};
+    const b = d.passB[subj.code] || {};
+    rows.push([subj.name,
+      a.pct ?? '', a.pass ?? '', (a.fail ?? 0) + (a.ab ?? 0),
+      b.pct ?? '', b.pass ?? '', (b.fail ?? 0) + (b.ab ?? 0)]);
+  }
+  rows.push(['Overall Pass%', d.overallA.pct ?? '', '', '', d.overallB.pct ?? '']);
+  rows.push([]);
+
+  // Section 2: Avg marks
+  rows.push(['AVERAGE MARKS']);
+  const compHeader = ['Subject'];
+  for (const comp of d.allComps) {
+    compHeader.push(`${d.labelA} ${comp}`, `${d.labelB} ${comp}`);
+  }
+  rows.push(compHeader);
+  for (const subj of d.allSubjects) {
+    const row = [subj.name];
+    for (const comp of d.allComps) {
+      row.push(d.avgA[subj.code]?.comps[comp] ?? '');
+      row.push(d.avgB[subj.code]?.comps[comp] ?? '');
+    }
+    rows.push(row);
+  }
+  rows.push([]);
+
+  // Section 3: CGPA distribution
+  rows.push(['CGPA DISTRIBUTION']);
+  rows.push(['Range', d.labelA, d.labelB]);
+  for (const range of d.cgpaA.ranges) {
+    rows.push([range, d.cgpaA.counts[range] || 0, d.cgpaB.counts[range] || 0]);
+  }
+  rows.push(['Avg CGPA', d.cgpaA.avg ?? '', d.cgpaB.avg ?? '']);
+  rows.push(['Total Students', d.cgpaA.total, d.cgpaB.total]);
+
+  const csv = rows.map(r => r.map(c => `"${String(c).replace(/"/g,'""')}"`).join(',')).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url; a.download = `batch_comparison_${Date.now()}.csv`;
+  a.click(); URL.revokeObjectURL(url);
 }
 
 // ── Result Summary (live) ─────────────────────────────────────
