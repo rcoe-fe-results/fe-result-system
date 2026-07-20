@@ -123,7 +123,7 @@ function _meInitAdhoc() {
 
   searchInput.addEventListener('input', _debounce(() => {
     const q = searchInput.value.trim();
-    if (q.length < 2) { resultsBox.innerHTML = ''; return; }
+    if (q.length < 2) { resultsBox.style.display = 'none'; resultsBox.innerHTML = ''; return; }
 
     let matches = [];
     // Pure digits → try seat number first
@@ -596,6 +596,9 @@ async function _meAdhocSubmit() {
     const count = await State.submitEntries(session, entries);
     UI.hideSpinner();
     UI.toast(`✓ ${count} entries saved for ${student.name}.`, 'success');
+    // Navigate to Progress View to show updated results
+    document.querySelector('[data-tab="progress"]')?.click();
+    _pvShowStudent(student.uin);
   } catch (err) {
     UI.hideSpinner();
     UI.toast('Error: ' + err.message, 'error', 8000);
@@ -1416,6 +1419,7 @@ function initProgress() {
       students = State.searchStudents(q).slice(0, 10);
     }
 
+    resultsBox.style.display = 'block';
     resultsBox.innerHTML = students.length ? students.slice(0,10).map(s =>
       `<div class="search-result" data-uin="${UI.esc(s.uin)}">
         <strong>${UI.esc(s.name)}</strong>
