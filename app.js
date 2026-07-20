@@ -348,7 +348,7 @@ function _meStudentInfoHtml(student, session) {
           : ''}
       </div>
       <div class="sc-meta">
-        UIN: ${UI.esc(student.uin)} · PRN: ${UI.esc(student.prn || '—')} ·
+        UIN: ${UI.esc(student.uin)} · PRN/ERN: ${UI.esc(student.prn || '—')} ·
         ${UI.esc(student.branch)} · Div ${UI.esc(student.division)} · Batch ${UI.esc(student.batchYear)}
       </div>
       ${session
@@ -693,7 +693,7 @@ function _meQueueRenderCard() {
             ? '<span class="badge badge-kt" style="margin-left:8px;">KT</span>'
             : '<span class="badge badge-regular" style="margin-left:8px;">Regular</span>'}
         </div>
-        <div class="sc-meta">UIN: ${UI.esc(student.uin)} · PRN: ${UI.esc(student.prn || '—')} · Batch ${UI.esc(student.batchYear)}</div>
+        <div class="sc-meta">UIN: ${UI.esc(student.uin)} · PRN/ERN: ${UI.esc(student.prn || '—')} · Batch ${UI.esc(student.batchYear)}</div>
       </div>
       ${isFinal
         ? '<span class="session-type-inline final-gazette" style="margin-left:auto;">📋 Final Gazette</span>'
@@ -1469,7 +1469,7 @@ function _pvShowStudent(uin) {
     <div class="student-card" style="display:flex; align-items:center; gap:16px; flex-wrap:wrap; justify-content:space-between;">
       <div>
         <div class="sc-name">${UI.esc(student.name)}</div>
-        <div class="sc-meta">UIN: ${UI.esc(student.uin)} · PRN: ${UI.esc(student.prn || '—')} · ${UI.esc(student.branch)} · Div ${UI.esc(student.division)} · Batch ${UI.esc(student.batchYear)} · ${UI.esc(student.gender || '—')}</div>
+        <div class="sc-meta">UIN: ${UI.esc(student.uin)} · PRN/ERN: ${UI.esc(student.prn || '—')} · ${UI.esc(student.branch)} · Div ${UI.esc(student.division)} · Batch ${UI.esc(student.batchYear)} · ${UI.esc(student.gender || '—')}</div>
       </div>
       <div class="pv-quick-stats">
         <div class="pv-stat"><span class="pv-stat-val">${UI.esc(cgpaStr)}</span><span class="pv-stat-lbl">CGPA</span></div>
@@ -1892,7 +1892,7 @@ function _rptExportRevalImpact() {
   const filters = _rptGetRevalFilters();
   const data    = State.reportRevalImpact(filters);
   UI.exportCSV('RevalImpact',
-    ['UIN','PRN','Name','Branch','Subject Code','Subject Name','Prev Result','New Result','Direction','Entry Date'],
+    ['UIN','PRN/ERN','Name','Branch','Subject Code','Subject Name','Prev Result','New Result','Direction','Entry Date'],
     data.map(d => [d.uin, d.prn, d.name, d.branch, d.subjectCode, d.subjectName, d.prevResult, d.result, d.direction, d.entryDateTime])
   );
   UI.toast('Reval impact exported.', 'success');
@@ -2068,7 +2068,7 @@ function _rptCreditFilter() {
 
   // Export CSV
   UI.exportCSV(`Sem${sem}_IncompleteCredits`,
-    ['UIN','PRN','Name','Branch','Division','Batch Year','Gender',`Sem ${sem} Earned`,`Sem ${sem} Max`,'Pending Credits','CGPA'],
+    ['UIN','PRN/ERN','Name','Branch','Division','Batch Year','Gender',`Sem ${sem} Earned`,`Sem ${sem} Max`,'Pending Credits','CGPA'],
     rows.map(r => [r.uin, r.prn, r.name, r.branch, r.division, r.batchYear, r.gender, r.semEarned, r.semMax, r.semPending, r.cgpa])
   );
   UI.toast(`${rows.length} students with incomplete Sem ${sem} credits exported.`, 'success');
@@ -2110,7 +2110,7 @@ function _rptTotalCreditFilter() {
   _rptRenderTotalCreditFilterTable(rows, threshold);
 
   UI.exportCSV(`TotalCredits_lt${threshold}`,
-    ['UIN','PRN','Name','Branch','Division','Batch Year','Sem 1 Earned','Sem 1 Max','Sem 2 Earned','Sem 2 Max','Total Earned','Total Max','CGPA'],
+    ['UIN','PRN/ERN','Name','Branch','Division','Batch Year','Sem 1 Earned','Sem 1 Max','Sem 2 Earned','Sem 2 Max','Total Earned','Total Max','CGPA'],
     rows.map(r => [r.uin, r.prn, r.name, r.branch, r.division, r.batchYear, r.sem1Earned, r.sem1Max, r.sem2Earned, r.sem2Max, r.totalEarned, r.totalMax, r.cgpa])
   );
   UI.toast(`${rows.length} students with < ${threshold} total credits exported.`, 'success');
@@ -2183,7 +2183,7 @@ function _rptKTFilter() {
   const gender = document.getElementById('rpt-kt-gender').value || null;
   const data = State.reportKTFilter(n, mode, scope, gender);
   UI.exportCSV(`KTFilter_${mode.replace(' ','')}_${n}_${scope}`,
-    ['PRN','UIN','Name','Branch','Gender','Subject Code','Subject Name','Session','Result'],
+    ['PRN/ERN','UIN','Name','Branch','Gender','Subject Code','Subject Name','Session','Result'],
     data.map(d => [d.prn, d.uin, d.name, d.branch, d.gender||'', d.subjectCode, d.subjectName, d.session, d.result])
   );
   UI.toast('KT filter exported.', 'success');
@@ -2634,7 +2634,7 @@ function _adminInitManualSeatEntry() {
     resultsEl.innerHTML = matches.length
       ? matches.map(s => `<div class="search-result" data-uin="${UI.esc(s.uin)}">
           <strong>${UI.esc(s.name)}</strong>
-          <span>${UI.esc(s.uin)} · PRN: ${UI.esc(s.prn || '—')} · ${UI.esc(s.branch)}</span>
+          <span>${UI.esc(s.uin)} · PRN/ERN: ${UI.esc(s.prn || '—')} · ${UI.esc(s.branch)}</span>
         </div>`).join('')
       : '<div class="search-result muted">No students found.</div>';
     resultsEl.style.display = 'block';
@@ -2645,7 +2645,7 @@ function _adminInitManualSeatEntry() {
         resultsEl.style.display = 'none';
         document.getElementById('admin-seat-student-name').textContent = _manualSeatStudent.name;
         document.getElementById('admin-seat-student-ids').textContent =
-          `UIN: ${_manualSeatStudent.uin} · PRN: ${_manualSeatStudent.prn || '—'} · ${_manualSeatStudent.branch}`;
+          `UIN: ${_manualSeatStudent.uin} · PRN/ERN: ${_manualSeatStudent.prn || '—'} · ${_manualSeatStudent.branch}`;
         document.getElementById('admin-seat-student-selected').style.display = '';
         _adminCheckManualSeatReady();
       };
@@ -2823,7 +2823,7 @@ function exportGazette(sessionId) {
     // Row 3: component headers per subject + summary headers
     // Row 4: max marks per component
 
-    const FIXED_COLS  = ['Seat No', 'UIN', 'PRN', 'Name', 'Batch', 'Status'];
+    const FIXED_COLS  = ['Seat No', 'UIN', 'PRN/ERN', 'Name', 'Batch', 'Status'];
     const FIXED_COUNT = FIXED_COLS.length;
 
     // Per-subject component columns
@@ -3063,7 +3063,7 @@ function exportGazette(sessionId) {
   // KT sheet — students with remaining active KTs after this session
   const ktData = [
     [`Active KTs after — ${session.name}`],
-    ['UIN', 'PRN', 'Name', 'Branch', 'Batch', 'Subject Code', 'Subject Name', 'Component', 'Last Mark'],
+    ['UIN', 'PRN/ERN', 'Name', 'Branch', 'Batch', 'Subject Code', 'Subject Name', 'Component', 'Last Mark'],
   ];
 
   for (const branch of BRANCHES) {

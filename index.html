@@ -856,11 +856,11 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
         <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
           <div class="card-title" style="margin-bottom:0;">Mark Entry</div>
           <div class="mode-toggle">
-            <button id="me-adhoc-btn" class="mode-btn active">Ad-hoc</button>
+            <button id="me-adhoc-btn" class="mode-btn active">Single Student</button>
             <button id="me-queue-btn" class="mode-btn">Queue</button>
           </div>
           <span style="font-size:12px; color:var(--ink-3);" id="me-mode-hint">
-            Search for any student by name / UIN / PRN
+            Search for any student by name / UIN / PRN/ERN
           </span>
         </div>
       </div>
@@ -873,7 +873,7 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
             <label>Search student</label>
               <div class="search-wrap">
                 <input type="text" id="me-adhoc-search" class="search-input"
-                  placeholder="Name, UIN or PRN…" autocomplete="off">
+                  placeholder="Name, UIN or PRN/ERN…" autocomplete="off">
                 <div id="me-adhoc-results" class="search-results" style="display:none;"></div>
               </div>
             </div>
@@ -908,7 +908,7 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
                 <option value="seat">Seat Number ↑</option>
                 <option value="name">Name (A–Z)</option>
                 <option value="uin">UIN</option>
-                <option value="prn">PRN</option>
+                <option value="prn">PRN/ERN</option>
               </select>
             </div>
             <div class="filter-group" style="justify-content:flex-end;">
@@ -955,7 +955,7 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
           <div class="filter-group">
             <label>Search student <span class="muted">(or type "reval" / "kt" / "fail")</span></label>
             <div class="search-wrap">
-              <input type="text" id="pv-search" class="search-input" placeholder="Name, UIN, PRN — or filter: reval · kt · fail" autocomplete="off" style="width:420px;">
+              <input type="text" id="pv-search" class="search-input" placeholder="Name, UIN, PRN/ERN — or filter: reval · kt · fail" autocomplete="off" style="width:420px;">
               <div id="pv-results" class="search-results"></div>
             </div>
           </div>
@@ -1352,7 +1352,7 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
         <div class="admin-section">
           <h3>Student Upload (CSV)</h3>
           <p style="font-size:12px; color:var(--ink-3); margin-bottom:10px; line-height:1.6;">
-            CSV columns: <code>UIN, PRN, Name, Branch, Division, BatchYear, Gender</code><br>
+            CSV columns: <code>UIN, PRN/ERN, Name, Branch, Division, BatchYear, Gender</code><br>
             First row = header (skipped). Branches must match exactly:<br>
             AIDS · Civil · Computer · ECSE · Mechanical
           </p>
@@ -1382,7 +1382,7 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
           <div style="margin-top:20px; padding-top:16px; border-top:1px solid var(--border);">
             <div style="font-size:12px; font-weight:600; color:var(--ink-3); margin-bottom:10px;">Manual Seat Entry (for individual KT students)</div>
             <div class="form-group">
-              <label>Search student (PRN / Name / UIN)</label>
+              <label>Search student (PRN/ERN / Name / UIN)</label>
               <div class="search-wrap">
                 <input type="text" id="admin-seat-student-search" class="search-input" placeholder="Type to search…" autocomplete="off">
                 <div id="admin-seat-student-results" class="search-results" style="display:none;"></div>
