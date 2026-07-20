@@ -122,7 +122,16 @@ const State = (() => {
   function getSeatsForSession(sessionId) {
     return seats.filter(s => s.sessionId === sessionId);
   }
-
+  function getSeatsForSessionWithFallback(sessionId) {
+    const own = getSeatsForSession(sessionId);
+    if (own.length > 0) return own;
+    // Fall back to linked Preliminary session's seats
+    const session = getSession(sessionId);
+    if (session?.linkedPrelimSessionId) {
+      return getSeatsForSession(session.linkedPrelimSessionId);
+    }
+    return [];
+  }
   async function uploadSeats(seatList) {
     await Sheets.uploadSeats(seatList);
     seats.push(...seatList);
@@ -1279,7 +1288,7 @@ function reportResultSummary({ sessionId, branch, batchYear, subjectCode, compon
     getLatestEntryForSubject, getLedgerForStudent,
     getSessionStatus, getExpectedSubjectCount,
     submitEntries,
-    getSeatNumber, getSeatsForSession, uploadSeats, updateSeatNumber,
+    getSeatNumber, getSeatsForSession, uploadSeats, updateSeatNumber,getSeatsForSessionWithFallback,
     computeAttemptTag,
     reportResultSummary, reportRevalImpact, reportToppers, reportCreditFilter, reportKTFilter, getMyEntries,
     getDivisions, getBatchYears, getAllSubjects,
