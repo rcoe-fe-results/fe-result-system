@@ -548,7 +548,7 @@ function _meLiveSummary(triggerInput, containerId) {
   });
 
   // Compute display result
-  let dr = computeDisplayResult(subj, marksMap);
+   const dr = computeDisplayResult(subj, marksMap);
 
   if (dr.pending) {
     summaryEl.className = 'subj-summary incomplete';

@@ -651,7 +651,7 @@ const State = (() => {
             }
           }
 
-          const dr = computeDisplayResult(subj, marksMap);
+          let dr = computeDisplayResult(subj, marksMap);
 
           if (dr.pending) {
             pendingCount++;
