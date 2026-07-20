@@ -651,15 +651,15 @@ const State = (() => {
             }
           }
 
-          let dr = computeDisplayResult(subj, marksMap);
+          const drKT = computeDisplayResult(subj, marksMap);
 
-          if (dr.pending) {
+          if (drKT.pending) {
             pendingCount++;
-            subjectResults.push({ r: canonicalRow, subj, dr, pending: true, carriedMap, mergedMarks: marksMap, revalMap });
+            subjectResults.push({ r: canonicalRow, subj, dr: drKT, pending: true, carriedMap, mergedMarks: marksMap, revalMap });
             continue;
           }
 
-          subjectResults.push({ r: canonicalRow, subj, dr, pending: false, carriedMap, mergedMarks: marksMap, revalMap });
+          subjectResults.push({ r: canonicalRow, subj, dr: drKT, pending: false, carriedMap, mergedMarks: marksMap, revalMap });
 
           if (dr.grade !== 'F' && dr.creditsEarned > 0) {
             sumGxC += dr.GxC;
