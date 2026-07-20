@@ -2397,7 +2397,14 @@ function _rptLiveRevalImpact() {
     return;
   }
 
-  tbody.innerHTML = data.map(d => `
+  tbody.innerHTML = data.map(d => {
+    const dirBadge = {
+      'improved':     '<span class="badge badge-pass">↑ Fail → Pass</span>',
+      'worsened':     '<span class="badge badge-fail">⚠ Pass → Fail</span>',
+      'fail-to-fail': `<span class="badge badge-kt">${d.markDelta >= 0 ? '↑' : '↓'} Fail → Fail (ESE ${d.prelimEse} → ${d.gazEse})</span>`,
+      'pass-to-pass': `<span class="badge badge-regular">${d.markDelta >= 0 ? '↑' : '↓'} Pass → Pass (ESE ${d.prelimEse} → ${d.gazEse})</span>`,
+    }[d.direction] || '<span class="badge">Changed</span>';
+    return `
     <tr class="${d.direction === 'worsened' ? 'reval-worsened' : ''}">
       <td>${UI.esc(d.name)}</td>
       <td><span class="subj-code-small">${UI.esc(d.uin)}</span></td>
@@ -2405,11 +2412,10 @@ function _rptLiveRevalImpact() {
       <td><span class="subj-code-small">${UI.esc(d.subjectCode)}</span></td>
       <td>${UI.resultBadge(d.prevResult)}</td>
       <td>${UI.resultBadge(d.result)}</td>
-      <td>${d.direction === 'worsened'
-        ? '<span class="badge badge-fail">⚠ Worsened</span>'
-        : '<span class="badge badge-pass">↑ Improved</span>'}</td>
+      <td>${dirBadge}</td>
       <td style="font-size:11px;color:var(--ink-3);">${UI.esc(d.entryDateTime?.slice(0,10)||'')}</td>
-    </tr>`).join('');
+    </tr>`;
+  }).join('');
 }
 
 function _rptExportRevalImpact() {

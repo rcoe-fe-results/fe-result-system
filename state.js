@@ -1017,6 +1017,9 @@ function reportResultSummary({ sessionId, branch, batchYear, subjectCode, compon
       if (branch)      finalRows = finalRows.filter(r => r.branch === branch);
       if (subjectCode) finalRows = finalRows.filter(r => r.subjectCode === subjectCode);
 
+      // Cache computed academics per UIN to avoid recomputing per row
+      const acadCache = {};
+
       for (const finalRow of finalRows) {
         // Get corresponding Preliminary row
         const prelimRow = ledger
@@ -1027,17 +1030,48 @@ function reportResultSummary({ sessionId, branch, batchYear, subjectCode, compon
 
         if (!prelimRow) continue;
 
-        // Only a reval if ESE changed
-        const eseChanged = String(finalRow.eseMarks).trim() !== String(prelimRow.eseMarks).trim();
-        if (!eseChanged) continue;
+        // Only include if any of IAT/ESE/TW/Oral changed
+        const anyChanged =
+          String(finalRow.eseMarks).trim()  !== String(prelimRow.eseMarks).trim()  ||
+          String(finalRow.iatMarks).trim()  !== String(prelimRow.iatMarks).trim()  ||
+          String(finalRow.twMarks).trim()   !== String(prelimRow.twMarks).trim()   ||
+          String(finalRow.oralMarks).trim() !== String(prelimRow.oralMarks).trim();
+        if (!anyChanged) continue;
 
-        const changed = prelimRow.result !== finalRow.result;
-        if (!changed) continue;
+        // Use computed results (not raw ledger result which is unreliable for gazette)
+        if (!acadCache[finalRow.uin]) acadCache[finalRow.uin] = computeStudentAcademics(finalRow.uin);
+        const acad = acadCache[finalRow.uin];
+
+        const gazSessResult  = acad?.sessionResults.find(sr => sr.session.id === finalSess.id);
+        const prelimSessResult = acad?.sessionResults.find(sr => sr.session.id === finalSess.linkedPrelimSessionId);
+
+        const gazSubj    = gazSessResult?.subjects.find(s => s.r.subjectCode === finalRow.subjectCode);
+        const prelimSubj = prelimSessResult?.subjects.find(s => s.r.subjectCode === finalRow.subjectCode);
+
+        const gazResult   = gazSubj?.dr?.result   || finalRow.result   || '—';
+        const prelimResult = prelimSubj?.dr?.result || prelimRow.result || '—';
+
+        // Determine direction
+        let direction;
+        if (prelimResult === 'Fail' && gazResult === 'Pass')       direction = 'improved';
+        else if (prelimResult === 'Pass' && gazResult === 'Fail')  direction = 'worsened';
+        else if (prelimResult === 'Fail' && gazResult === 'Fail')  direction = 'fail-to-fail';
+        else if (prelimResult === 'Pass' && gazResult === 'Pass')  direction = 'pass-to-pass';
+        else direction = 'changed';
+
+        // ESE mark direction for same-result cases
+        const prelimESE = parseFloat(prelimRow.eseMarks) || 0;
+        const gazESE    = parseFloat(finalRow.eseMarks)  || 0;
+        const markDelta = gazESE - prelimESE;
 
         result.push({
           ...finalRow,
-          prevResult: prelimRow.result,
-          direction: (prelimRow.result === 'Fail' && finalRow.result === 'Pass') ? 'improved' : 'worsened',
+          prevResult: prelimResult,
+          result:     gazResult,
+          direction,
+          markDelta,
+          prelimEse:  prelimRow.eseMarks || '—',
+          gazEse:     finalRow.eseMarks  || '—',
         });
       }
     }
