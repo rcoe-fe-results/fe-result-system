@@ -46,13 +46,16 @@ const Auth = (() => {
         </button>`;
 
       document.getElementById('gsi-custom-btn').onclick = () => {
-        const hasConsented = localStorage.getItem('gsi_consented');
-        // First time on this browser: show account chooser + consent.
-        // After that: empty prompt — Google skips consent if already granted.
-        tokenClient.requestAccessToken({
-          prompt: hasConsented ? '' : 'select_account consent',
-        });
-      };
+      const hasConsented = localStorage.getItem('gsi_consented');
+      tokenClient.requestAccessToken({
+        prompt: hasConsented ? '' : 'select_account consent',
+      });
+    };
+
+    // Auto-restore session on page load if user has previously consented
+    if (localStorage.getItem('gsi_consented')) {
+      tokenClient.requestAccessToken({ prompt: '' });
+    }
     }
   }
 
