@@ -51,11 +51,6 @@ const Auth = (() => {
         prompt: hasConsented ? '' : 'select_account consent',
       });
     };
-
-    // Auto-restore session on page load if user has previously consented
-    if (localStorage.getItem('gsi_consented')) {
-      tokenClient.requestAccessToken({ prompt: '' });
-    }
     }
   }
 
