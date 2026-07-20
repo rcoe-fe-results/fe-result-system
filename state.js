@@ -340,10 +340,11 @@ const State = (() => {
   //   IAT/TW/Oral are pulled from the linked Preliminary session for result computation only.
   // attemptType is no longer stored — it is computed dynamically at query time.
   async function submitEntries(session, entries) {
-    const user      = Auth.getUser();
-    const now       = new Date().toISOString();
-    const toAppend  = [];
-    const isFinal   = session.entryType === 'Final Gazette';
+    const user       = Auth.getUser();
+    const now        = new Date().toISOString();
+    const toAppend   = [];
+    const duplicates = [];
+    const isFinal    = session.entryType === 'Final Gazette';
 
     for (const entry of entries) {
       const student = getStudent(entry.uin);
@@ -421,7 +422,31 @@ const State = (() => {
         gender:          student.gender || '',
       };
 
+      // ── Deduplication guard ──────────────────────────────────
+      // Same uin + subjectCode + examSession + enteredBy within 30 seconds = skip
+      const DEDUP_WINDOW_MS = 30 * 1000;
+      const nowMs           = new Date(now).getTime();
+      const isDuplicate     = ledger.some(r =>
+        r.uin         === row.uin         &&
+        r.subjectCode === row.subjectCode &&
+        r.examSession === row.examSession &&
+        r.enteredBy   === row.enteredBy   &&
+        Math.abs(new Date(r.entryDateTime).getTime() - nowMs) < DEDUP_WINDOW_MS
+      );
+
+      if (isDuplicate) {
+        duplicates.push(`${row.subjectCode} — ${row.name}`);
+        continue;
+      }
+
       toAppend.push(row);
+    }
+
+    if (duplicates.length > 0) {
+      UI.toast(
+        `⚠ ${duplicates.length} duplicate entr${duplicates.length > 1 ? 'ies' : 'y'} skipped (within 30s): ${duplicates.slice(0, 3).join(', ')}${duplicates.length > 3 ? '…' : ''}`,
+        'warning'
+      );
     }
 
     if (toAppend.length === 0) return 0;

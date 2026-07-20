@@ -692,6 +692,57 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
 .tag-unsuccessful {
   background: var(--fail-bg); color: var(--fail); border: 1px solid #FCA5A5;
 }
+/* ─── Dashboard ─────────────────────────────────────────── */
+.dash-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px; padding: 16px;
+}
+.dash-card-wide { grid-column: 1 / -1; }
+.dash-card {
+  background: var(--surface); border: 1px solid var(--border-2);
+  border-radius: var(--radius-lg); padding: 20px;
+}
+.dash-card-title {
+  font-size: 13px; font-weight: 700; color: var(--ink-2);
+  margin-bottom: 14px; display: flex; align-items: center;
+}
+.dash-big-number {
+  font-size: 48px; font-weight: 800; color: var(--brand);
+  line-height: 1;
+}
+.dash-sub-label { font-size: 12px; color: var(--ink-4); margin-top: 6px; }
+.dash-filter-select {
+  font-size: 12px; padding: 3px 8px; border-radius: var(--radius);
+  border: 1px solid var(--border-2); background: var(--surface); color: var(--ink);
+}
+.dash-completion-row {
+  display: flex; align-items: center; gap: 10px; margin-bottom: 10px;
+}
+.dash-completion-label { font-size: 12px; color: var(--ink-2); min-width: 180px; }
+.dash-progress-bar {
+  flex: 1; height: 10px; background: var(--border-2); border-radius: 99px; overflow: hidden;
+}
+.dash-progress-fill {
+  height: 100%; border-radius: 99px; background: var(--brand); transition: width 0.4s;
+}
+.dash-completion-pct { font-size: 12px; font-weight: 700; color: var(--ink-2); min-width: 36px; text-align: right; }
+.dash-branch-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 6px 0; border-bottom: 1px solid var(--border-2); font-size: 13px;
+}
+.dash-branch-row:last-child { border-bottom: none; }
+.dash-pass-pct { font-weight: 700; }
+.dash-heatmap-grid {
+  display: grid; gap: 6px;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+}
+.dash-heatmap-cell {
+  padding: 8px 10px; border-radius: var(--radius); font-size: 11px;
+  display: flex; flex-direction: column; gap: 2px;
+}
+.dash-heatmap-subj { font-weight: 600; color: var(--ink); }
+.dash-heatmap-pct  { font-size: 13px; font-weight: 800; }
 .bc-section { margin-bottom: 28px; }
 .bc-section-title { font-size: 14px; font-weight: 700; color: var(--ink-2); margin-bottom: 10px; padding-bottom: 6px; border-bottom: 1px solid var(--border-2); }
 .bc-overall-row { font-size: 13px; color: var(--ink-3); margin-bottom: 10px; }
@@ -843,6 +894,7 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
       <button class="tab-btn" data-tab="mark-entry">Mark Entry</button>
       <button class="tab-btn" data-tab="progress">Progress View</button>
       <button class="tab-btn" data-tab="reports">Reports</button>
+      <button class="tab-btn" data-tab="dashboard" data-admin-only>Dashboard</button>
       <button class="tab-btn" data-tab="admin" data-admin-only>Admin</button>
     </nav>
     <div class="topbar-right">
@@ -1252,6 +1304,40 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
           <button id="rpt-bc-csv" class="btn btn-secondary btn-sm">⬇ Export CSV</button>
         </div>
         <div id="rpt-bc-output" style="margin-top:20px;"></div>
+      </div>
+    </div>
+
+    <!-- ─── TAB: Dashboard ─── -->
+    <div id="tab-dashboard" class="tab-pane hidden">
+      <div class="dash-grid">
+
+        <!-- Session completion % -->
+        <div class="dash-card dash-card-wide">
+          <div class="dash-card-title">Session Completion</div>
+          <div id="dash-session-completion"></div>
+        </div>
+
+        <!-- Active KT count -->
+        <div class="dash-card">
+          <div class="dash-card-title">Active KTs</div>
+          <div id="dash-kt-count" class="dash-big-number"></div>
+          <div id="dash-kt-sub" class="dash-sub-label"></div>
+        </div>
+
+        <!-- Branch-wise pass rates -->
+        <div class="dash-card">
+          <div class="dash-card-title">Branch-wise Pass Rate</div>
+          <div id="dash-branch-pass"></div>
+        </div>
+
+        <!-- Subject heat map -->
+        <div class="dash-card dash-card-wide">
+          <div class="dash-card-title">Subject Heat Map — Pass Rate by Subject
+            <select id="dash-heatmap-session" class="dash-filter-select" style="margin-left:12px;"></select>
+          </div>
+          <div id="dash-heatmap"></div>
+        </div>
+
       </div>
     </div>
 

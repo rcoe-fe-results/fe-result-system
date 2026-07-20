@@ -71,6 +71,7 @@ const TAB_INIT = {
   'mark-entry':   initMarkEntry,
   'progress':     initProgress,
   'reports':      initReports,
+  'dashboard':    initDashboard,
   'admin':        initAdmin,
 };
 
@@ -83,6 +84,13 @@ function _bindModalClose() {
 
 // ═══════════════════════════════════════════════════════════════
 // TAB 1 — MARK ENTRY (Ad-hoc + Queue)
+
+function _normalizeMarkInput(val) {
+  if (!val) return val;
+  const lower = val.toLowerCase().trim();
+  if (lower === 'ab' || lower === 'absent' || lower === 'a.b.' || lower === 'abs') return 'AB';
+  return val;
+}
 // ═══════════════════════════════════════════════════════════════
 let meMode = 'adhoc'; // 'adhoc' | 'queue'
 
@@ -1238,7 +1246,8 @@ async function _beSubmit() {
     const { uin, code, comp } = input.dataset;
     const key = uin + '||' + code;
     if (!entriesByStudentSubject[key]) entriesByStudentSubject[key] = { uin, code, marks: {} };
-    entriesByStudentSubject[key].marks[comp] = parseMarkValue(input.value.trim());
+    const rawVal = _normalizeMarkInput(input.value.trim());
+    entriesByStudentSubject[key].marks[comp] = parseMarkValue(rawVal);
   }
 
   const entries = Object.values(entriesByStudentSubject).map(e => ({
@@ -1723,6 +1732,140 @@ function _pvShowStudent(uin) {
 // ═══════════════════════════════════════════════════════════════
 // TAB 4 — REPORTS
 // ═══════════════════════════════════════════════════════════════
+// ── Dashboard ─────────────────────────────────────────────────
+function initDashboard() {
+  _dashSessionCompletion();
+  _dashActiveKTs();
+  _dashBranchPassRates();
+  _dashInitHeatmap();
+}
+
+function _dashSessionCompletion() {
+  const sessions = sortSessions(State.getSessions().filter(s => s.status === 'Active'));
+  const students  = State.getStudents();
+  const el        = document.getElementById('dash-session-completion');
+  if (!sessions.length) { el.innerHTML = '<div class="muted">No active sessions.</div>'; return; }
+
+  let html = '';
+  for (const sess of sessions) {
+    const semStudents = students.filter(s => s.batchYear === sess.batchYear);
+    const total       = semStudents.length;
+    if (total === 0) continue;
+
+    const subjects = getSubjectsForSem(sess.semester, null, sess);
+    let   entered  = 0;
+    for (const student of semStudents) {
+      const rows = State.ledger.filter(r => r.uin === student.uin && r.examSession === sess.id);
+      const uniqueSubjs = new Set(rows.map(r => r.subjectCode)).size;
+      if (uniqueSubjs >= subjects.length) entered++;
+    }
+    const pct = Math.round(entered / total * 100);
+    html += `
+      <div class="dash-completion-row">
+        <span class="dash-completion-label">${UI.esc(sess.name)}</span>
+        <div class="dash-progress-bar"><div class="dash-progress-fill" style="width:${pct}%"></div></div>
+        <span class="dash-completion-pct">${pct}%</span>
+        <span class="dash-sub-label" style="min-width:60px;">${entered}/${total}</span>
+      </div>`;
+  }
+  el.innerHTML = html || '<div class="muted">No data.</div>';
+}
+
+function _dashActiveKTs() {
+  const students = State.getStudents();
+  let   ktCount  = 0;
+  for (const student of students) {
+    if (State.getActiveKTSubjects(student.uin).length > 0) ktCount++;
+  }
+  document.getElementById('dash-kt-count').textContent = ktCount;
+  document.getElementById('dash-kt-sub').textContent   = `students with active KT / backlog`;
+}
+
+function _dashBranchPassRates() {
+  const el       = document.getElementById('dash-branch-pass');
+  const students = State.getStudents();
+  let   html     = '';
+
+  for (const branch of BRANCHES) {
+    const branchStudents = students.filter(s => s.branch === branch);
+    if (!branchStudents.length) continue;
+    const passed = branchStudents.filter(s => State.getActiveKTSubjects(s.uin).length === 0).length;
+    const pct    = Math.round(passed / branchStudents.length * 100);
+    const color  = pct >= 80 ? 'var(--pass)' : pct >= 60 ? 'var(--kt)' : 'var(--fail)';
+    html += `
+      <div class="dash-branch-row">
+        <span>${UI.esc(branch)}</span>
+        <span class="dash-pass-pct" style="color:${color}">${pct}% <small>(${passed}/${branchStudents.length})</small></span>
+      </div>`;
+  }
+  el.innerHTML = html || '<div class="muted">No data.</div>';
+}
+
+function _dashInitHeatmap() {
+  const sel = document.getElementById('dash-heatmap-session');
+  const sessions = sortSessions(State.getSessions());
+  sel.innerHTML = '<option value="">— all sessions —</option>' +
+    sessions.map(s => `<option value="${UI.esc(s.id)}">${UI.esc(s.name)}</option>`).join('');
+  sel.addEventListener('change', _dashRenderHeatmap);
+  _dashRenderHeatmap();
+}
+
+function _dashRenderHeatmap() {
+  const sessId   = document.getElementById('dash-heatmap-session').value;
+  const sess     = sessId ? State.getSession(sessId) : null;
+  const el       = document.getElementById('dash-heatmap');
+  const students = State.getStudents();
+
+  // Collect all subjects across sessions or for specific session
+  const subjects = sess
+    ? getSubjectsForSem(sess.semester, null, sess)
+    : [...SEM1_SUBJECTS];
+
+  const passRates = subjects.map(subj => {
+    let pass = 0, total = 0;
+    for (const student of students) {
+      const rows = State.ledger.filter(r =>
+        r.uin === student.uin &&
+        r.subjectCode === subj.code &&
+        (!sessId || r.examSession === sessId)
+      );
+      if (!rows.length) continue;
+      const latest = rows.sort((a, b) => b.entryDateTime.localeCompare(a.entryDateTime))[0];
+      total++;
+      if (latest.result === 'Pass') pass++;
+    }
+    const pct = total > 0 ? Math.round(pass / total * 100) : null;
+    return { subj, pass, total, pct };
+  }).filter(d => d.total > 0)
+    .sort((a, b) => (a.pct ?? 101) - (b.pct ?? 101)); // worst first
+
+  function _heatColor(pct) {
+    if (pct == null)  return 'var(--surface-2)';
+    if (pct >= 90)    return '#D1FAE5';
+    if (pct >= 75)    return '#FEF9C3';
+    if (pct >= 60)    return '#FED7AA';
+    return '#FEE2E2';
+  }
+  function _heatTextColor(pct) {
+    if (pct == null)  return 'var(--ink-4)';
+    if (pct >= 75)    return '#065F46';
+    if (pct >= 60)    return '#92400E';
+    return '#991B1B';
+  }
+
+  el.innerHTML = `<div class="dash-heatmap-grid">` +
+    passRates.map(({ subj, pct, pass, total }) => `
+      <div class="dash-heatmap-cell" style="background:${_heatColor(pct)}; color:${_heatTextColor(pct)}">
+        <span class="dash-heatmap-subj">${UI.esc(subj.code)}</span>
+        <span class="dash-heatmap-pct">${pct != null ? pct + '%' : '—'}</span>
+        <span style="font-size:10px;">${pass}/${total} passed</span>
+      </div>`
+    ).join('') +
+  `</div>`;
+
+  if (!passRates.length) el.innerHTML = '<div class="muted">No data for selected session.</div>';
+}
+
 function initReports() {
   const sessions = sortSessions(State.getSessions());
   UI.buildSelect('rpt-session', sessions, '— all sessions —', 'id', 'name');
