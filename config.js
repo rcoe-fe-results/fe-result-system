@@ -313,6 +313,43 @@ function computeDisplayResult(subject, marksMap) {
   };
 }
 
+// ── Session sort ──────────────────────────────────────────────
+// Global sort: Year DESC → Month DESC (May > Dec) → Sem ASC → Type DESC (Gazette > Preliminary)
+function sortSessions(sessions) {
+  return [...sessions].sort((a, b) => {
+    const yearA  = Number(a.name.slice(0, 4));
+    const yearB  = Number(b.name.slice(0, 4));
+    if (yearB !== yearA) return yearB - yearA;
+
+    const monthA = a.name.includes('May') ? 1 : 0;
+    const monthB = b.name.includes('May') ? 1 : 0;
+    if (monthB !== monthA) return monthB - monthA;
+
+    if (a.semester !== b.semester) return a.semester - b.semester;
+
+    const typeA = a.entryType === 'Final Gazette' ? 1 : 0;
+    const typeB = b.entryType === 'Final Gazette' ? 1 : 0;
+    return typeB - typeA;
+  });
+}
+
+// Progress View sort: oldest attempt first (Year ASC → Month ASC → Type ASC)
+function sortSessionsChronological(sessions) {
+  return [...sessions].sort((a, b) => {
+    const yearA  = Number(a.name.slice(0, 4));
+    const yearB  = Number(b.name.slice(0, 4));
+    if (yearA !== yearB) return yearA - yearB;
+
+    const monthA = a.name.includes('May') ? 1 : 0;
+    const monthB = b.name.includes('May') ? 1 : 0;
+    if (monthA !== monthB) return monthA - monthB;
+
+    const typeA = a.entryType === 'Final Gazette' ? 1 : 0;
+    const typeB = b.entryType === 'Final Gazette' ? 1 : 0;
+    return typeA - typeB;
+  });
+}
+
 // ── Ledger column order ───────────────────────────────────────
 const LEDGER_COLS = [
   'Entry ID','UIN','PRN','Name','Branch','Division','Batch Year',

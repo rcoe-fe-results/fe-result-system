@@ -225,9 +225,9 @@ function _meAdhocSelectStudent(uin, matchedSeat) {
   document.getElementById('me-adhoc-search').value = student.name;
 
   // Find eligible active sessions for this student
-  const eligibleSessions = State.getSessions().filter(s =>
+  const eligibleSessions = sortSessions(State.getSessions().filter(s =>
     s.status === 'Active' && _isStudentEligibleForSession(student, s)
-  );
+  ));
 
   if (eligibleSessions.length === 0) {
     UI.toast('No active sessions found for this student.', 'error');
@@ -295,7 +295,6 @@ function _meAdhocShowSessionPicker(sessions) {
 
     return 'cleared';
   }
-
 
   function _sessionTag(status) {
     if (status === 'cleared') {
@@ -603,7 +602,7 @@ let meQueueState = {
 };
 
 function _meInitQueue() {
-  const sessions = State.getSessions().filter(s => s.status === 'Active');
+  const sessions = sortSessions(State.getSessions().filter(s => s.status === 'Active'));
   UI.buildSelect('me-queue-session', sessions, '— select session —', 'id', 'name');
   UI.buildSelect('me-queue-branch', BRANCHES, '— select branch —');
 
@@ -1455,19 +1454,16 @@ function _pvShowStudent(uin) {
   document.getElementById('pv-results').innerHTML = '';
   document.getElementById('pv-search').value = student.name;
 
-  // Compute full academics (grades, SGPA, CGPA, credits)
   const academics = State.computeStudentAcademics(uin);
 
   // Student info card
-  let cgpaStr = academics?.cgpa != null ? academics.cgpa.toFixed(2) : '—';
-  let credStr = academics
+  const cgpaStr = academics?.cgpa != null ? academics.cgpa.toFixed(2) : '—';
+  const credStr = academics
     ? `${academics.totalCredits.earned} / ${academics.totalCredits.max}`
     : '—';
-
-  let feHTML = '';
-  if (academics?.feCompleted?.done) {
-    feHTML = `<span class="fe-completed-badge">🎓 FE Completed — ${UI.esc(academics.feCompleted.session || '')}</span>`;
-  }
+  const feHTML = academics?.feCompleted?.done
+    ? `<span class="fe-completed-badge">🎓 FE Completed — ${UI.esc(academics.feCompleted.session || '')}</span>`
+    : '';
 
   document.getElementById('pv-student-info').innerHTML = `
     <div class="student-card" style="display:flex; align-items:center; gap:16px; flex-wrap:wrap; justify-content:space-between;">
@@ -1482,70 +1478,54 @@ function _pvShowStudent(uin) {
       </div>
     </div>`;
 
-  if (ledger.length === 0) {
-    document.getElementById('pv-timeline').innerHTML = '<div class="empty-state">No entries found for this student.</div>';
-    return;
-  }
-
-  // Build a quick lookup: sessionId+subjectCode → computed display result
-  const drLookup = {};
-  if (academics) {
-    for (const sr of academics.sessionResults) {
-      for (const { r, dr } of sr.subjects) {
-        drLookup[r.examSession + '||' + r.subjectCode + '||' + r.entryId] = dr;
-      }
-    }
-  }
-
-  // Build session display map
+  // ── Build per-semester session lists ──────────────────────────
   const sessionMap = {};
   State.getSessions().forEach(s => { sessionMap[s.id] = s; });
 
-  const bySession = {};
-  for (const row of ledger) {
-    const key = row.examSession;
-    if (!bySession[key]) bySession[key] = {
-      sessionId: row.examSession,
-      sessionName: sessionMap[row.examSession]?.name || row.examSession,
-      semester: row.semester,
-      rows: [],
-    };
-    bySession[key].rows.push(row);
-  }
+  // Sessions this student has records in, grouped by semester, chronological
+  const studentSessionIds = [...new Set(ledger.map(r => r.examSession))];
+  const sessionsWithData  = studentSessionIds
+    .map(id => sessionMap[id])
+    .filter(Boolean);
 
-  let html = '';
+  const semSessions = {
+    1: sortSessionsChronological(sessionsWithData.filter(s => s.semester === 1)),
+    2: sortSessionsChronological(sessionsWithData.filter(s => s.semester === 2)),
+  };
 
-  // Use academics.sessionResults order (chronological); fall back to bySession
-  const orderedSessions = academics
-    ? academics.sessionResults.map(sr => sr.session.id).filter(id => bySession[id])
-    : Object.keys(bySession);
-  // Also include any sessions in bySession not in academics (edge case)
-  for (const id of Object.keys(bySession)) {
-    if (!orderedSessions.includes(id)) orderedSessions.push(id);
-  }
+  // Track selected session per sem (default: latest = last in chronological)
+  const selectedSessId = {
+    1: semSessions[1].length > 0 ? semSessions[1][semSessions[1].length - 1].id : null,
+    2: semSessions[2].length > 0 ? semSessions[2][semSessions[2].length - 1].id : null,
+  };
 
-  for (const sessionId of orderedSessions) {
-    const group = bySession[sessionId];
-    if (!group) continue;
-    const sess = sessionMap[group.sessionId];
+  // ── Render helper: one semester table ─────────────────────────
+  function _pvRenderSemTable(sem) {
+    const sessions  = semSessions[sem];
+    const sessId    = selectedSessId[sem];
+    const sess      = sessId ? sessionMap[sessId] : null;
+    const acadSess  = academics?.sessionResults.find(sr => sr.session.id === sessId);
 
-    // Find matching academics session result
-    const acadSess = academics?.sessionResults.find(sr => sr.session.id === sessionId);
+    // Session selector — hidden if only one session
+    const selectorHtml = sessions.length <= 1
+      ? sessions.length === 1
+        ? `<span class="pv-sess-label">${UI.esc(sessions[0].name)}</span>`
+        : ''
+      : `<select class="pv-sem-sess-select" data-sem="${sem}">
+          ${sessions.map(s =>
+            `<option value="${UI.esc(s.id)}" ${s.id === sessId ? 'selected' : ''}>${UI.esc(s.name)}</option>`
+          ).join('')}
+        </select>`;
 
-    // Latest row per subject
-    const latestBySubject = {};
-    for (const r of group.rows) {
-      if (!latestBySubject[r.subjectCode] || r.entryDateTime > latestBySubject[r.subjectCode].entryDateTime) {
-        latestBySubject[r.subjectCode] = r;
-      }
-    }
-
-    // Session credits from academics
-    const sessionCreditsEarned = acadSess
+    // Header stats
+    const creditsEarned = acadSess
       ? acadSess.subjects.filter(s => !s.pending && s.dr.creditsEarned > 0).reduce((a, s) => a + s.dr.creditsEarned, 0)
-      : Object.values(latestBySubject).reduce((a, r) => a + (Number(r.creditsEarned) || 0), 0);
-    const sessionCreditsMax = Object.values(latestBySubject).reduce((a, r) => a + (Number(r.creditsAssigned) || 0), 0);
-
+      : 0;
+    const creditsMax = sess
+      ? getSubjectsForSem(sem, student.branch, sess).reduce((a, s) => a + s.credits, 0)
+      : 0;
+    const sgpaStr    = acadSess?.sgpa != null ? acadSess.sgpa.toFixed(2)
+                     : acadSess?.pendingCount > 0 ? 'Partial' : '—';
     const sessionStatus = sess ? State.getSessionStatus(uin, sess) : 'pending';
     const showPerComp   = sessionStatus === 'multi-attempt';
 
@@ -1555,145 +1535,135 @@ function _pvShowStudent(uin) {
     } else if (sessionStatus === 'pending') {
       sessionBadge = `<span class="pv-session-badge pv-session-pending">⏳ Pending</span>`;
     }
-
-    const sgpaStr = acadSess?.sgpa != null ? acadSess.sgpa.toFixed(2) : (acadSess?.pendingCount > 0 ? 'Partial' : '—');
     const pendingNote = acadSess?.pendingCount > 0
       ? `<span class="pv-pending-note">${acadSess.pendingCount} subject${acadSess.pendingCount > 1 ? 's' : ''} pending</span>`
       : '';
-
     const isFinal = sess?.entryType === 'Final Gazette';
 
-    html += `
-    <div class="session-block">
-      <div class="session-header">
-        <span class="session-name">${UI.esc(group.sessionName)}</span>
-        <span class="session-sem">Sem ${UI.esc(group.semester)}</span>
-        ${isFinal ? '<span class="session-type-inline final-gazette">Final Gazette</span>' : ''}
-        ${sessionBadge}
-        ${pendingNote}
-        <span class="credit-pill">${sessionCreditsEarned} / ${sessionCreditsMax} cr</span>
-        <span class="sgpa-pill">SGPA: <strong>${UI.esc(sgpaStr)}</strong></span>
-      </div>
-      <div style="overflow-x:auto;">
-      <table class="progress-table">
-        <thead><tr>
-          <th>Subject</th><th>Type</th><th>Attempt</th>
-          <th>IAT</th><th>ESE</th><th>TW</th><th>Oral</th>
-          <th>Total</th><th>%</th><th>Grade</th><th>GP</th><th>Credits</th><th>G×C</th>
-          <th>Result</th>
-        </tr></thead>
-        <tbody>`;
+    // Subject rows
+    let rowsHtml = '';
+    let footerTotalMarks = 0, footerGxC = 0, footerCredits = 0, footerHasTotal = false;
 
-// Use merged rows from academics (one per subject per session)
-// acadSess.subjects has the merged data; fall back to group.rows deduped if academics unavailable
-    const displayRows = acadSess
-      ? acadSess.subjects.map(s => s.r)
-      : Object.values((() => {
-          const m = {};
-          for (const r of group.rows) {
-            if (!m[r.subjectCode] || r.entryDateTime > m[r.subjectCode].entryDateTime) m[r.subjectCode] = r;
+    if (!sess) {
+      rowsHtml = `<tr><td colspan="14" class="muted" style="text-align:center;padding:16px;">No records yet.</td></tr>`;
+    } else {
+      const displaySubjects = acadSess
+        ? acadSess.subjects
+        : [];
+
+      for (const subjEntry of displaySubjects) {
+        const r        = subjEntry.r;
+        const dr       = subjEntry.dr;
+        const carriedMap = subjEntry.carriedMap || {};
+        const mm       = subjEntry.mergedMarks;
+
+        let subjConfig = SEM1_SUBJECTS.find(s => s.code === r.subjectCode);
+        if (!subjConfig) subjConfig = getSem2Subjects(student.branch, sess).find(s => s.code === r.subjectCode);
+        if (!subjConfig) subjConfig = getSem2Subjects(student.branch, null).find(s => s.code === r.subjectCode);
+
+        const comps      = ['IAT', 'ESE', 'TW', 'Oral'];
+        const compFields = {
+          IAT:  mm?.IAT  ?? r.iatMarks,
+          ESE:  mm?.ESE  ?? r.eseMarks,
+          TW:   mm?.TW   ?? r.twMarks,
+          Oral: mm?.Oral ?? r.oralMarks,
+        };
+
+        const cells = comps.map(comp => {
+          const val       = compFields[comp] || '—';
+          const maxMark   = subjConfig?.marks?.[comp];
+          const isCarried = carriedMap[comp] === true;
+          if (!maxMark) return `<td class="muted">—</td>`;
+          if (showPerComp) {
+            return `<td class="pv-comp-cell">${UI.esc(val)}${isCarried ? '<sup class="carried-mark">+</sup>' : ''} ${_pvMarkTag(val === '—' ? null : val, maxMark)}</td>`;
           }
-          return m;
-        })());
+          return `<td>${UI.esc(val)}${isCarried ? '<sup class="carried-mark">+</sup>' : ''}</td>`;
+        }).join('');
 
-    // Totals for footer
-    let footerTotalMarks = 0;
-    let footerGxC        = 0;
-    let footerCredits    = 0;
-    let footerHasTotal   = false;
+        let gradeCell  = '<td class="muted">—</td>';
+        let gpCell     = '<td class="muted">—</td>';
+        let creditCell = '<td class="muted">—</td>';
+        let gxcCell    = '<td class="muted">—</td>';
+        let pctCell    = '<td class="muted">—</td>';
+        let totalCell  = `<td class="muted">—</td>`;
+        let resultCell = `<td>${UI.resultBadge(r.result)}</td>`;
 
-    for (const r of displayRows) {
-      const drKey = r.examSession + '||' + r.subjectCode + '||' + r.entryId;
-      const dr    = drLookup[drKey] || (acadSess?.subjects.find(s => s.r.subjectCode === r.subjectCode)?.dr) || null;
-
-      let subjConfig = SEM1_SUBJECTS.find(s => s.code === r.subjectCode);
-      if (!subjConfig) subjConfig = getSem2Subjects(student.branch, sess).find(s => s.code === r.subjectCode);
-      if (!subjConfig) subjConfig = getSem2Subjects(student.branch, null).find(s => s.code === r.subjectCode);
-
-      const comps      = ['IAT', 'ESE', 'TW', 'Oral'];
-      const acadSubj   = acadSess?.subjects.find(s => s.r.subjectCode === r.subjectCode);
-      const mm         = acadSubj?.mergedMarks;
-      const compFields = {
-        IAT:  mm?.IAT  ?? r.iatMarks,
-        ESE:  mm?.ESE  ?? r.eseMarks,
-        TW:   mm?.TW   ?? r.twMarks,
-        Oral: mm?.Oral ?? r.oralMarks,
-      };
-
-      const cells = comps.map(comp => {
-        const val      = compFields[comp] || '—';
-        const maxMark  = subjConfig?.marks?.[comp];
-        const isCarried = acadSubj?.carriedMap?.[comp] === true;
-        if (!maxMark) return `<td class="muted">—</td>`;
-        if (showPerComp) {
-          return `<td class="pv-comp-cell">${UI.esc(val)}${isCarried ? '<sup class="carried-mark">+</sup>' : ''} ${_pvMarkTag(val === '—' ? null : val, maxMark)}</td>`;
+        if (dr && !dr.pending) {
+          const gradeCls = dr.grade === 'F' ? 'grade-f' : dr.grade === 'O' ? 'grade-o' : '';
+          gradeCell  = `<td class="grade-cell ${gradeCls}">${UI.esc(dr.grade)}</td>`;
+          gpCell     = `<td class="gp-cell">${dr.gradePoint}</td>`;
+          const creditCls = dr.creditsEarned > 0 ? 'credit-earned' : 'credit-zero';
+          creditCell = `<td class="${creditCls}">${dr.creditsEarned}</td>`;
+          gxcCell    = `<td class="gxc-cell">${dr.GxC.toFixed(1)}</td>`;
+          pctCell    = `<td>${dr.pct.toFixed(1)}%</td>`;
+          totalCell  = `<td>${dr.total}<small>/${dr.totalMax}</small></td>`;
+          resultCell = `<td>${UI.resultBadge(dr.result)}</td>`;
+          footerTotalMarks += dr.total;
+          footerGxC        += dr.GxC;
+          footerCredits    += dr.creditsEarned;
+          footerHasTotal    = true;
+        } else if (dr?.pending) {
+          gradeCell  = `<td class="muted">Pending</td>`;
+          resultCell = `<td>${UI.resultBadge('Pending')}</td>`;
         }
-        return `<td>${UI.esc(val)}${isCarried ? '<sup class="carried-mark">+</sup>' : ''}</td>`;
-      }).join('');
 
-      let gradeCell  = '<td class="muted">—</td>';
-      let gpCell     = '<td class="muted">—</td>';
-      let creditCell = '<td class="muted">—</td>';
-      let gxcCell    = '<td class="muted">—</td>';
-      let pctCell    = '<td class="muted">—</td>';
-      let totalCell  = `<td class="muted">—</td>`;
-      let resultCell = `<td>${UI.resultBadge(r.result)}</td>`;
-
-      if (dr && !dr.pending) {
-        const gradeCls   = dr.grade === 'F' ? 'grade-f' : dr.grade === 'O' ? 'grade-o' : '';
-        gradeCell  = `<td class="grade-cell ${gradeCls}">${UI.esc(dr.grade)}</td>`;
-        gpCell     = `<td class="gp-cell">${dr.gradePoint}</td>`;
-        const creditCls  = dr.creditsEarned > 0 ? 'credit-earned' : 'credit-zero';
-        creditCell = `<td class="${creditCls}">${dr.creditsEarned}</td>`;
-        gxcCell    = `<td class="gxc-cell">${dr.GxC.toFixed(1)}</td>`;
-        pctCell    = `<td>${dr.pct.toFixed(1)}%</td>`;
-        totalCell  = `<td>${dr.total}<small>/${dr.totalMax}</small></td>`;
-        resultCell = `<td>${UI.resultBadge(dr.result)}</td>`;
-        // Accumulate footer totals
-        footerTotalMarks += dr.total;
-        footerGxC        += dr.GxC;
-        footerCredits    += dr.creditsEarned;
-        footerHasTotal    = true;
-      } else if (dr?.pending) {
-        gradeCell  = `<td class="muted">Pending</td>`;
-        resultCell = `<td>${UI.resultBadge('Pending')}</td>`;
+        rowsHtml += `
+          <tr>
+            <td><span class="subj-code-small">${UI.esc(r.subjectCode)}</span> ${UI.esc(r.subjectName)}</td>
+            <td>${UI.esc(r.subjectType)}</td>
+            <td>${_pvAttemptTag(r.uin, r.subjectCode, r.examSession)}</td>
+            ${cells}
+            ${totalCell}${pctCell}${gradeCell}${gpCell}${creditCell}${gxcCell}
+            ${resultCell}
+          </tr>`;
       }
 
-      html += `
-        <tr>
-          <td><span class="subj-code-small">${UI.esc(r.subjectCode)}</span> ${UI.esc(r.subjectName)}</td>
-          <td>${UI.esc(r.subjectType)}</td>
-          <td>${_pvAttemptTag(r.uin, r.subjectCode, r.examSession)}</td>
-          ${cells}
-          ${totalCell}${pctCell}${gradeCell}${gpCell}${creditCell}${gxcCell}
-          ${resultCell}
-        </tr>`;
-    }
-
-    // Total + SGPA footer row
-    const footerTotal   = footerHasTotal ? String(footerTotalMarks) : '—';
-    const footerGxCStr  = footerHasTotal ? footerGxC.toFixed(1) : '—';
-    const footerCredStr = footerHasTotal ? String(footerCredits)  : '—';
-
-    html += `
+      // Footer row
+      const footerTotal   = footerHasTotal ? String(footerTotalMarks) : '—';
+      const footerGxCStr  = footerHasTotal ? footerGxC.toFixed(1) : '—';
+      const footerCredStr = footerHasTotal ? String(footerCredits)  : '—';
+      rowsHtml += `
         <tr class="sgpa-row">
           <td colspan="7" style="text-align:right; font-weight:600; color:var(--ink-2); padding-right:12px;">Total</td>
           <td style="font-weight:700;">${UI.esc(footerTotal)}</td>
-          <td></td>
-          <td></td>
-          <td></td>
+          <td></td><td></td><td></td>
           <td class="credit-earned" style="font-weight:700;">${UI.esc(footerCredStr)}</td>
           <td class="gxc-cell" style="font-weight:700;">${UI.esc(footerGxCStr)}</td>
-          <td class="sgpa-val" colspan="1">SGPA: ${UI.esc(sgpaStr)}</td>
+          <td class="sgpa-val">SGPA: ${UI.esc(sgpaStr)}</td>
         </tr>`;
+    }
 
-    html += `</tbody></table></div></div>`;
+    return `
+      <div class="pv-sem-block" id="pv-sem-block-${sem}">
+        <div class="session-header">
+          <span class="session-name">Semester ${sem}</span>
+          ${isFinal ? '<span class="session-type-inline final-gazette">Final Gazette</span>' : ''}
+          ${sessionBadge}
+          ${pendingNote}
+          <span class="credit-pill">${creditsEarned} / ${creditsMax} cr</span>
+          <span class="sgpa-pill">SGPA: <strong>${UI.esc(sgpaStr)}</strong></span>
+          <span class="pv-sess-selector">${selectorHtml}</span>
+        </div>
+        <div style="overflow-x:auto;">
+          <table class="progress-table">
+            <thead><tr>
+              <th>Subject</th><th>Type</th><th>Attempt</th>
+              <th>IAT</th><th>ESE</th><th>TW</th><th>Oral</th>
+              <th>Total</th><th>%</th><th>Grade</th><th>GP</th><th>Credits</th><th>G×C</th>
+              <th>Result</th>
+            </tr></thead>
+            <tbody>${rowsHtml}</tbody>
+          </table>
+        </div>
+      </div>`;
   }
 
-  // ── Academics summary panel ──────────────────────────────────
+  // ── Build full HTML ───────────────────────────────────────────
+  let html = _pvRenderSemTable(1) + _pvRenderSemTable(2);
+
+  // ── Academics summary ─────────────────────────────────────────
   if (academics) {
     const { semCredits, consolidatedSGPA, cgpa, totalCredits, feCompleted } = academics;
-
     html += `<div class="academics-summary">
       <div class="acad-title">Academic Summary</div>
       <div class="acad-grid">`;
@@ -1732,11 +1702,21 @@ function _pvShowStudent(uin) {
             ? `<div class="fe-completed-badge" style="margin-top:10px;">🎓 FE Completed<br><small>${UI.esc(feCompleted.session || '')}</small></div>`
             : ''}
         </div>`;
-
     html += `</div></div>`;
   }
 
   document.getElementById('pv-timeline').innerHTML = html;
+
+  // ── Wire session dropdowns via delegation ─────────────────────
+  const timeline = document.getElementById('pv-timeline');
+  timeline.addEventListener('change', e => {
+    const sel = e.target.closest('.pv-sem-sess-select');
+    if (!sel) return;
+    const sem = Number(sel.dataset.sem);
+    selectedSessId[sem] = sel.value;
+    const block = document.getElementById(`pv-sem-block-${sem}`);
+    if (block) block.outerHTML = _pvRenderSemTable(sem);
+  });
 }
 
 
@@ -1744,7 +1724,7 @@ function _pvShowStudent(uin) {
 // TAB 4 — REPORTS
 // ═══════════════════════════════════════════════════════════════
 function initReports() {
-  const sessions = State.getSessions();
+  const sessions = sortSessions(State.getSessions());
   UI.buildSelect('rpt-session', sessions, '— all sessions —', 'id', 'name');
 
   // Populate branch and batchYear dropdowns
@@ -2267,7 +2247,7 @@ function initAdmin() {
   // Session link update (for existing Final Gazette sessions)
   document.getElementById('admin-link-session-btn')?.addEventListener('click', _adminUpdateSessionLink);
 
-  const sessions = State.getSessions();
+  const sessions = sortSessions(State.getSessions());
   UI.buildSelect('admin-session-lock-select', sessions.filter(s => s.status === 'Active'), '— select session to lock —', 'id', 'name');
 
   // Populate link dropdowns
@@ -2294,18 +2274,18 @@ function _adminPopulateLinkedPrelimSelect() {
   // Derive fresh batch to match sessions of same semester + academic year
   const batch = (year && month) ? String(deriveFreshBatch(Number(year), month)) : '';
 
-  const prelims = State.getSessions().filter(s =>
+  const prelims = sortSessions(State.getSessions().filter(s =>
     s.entryType !== 'Final Gazette' &&
     (sem === 0   || s.semester  === sem) &&
     (batch === '' || s.batchYear === batch)
-  );
+  ));
   selEl.innerHTML = '<option value="">— none (skip reval detection) —</option>' +
     prelims.map(s => `<option value="${UI.esc(s.id)}">${UI.esc(s.name)}</option>`).join('');
 }
 
 function _adminPopulateLinkDropdowns() {
   // For the "update link" section
-  const finalSessions = State.getSessions().filter(s => s.entryType === 'Final Gazette');
+  const finalSessions = sortSessions(State.getSessions().filter(s => s.entryType === 'Final Gazette'));
   const finalSelEl    = document.getElementById('admin-link-final-select');
   if (finalSelEl) {
     finalSelEl.innerHTML = '<option value="">— select Final Gazette session —</option>' +
@@ -2314,11 +2294,11 @@ function _adminPopulateLinkDropdowns() {
       const sess = State.getSession(finalSelEl.value);
       const prelimSelEl = document.getElementById('admin-link-prelim-select');
       if (!prelimSelEl || !sess) return;
-      const prelims = State.getSessions().filter(s =>
+      const prelims = sortSessions(State.getSessions().filter(s =>
         s.entryType !== 'Final Gazette' &&
         s.semester === sess.semester &&
         s.batchYear === sess.batchYear
-      );
+      ));
       prelimSelEl.innerHTML = '<option value="">— none —</option>' +
         prelims.map(s => `<option value="${UI.esc(s.id)}" ${s.id === sess.linkedPrelimSessionId ? 'selected' : ''}>${UI.esc(s.name)} (${s.batchYear})</option>`).join('');
     };
@@ -2476,7 +2456,7 @@ async function _adminAddSession() {
 function _adminRenderSessionList() {
   const tbody = document.getElementById('admin-session-tbody');
   if (!tbody) return;
-  const sessions = State.getSessions();
+  const sessions = sortSessions(State.getSessions());
   if (sessions.length === 0) {
     tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--ink-4);padding:16px;">No sessions yet.</td></tr>';
     return;
@@ -2645,7 +2625,7 @@ function _adminInitManualSeatEntry() {
   const saveBtn    = document.getElementById('admin-seat-manual-save');
   if (!searchEl) return;
 
-  UI.buildSelect('admin-seat-session-select', State.getSessions(), '— select session —', 'id', 'name');
+  UI.buildSelect('admin-seat-session-select', sortSessions(State.getSessions()), '— select session —', 'id', 'name');
 
   searchEl.addEventListener('input', _debounce(() => {
     const q = searchEl.value.trim();
