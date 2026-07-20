@@ -1178,9 +1178,16 @@ function reportResultSummary({ sessionId, branch, batchYear, subjectCode, compon
       let histKTs   = allLedgerForStudent.filter(r => r.result === 'Fail' || r.result === 'AB');
 
       let subjects = [];
-      if (scope === 'Active')     subjects = activeKTs;
-      else if (scope === 'Historical') subjects = histKTs;
-      else subjects = [...new Map([...activeKTs,...histKTs].map(r => [r.subjectCode,r])).values()];
+      if (scope === 'Active') {
+        subjects = activeKTs;
+      } else if (scope === 'Historical') {
+        // Must have zero active KTs — fully cleared
+        if (activeKTs.length > 0) continue;
+        // Count unique subjects ever failed
+        subjects = [...new Map(histKTs.map(r => [r.subjectCode, r])).values()];
+      } else {
+        subjects = [...new Map([...activeKTs,...histKTs].map(r => [r.subjectCode,r])).values()];
+      }
 
       const uniqueCodes = [...new Set(subjects.map(r => r.subjectCode))];
       const matches = mode === 'Exactly' ? uniqueCodes.length === n : uniqueCodes.length >= n;
