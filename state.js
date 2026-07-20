@@ -662,6 +662,7 @@ const State = (() => {
 
           // For Final Gazette sessions: supplement ESE-only rows with Prelim IAT/TW/Oral
           let marksMap = _marksMapFromRow(r);
+          const revalMap = {}; // comp → true if gazette value differs from prelim
           if (sess.entryType === 'Final Gazette' && sess.linkedPrelimSessionId) {
             const prelimKey = sess.linkedPrelimSessionId + '||' + r.subjectCode;
             const prelimRow = latestPerSessionSubject[prelimKey];
@@ -669,6 +670,13 @@ const State = (() => {
               if (!marksMap.IAT  && prelimRow.iatMarks)  marksMap.IAT  = prelimRow.iatMarks;
               if (!marksMap.TW   && prelimRow.twMarks)   marksMap.TW   = prelimRow.twMarks;
               if (!marksMap.Oral && prelimRow.oralMarks) marksMap.Oral = prelimRow.oralMarks;
+              // Flag components whose gazette value differs from the prelim value
+              const _revalFields = { IAT: 'iatMarks', ESE: 'eseMarks', TW: 'twMarks', Oral: 'oralMarks' };
+              for (const [comp, field] of Object.entries(_revalFields)) {
+                const gazVal    = marksMap[comp]      || '';
+                const prelimVal = prelimRow[field]    || '';
+                if (gazVal && prelimVal && gazVal !== prelimVal) revalMap[comp] = true;
+              }
             }
           }
 
@@ -676,11 +684,11 @@ const State = (() => {
 
           if (dr.pending) {
             pendingCount++;
-            subjectResults.push({ r, subj, dr, pending: true });
+            subjectResults.push({ r, subj, dr, pending: true, revalMap });
             continue;
           }
 
-          subjectResults.push({ r, subj, dr, pending: false });
+          subjectResults.push({ r, subj, dr, pending: false, revalMap });
 
           if (dr.grade !== 'F' && dr.creditsEarned > 0) {
             sumGxC += dr.GxC;

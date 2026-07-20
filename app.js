@@ -1586,11 +1586,13 @@ function _pvShowStudent(uin) {
           const val       = compFields[comp] || '—';
           const maxMark   = subjConfig?.marks?.[comp];
           const isCarried = carriedMap[comp] === true;
+          const isReval   = (subjEntry.revalMap || {})[comp] === true;
+          const revalPill = isReval ? '<span class="reval-pill">Reval</span>' : '';
           if (!maxMark) return `<td class="muted">—</td>`;
           if (showPerComp) {
-            return `<td class="pv-comp-cell">${UI.esc(val)}${isCarried ? '<sup class="carried-mark">+</sup>' : ''} ${_pvMarkTag(val === '—' ? null : val, maxMark)}</td>`;
+            return `<td class="pv-comp-cell">${UI.esc(val)}${isCarried ? '<sup class="carried-mark">+</sup>' : ''}${revalPill} ${_pvMarkTag(val === '—' ? null : val, maxMark)}</td>`;
           }
-          return `<td>${UI.esc(val)}${isCarried ? '<sup class="carried-mark">+</sup>' : ''}</td>`;
+          return `<td>${UI.esc(val)}${isCarried ? '<sup class="carried-mark">+</sup>' : ''}${revalPill}</td>`;
         }).join('');
 
         let gradeCell  = '<td class="muted">—</td>';
