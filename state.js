@@ -106,9 +106,18 @@ const State = (() => {
 
   // ── Seat numbers ──────────────────────────────────────────
   function getSeatNumber(uin, sessionId) {
-    const seat = seats.find(s => s.uin === uin && s.sessionId === sessionId);
-    return seat ? seat.seatNumber : '—';
+  const seat = seats.find(s => s.uin === uin && s.sessionId === sessionId);
+  if (seat) return seat.seatNumber;
+
+  // Fall back to linked session's seats (Preliminary ↔ Final Gazette share seat numbers)
+  const session = getSession(sessionId);
+  const linkedId = session?.linkedPrelimSessionId;
+  if (linkedId) {
+    const linkedSeat = seats.find(s => s.uin === uin && s.sessionId === linkedId);
+    if (linkedSeat) return linkedSeat.seatNumber;
   }
+  return '—';
+}
 
   function getSeatsForSession(sessionId) {
     return seats.filter(s => s.sessionId === sessionId);
