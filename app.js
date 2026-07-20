@@ -1788,36 +1788,70 @@ function _dashActiveKTs() {
 function _dashBranchPassRates() {
   const el       = document.getElementById('dash-branch-pass');
   const students = State.getStudents();
-  let   html     = '';
 
-  for (const branch of BRANCHES) {
-    const branchStudents = students.filter(s => s.branch === branch);
-    if (!branchStudents.length) continue;
+  // Build session dropdown
+  const sessions = sortSessions(State.getSessions());
+  const selHtml  = `
+    <select id="dash-branch-session" class="dash-filter-select" style="margin-bottom:12px;">
+      <option value="">— Overall —</option>
+      ${sessions.map(s => `<option value="${UI.esc(s.id)}">${UI.esc(s.name)}</option>`).join('')}
+    </select>`;
 
-    // Only count students who have at least some ledger data
-    const studentsWithData = branchStudents.filter(s =>
-      State.ledger.some(r => r.uin === s.uin)
-    );
-    if (!studentsWithData.length) continue;
+  el.innerHTML = selHtml + `<div id="dash-branch-rows"></div>`;
 
-    let passed = 0;
-    for (const student of studentsWithData) {
-      const acad = State.computeStudentAcademics(student.uin);
-      const hasActiveKT = acad?.sessionResults.some(sr =>
-        sr.subjects.some(s => !s.pending && (s.dr.result === 'Fail' || s.dr.result === 'AB'))
-      );
-      if (!hasActiveKT) passed++;
+  function _render() {
+    const sessId   = document.getElementById('dash-branch-session').value;
+    const rowsEl   = document.getElementById('dash-branch-rows');
+    let   html     = '';
+
+    for (const branch of BRANCHES) {
+      const branchStudents = students.filter(s => s.branch === branch);
+      if (!branchStudents.length) continue;
+
+      let appeared, passed;
+
+      if (sessId) {
+        // Per-session: denominator = appeared in this session
+        appeared = branchStudents.filter(s =>
+          State.ledger.some(r => r.uin === s.uin && r.examSession === sessId)
+        );
+        if (!appeared.length) continue;
+
+        passed = appeared.filter(student => {
+          const acad    = State.computeStudentAcademics(student.uin);
+          const sessRes = acad?.sessionResults.find(sr => sr.session.id === sessId);
+          return sessRes && !sessRes.subjects.some(s =>
+            !s.pending && (s.dr.result === 'Fail' || s.dr.result === 'AB')
+          );
+        }).length;
+      } else {
+        // Overall: denominator = appeared in any session
+        appeared = branchStudents.filter(s =>
+          State.ledger.some(r => r.uin === s.uin)
+        );
+        if (!appeared.length) continue;
+
+        passed = appeared.filter(student => {
+          const acad = State.computeStudentAcademics(student.uin);
+          return !acad?.sessionResults.some(sr =>
+            sr.subjects.some(s => !s.pending && (s.dr.result === 'Fail' || s.dr.result === 'AB'))
+          );
+        }).length;
+      }
+
+      const pct   = Math.round(passed / appeared.length * 100);
+      const color = pct >= 80 ? 'var(--pass)' : pct >= 60 ? 'var(--kt)' : 'var(--fail)';
+      html += `
+        <div class="dash-branch-row">
+          <span>${UI.esc(branch)}</span>
+          <span class="dash-pass-pct" style="color:${color}">${pct}% <small>(${passed}/${appeared.length})</small></span>
+        </div>`;
     }
-
-    const pct   = Math.round(passed / studentsWithData.length * 100);
-    const color = pct >= 80 ? 'var(--pass)' : pct >= 60 ? 'var(--kt)' : 'var(--fail)';
-    html += `
-      <div class="dash-branch-row">
-        <span>${UI.esc(branch)}</span>
-        <span class="dash-pass-pct" style="color:${color}">${pct}% <small>(${passed}/${studentsWithData.length})</small></span>
-      </div>`;
+    rowsEl.innerHTML = html || '<div class="muted">No data for selected session.</div>';
   }
-  el.innerHTML = html || '<div class="muted">No data.</div>';
+
+  _render();
+  document.getElementById('dash-branch-session').addEventListener('change', _render);
 }
 
 function _dashInitHeatmap() {
