@@ -643,7 +643,7 @@ function _meQueueLoad() {
   let students = State.getEligibleStudents(session, branch);
 
   // Sort
-  const seatMap = State.getSeatsForSession(session.id);
+  const seatMap = State.getSeatsForSessionWithFallback(session.id);
   const seatLookup = {};
   // Fall back to linked Preliminary seats if this is a Final Gazette
   if (session.linkedPrelimSessionId) {
@@ -918,7 +918,7 @@ function _beLoadGrid() {
   }
 
   // Build seat map for this session
-  const seatEntries = State.getSeatsForSession(session.id);
+  const seatEntries = State.getSeatsForSessionWithFallback(session.id);
   bulkState.seatMap = {};
   for (const s of seatEntries) {
     bulkState.seatMap[s.uin] = s.seatNumber;
@@ -1312,7 +1312,7 @@ function _queueLoad() {
   }
 
   // Sort
-  const seatEntries = State.getSeatsForSession(session.id);
+  const seatEntries = State.getSeatsForSessionWithFallback(session.id);
   const seatMap = {};
   for (const s of seatEntries) seatMap[s.uin] = s.seatNumber;
 
@@ -3207,7 +3207,7 @@ async function _adminSaveManualSeat() {
   if (!sessionId || !seatNo || !session) { UI.toast('Fill in all fields.', 'error'); return; }
 
   // Check if seat already exists for this student+session
-  const existing = State.getSeatsForSession(sessionId).find(s => s.uin === _manualSeatStudent.uin);
+  const existing = State.getSeatsForSessionWithFallback(sessionId).find(s => s.uin === _manualSeatStudent.uin);
 
   if (existing) {
     // Show conflict modal with 3 options
@@ -3337,7 +3337,7 @@ function exportGazette(sessionId) {
     if (students.length === 0) continue;
 
     // Seat lookup
-    const seatEntries = State.getSeatsForSession(sessionId);
+    const seatEntries = State.getSeatsForSessionWithFallback(sessionId);
     const seatLookup  = {};
     if (session.linkedPrelimSessionId) {
       for (const s of State.getSeatsForSession(session.linkedPrelimSessionId))
@@ -3569,7 +3569,7 @@ function exportGazette(sessionId) {
     const students = State.getEligibleStudents(session, branch);
     if (students.length === 0) continue;
 
-    const seatEntries = State.getSeatsForSession(sessionId);
+    const seatEntries = State.getSeatsForSessionWithFallback(sessionId);
     const seatLookup  = {};
     for (const s of seatEntries) seatLookup[s.uin] = s.seatNumber;
 
