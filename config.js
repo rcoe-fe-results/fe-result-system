@@ -316,37 +316,46 @@ function computeDisplayResult(subject, marksMap) {
 // ── Session sort ──────────────────────────────────────────────
 // Global sort: Year DESC → Month DESC (May > Dec) → Sem ASC → Type DESC (Gazette > Preliminary)
 function sortSessions(sessions) {
-  return [...sessions].sort((a, b) => {
-    const yearA  = Number(a.name.slice(0, 4));
-    const yearB  = Number(b.name.slice(0, 4));
-    if (yearB !== yearA) return yearB - yearA;
+  function _chronoScore(s) {
+    // Convert session name to a numeric score for true chronological ordering
+    // May YYYY → YYYY * 12 + 5, Dec YYYY → YYYY * 12 + 12
+    const year  = Number(s.name.slice(0, 4));
+    const month = s.name.includes('May') ? 5 : 12;
+    return year * 12 + month;
+  }
 
-    const monthA = a.name.includes('May') ? 1 : 0;
-    const monthB = b.name.includes('May') ? 1 : 0;
-    if (monthB !== monthA) return monthB - monthA;
+  return [...sessions].sort((a, b) => {
+    const scoreA = _chronoScore(a);
+    const scoreB = _chronoScore(b);
+    if (scoreB !== scoreA) return scoreB - scoreA; // newer first
+
+    if (a.semester !== b.semester) return a.semester - b.semester; // Sem I before Sem II
+
+    const typeA = a.entryType === 'Final Gazette' ? 1 : 0;
+    const typeB = b.entryType === 'Final Gazette' ? 1 : 0;
+    return typeB - typeA; // Gazette before Preliminary
+  });
+}
+
+
+// Progress View sort: oldest attempt first (Year ASC → Month ASC → Type ASC)
+function sortSessionsChronological(sessions) {
+  function _chronoScore(s) {
+    const year  = Number(s.name.slice(0, 4));
+    const month = s.name.includes('May') ? 5 : 12;
+    return year * 12 + month;
+  }
+
+  return [...sessions].sort((a, b) => {
+    const scoreA = _chronoScore(a);
+    const scoreB = _chronoScore(b);
+    if (scoreA !== scoreB) return scoreA - scoreB; // older first
 
     if (a.semester !== b.semester) return a.semester - b.semester;
 
     const typeA = a.entryType === 'Final Gazette' ? 1 : 0;
     const typeB = b.entryType === 'Final Gazette' ? 1 : 0;
-    return typeB - typeA;
-  });
-}
-
-// Progress View sort: oldest attempt first (Year ASC → Month ASC → Type ASC)
-function sortSessionsChronological(sessions) {
-  return [...sessions].sort((a, b) => {
-    const yearA  = Number(a.name.slice(0, 4));
-    const yearB  = Number(b.name.slice(0, 4));
-    if (yearA !== yearB) return yearA - yearB;
-
-    const monthA = a.name.includes('May') ? 1 : 0;
-    const monthB = b.name.includes('May') ? 1 : 0;
-    if (monthA !== monthB) return monthA - monthB;
-
-    const typeA = a.entryType === 'Final Gazette' ? 1 : 0;
-    const typeB = b.entryType === 'Final Gazette' ? 1 : 0;
-    return typeA - typeB;
+    return typeA - typeB; // Preliminary before Gazette
   });
 }
 
