@@ -636,14 +636,30 @@ const State = (() => {
           };
 
           const dr = computeDisplayResult(subj, marksMap);
+// For Final Gazette KT sessions: flag components that changed vs prelim
+          const revalMap = {};
+          if (sess.entryType === 'Final Gazette' && sess.linkedPrelimSessionId) {
+            const prelimKey = sess.linkedPrelimSessionId + '||' + subj.code;
+            const prelimRow = latestPerSessionSubject[prelimKey];
+            if (prelimRow) {
+              const _revalFields = { IAT: 'iatMarks', ESE: 'eseMarks', TW: 'twMarks', Oral: 'oralMarks' };
+              for (const [comp, field] of Object.entries(_revalFields)) {
+                const gazVal    = marksMap[comp]     || '';
+                const prelimVal = prelimRow[field]   || '';
+                if (gazVal && prelimVal && gazVal !== prelimVal) revalMap[comp] = true;
+              }
+            }
+          }
+
+          const dr = computeDisplayResult(subj, marksMap);
 
           if (dr.pending) {
             pendingCount++;
-            subjectResults.push({ r: canonicalRow, subj, dr, pending: true, carriedMap, mergedMarks: marksMap });
+            subjectResults.push({ r: canonicalRow, subj, dr, pending: true, carriedMap, mergedMarks: marksMap, revalMap });
             continue;
           }
 
-          subjectResults.push({ r: canonicalRow, subj, dr, pending: false, carriedMap, mergedMarks: marksMap });
+          subjectResults.push({ r: canonicalRow, subj, dr, pending: false, carriedMap, mergedMarks: marksMap, revalMap });
 
           if (dr.grade !== 'F' && dr.creditsEarned > 0) {
             sumGxC += dr.GxC;
