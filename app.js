@@ -310,11 +310,11 @@ function _meAdhocShowSessionPicker(sessions) {
     <div class="session-picker">
       <div class="session-picker-label">Select session</div>
       ${sessions.map(s => {
-        const status  = _sessionStatus(s);
-        const cleared = status === 'cleared';
+        const status   = _sessionStatus(s);
+        const readOnly = status === 'cleared' || status === 'unsuccessful';
         return `
-        <div class="session-option${cleared ? ' session-option-cleared' : ''}"
-             ${cleared ? '' : `data-session-id="${UI.esc(s.id)}"`}>
+        <div class="session-option${readOnly ? ' session-option-cleared' : ''}"
+             ${readOnly ? '' : `data-session-id="${UI.esc(s.id)}"`}>
           <span class="session-option-name">${UI.esc(s.name)}</span>
           <span class="session-option-meta">Sem ${s.semester} · ${UI.esc(s.batchYear)} · ${UI.esc(s.entryType)}</span>
           ${_sessionTag(status)}
