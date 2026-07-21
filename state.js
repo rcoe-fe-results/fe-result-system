@@ -1174,7 +1174,7 @@ function reportResultSummary({ sessionId, branch, batchYear, subjectCode, compon
       const results = getStudentResults(student.uin);
       const allLedgerForStudent = ledger.filter(r => r.uin === student.uin);
 
-      let activeKTs = Object.values(results).filter(r => r.result === 'Fail' || r.result === 'AB');
+      let activeKTs = Object.values(results).filter(r => r.result === 'Fail' || r.result === 'AB' || r.result === '');
       let histKTs   = allLedgerForStudent.filter(r => r.result === 'Fail' || r.result === 'AB');
 
       let subjects = [];
