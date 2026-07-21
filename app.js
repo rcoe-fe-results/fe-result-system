@@ -2554,10 +2554,11 @@ function _rptToggleTopperMode() {
 }
 
 function _rptLiveToppers() {
-  const examGroupKey = document.getElementById('rpt-topper-examgroup').value || null;
-  const group        = examGroupKey ? State.getExamGroups().find(g => g.key === examGroupKey) : null;
-  const sessionId    = group?.prelimSessionId || null;
-  const toppersWrap  = document.getElementById('rpt-toppers-wrap');
+  const examGroupKey     = document.getElementById('rpt-topper-examgroup').value || null;
+  const group            = examGroupKey ? State.getExamGroups().find(g => g.key === examGroupKey) : null;
+  const sessionId        = group?.prelimSessionId  || null;
+  const gazetteSessionId = group?.gazetteSessionId || null;
+  const toppersWrap      = document.getElementById('rpt-toppers-wrap');
   if (!examGroupKey) {
     if (toppersWrap) toppersWrap.innerHTML = '<div style="text-align:center;color:var(--ink-4);padding:12px;font-size:12px;">Select an exam period.</div>';
     return;
@@ -2567,7 +2568,7 @@ function _rptLiveToppers() {
   const subjectCode = document.getElementById('rpt-topper-subject').value || null;
   const topN        = Number(document.getElementById('rpt-topper-n').value || 10);
 
-  const data = State.reportToppers({ sessionId, mode, branch, subjectCode, topN });
+  const data = State.reportToppers({ sessionId, gazetteSessionId, mode, branch, subjectCode, topN });
   // data = { all: [...], male: [...], female: [...] }
 
   // Active panel from segmented control
@@ -2652,14 +2653,15 @@ function _rptSwitchTopperPanel(panel) {
 }
 
 function _rptExportToppers() {
-  const examGroupKey = document.getElementById('rpt-topper-examgroup').value || null;
-  const group        = examGroupKey ? State.getExamGroups().find(g => g.key === examGroupKey) : null;
-  const sessionId    = group?.prelimSessionId || null;
+  const examGroupKey    = document.getElementById('rpt-topper-examgroup').value || null;
+  const group           = examGroupKey ? State.getExamGroups().find(g => g.key === examGroupKey) : null;
+  const sessionId       = group?.prelimSessionId  || null;
+  const gazetteSessionId = group?.gazetteSessionId || null;
   const mode        = document.getElementById('rpt-topper-mode').value || 'branch';
   const branch      = document.getElementById('rpt-topper-branch').value || null;
   const subjectCode = document.getElementById('rpt-topper-subject').value || null;
   const topN        = Number(document.getElementById('rpt-topper-n').value || 10);
-  const data = State.reportToppers({ sessionId, mode, branch, subjectCode, topN });
+  const data = State.reportToppers({ sessionId, gazetteSessionId, mode, branch, subjectCode, topN });
   // Export all three panels combined with a Gender Group column
   const allRows = [
     ...data.all.map(d    => ({ ...d, genderGroup: 'All' })),

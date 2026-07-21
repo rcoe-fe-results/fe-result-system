@@ -1195,10 +1195,25 @@ const State = (() => {
   }
 
   // Toppers — branch-wise (top N by total marks) or subject-wise (top 3 per branch)
-  function reportToppers({ sessionId, mode = 'branch', branch, subjectCode, topN = 10 } = {}) {
-    const sessionRows = ledger.filter(r =>
-      r.examSession === sessionId && r.result === 'Pass'
-    );
+  function reportToppers({ sessionId, gazetteSessionId, mode = 'branch', branch, subjectCode, topN = 10 } = {}) {
+    // For each student+subject, prefer the Final Gazette row (corrected ESE/total)
+    // over the Preliminary row. Students with no gazette row use their prelim row as-is.
+    const prelimRows  = ledger.filter(r => r.examSession === sessionId);
+    const gazetteRows = gazetteSessionId
+      ? ledger.filter(r => r.examSession === gazetteSessionId)
+      : [];
+
+    // Build a map of gazette rows keyed by uin+subjectCode for fast lookup
+    const gazetteMap = {};
+    for (const r of gazetteRows) gazetteMap[r.uin + '||' + r.subjectCode] = r;
+
+    // Merge: for each prelim row, substitute the gazette row if one exists
+    const mergedRows = prelimRows.map(r => {
+      const gz = gazetteMap[r.uin + '||' + r.subjectCode];
+      return gz || r;
+    });
+
+    const sessionRows = mergedRows.filter(r => r.result === 'Pass');
 
     // Helper: build ranked list for a given gender filter ('Male', 'Female', or null = All)
     function _rankBranch(rows, genderFilter) {
