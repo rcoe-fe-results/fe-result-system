@@ -2838,7 +2838,7 @@ function _aktdRun() {
   const rows = [];
 
   for (const student of students) {
-    // Get all ledger rows for this student + subject
+    // Get all ledger rows for this student + subject, oldest first
     const allRows = State.ledger
       .filter(r => r.uin === student.uin && r.subjectCode === subjectCode)
       .sort((a, b) => a.entryDateTime.localeCompare(b.entryDateTime));
@@ -2849,14 +2849,15 @@ function _aktdRun() {
     const attemptSessions = [...new Set(allRows.map(r => r.examSession))];
     const attemptCount    = attemptSessions.length;
 
-    // Get effective latest result using same Gazette-wins merge as _getActiveKTsForStudent
-    const mergedPerSession = {};
+    // Step 1: merge multiple ledger rows within the same session
+    // (latest component value wins within a session, same as _getActiveKTsForStudent)
+    const mergedPerSessionSubject = {};
     for (const r of allRows) {
       const key = r.examSession;
-      if (!mergedPerSession[key]) {
-        mergedPerSession[key] = { ...r };
+      if (!mergedPerSessionSubject[key]) {
+        mergedPerSessionSubject[key] = { ...r };
       } else {
-        const m = mergedPerSession[key];
+        const m = mergedPerSessionSubject[key];
         if (r.iatMarks  !== '') m.iatMarks  = r.iatMarks;
         if (r.eseMarks  !== '') m.eseMarks  = r.eseMarks;
         if (r.twMarks   !== '') m.twMarks   = r.twMarks;
@@ -2864,26 +2865,43 @@ function _aktdRun() {
       }
     }
 
-    // Gazette wins over Prelim for same subject
+    // Step 2: Gazette wins over Prelim — but fill missing components FROM the
+    // linked Prelim (ESE-only Gazette rows need IAT/TW/Oral from Prelim to compute result)
     let effectiveRow = null;
-    for (const row of Object.values(mergedPerSession)) {
+    for (const row of Object.values(mergedPerSessionSubject)) {
       const sess = State.getSession(row.examSession);
       if (!sess) continue;
-      if (!effectiveRow) { effectiveRow = { ...row, _sess: sess }; continue; }
-      // Prefer Gazette; otherwise prefer latest by entryDateTime
-      const prevSess = State.getSession(effectiveRow.examSession);
-      if (sess.entryType === 'Final Gazette' && prevSess?.entryType !== 'Final Gazette') {
-        effectiveRow = { ...row, _sess: sess };
-      } else if (sess.entryType !== 'Final Gazette' && prevSess?.entryType === 'Final Gazette') {
-        // keep existing Gazette
-      } else if (row.entryDateTime > effectiveRow.entryDateTime) {
-        effectiveRow = { ...row, _sess: sess };
+
+      let candidate = { ...row, _sess: sess };
+
+      if (sess.entryType === 'Final Gazette' && sess.linkedPrelimSessionId) {
+        // Pull IAT / TW / Oral from the linked Prelim if not present in Gazette row
+        const prelimRow = mergedPerSessionSubject[sess.linkedPrelimSessionId];
+        if (prelimRow) {
+          if (!candidate.iatMarks  && prelimRow.iatMarks)  candidate.iatMarks  = prelimRow.iatMarks;
+          if (!candidate.twMarks   && prelimRow.twMarks)   candidate.twMarks   = prelimRow.twMarks;
+          if (!candidate.oralMarks && prelimRow.oralMarks) candidate.oralMarks = prelimRow.oralMarks;
+        }
+      }
+
+      if (!effectiveRow) {
+        effectiveRow = candidate;
+      } else {
+        const prevSess = effectiveRow._sess;
+        // Gazette always supersedes Prelim
+        if (sess.entryType === 'Final Gazette' && prevSess?.entryType !== 'Final Gazette') {
+          effectiveRow = candidate;
+        } else if (sess.entryType !== 'Final Gazette' && prevSess?.entryType === 'Final Gazette') {
+          // keep existing Gazette
+        } else if (row.entryDateTime > effectiveRow.entryDateTime) {
+          effectiveRow = candidate;
+        }
       }
     }
 
     if (!effectiveRow) continue;
 
-    // Check result is an Active KT value
+    // Build marks map from the fully merged effective row
     const marksMap = {};
     if (effectiveRow.iatMarks  !== '') marksMap.IAT  = effectiveRow.iatMarks;
     if (effectiveRow.eseMarks  !== '') marksMap.ESE  = effectiveRow.eseMarks;
