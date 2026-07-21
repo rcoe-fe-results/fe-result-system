@@ -1235,7 +1235,10 @@ function reportResultSummary({ sessionId, branch, batchYear, subjectCode, compon
         finalPerSubject[code] = merged; // Gazette always overwrites Prelim
       } else {
         // Prelim row — only use if no Gazette entry exists yet for this subject
-        if (!finalPerSubject[code]) finalPerSubject[code] = row;
+        if (!finalPerSubject[code] ||
+            (finalPerSubject[code].entryDateTime < row.entryDateTime)) {
+          finalPerSubject[code] = row;
+        }
       }
     }
 
@@ -1254,7 +1257,8 @@ function reportResultSummary({ sessionId, branch, batchYear, subjectCode, compon
       if (row.oralMarks !== '') marksMap.Oral = row.oralMarks;
 
       const dr = computeDisplayResult(subj, marksMap);
-      if (!dr.pending && (dr.result === 'Fail' || dr.result === 'AB')) {
+      if (dr.result === 'Fail' || dr.result === 'AB' ||
+          (dr.pending && (row.result === 'Fail' || row.result === 'AB'))) {
         activeKTs.push({ ...row, _dr: dr });
       }
     }
@@ -1269,7 +1273,7 @@ function reportResultSummary({ sessionId, branch, batchYear, subjectCode, compon
       const allLedgerForStudent = ledger.filter(r => r.uin === student.uin);
 
       let activeKTs = _getActiveKTsForStudent(student.uin);
-      
+
       let histKTs   = allLedgerForStudent.filter(r => r.result === 'Fail' || r.result === 'AB');
 
       let subjects = [];
