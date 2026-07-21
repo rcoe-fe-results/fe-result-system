@@ -2845,9 +2845,41 @@ function _aktdRun() {
 
     if (allRows.length === 0) continue;
 
-    // Count total attempts (unique sessions attempted)
-    const attemptSessions = [...new Set(allRows.map(r => r.examSession))];
-    const attemptCount    = attemptSessions.length;
+    // Count attempts as unique Prelim sittings only.
+    // A Gazette session paired with its Prelim = same attempt.
+    // Standalone Gazette (no linkedPrelimSessionId) counts as its own attempt.
+    const attemptSessionIds = [...new Set(allRows.map(r => r.examSession))];
+    let attemptCount = 0;
+    let hasUnsuccessfulReval = false;
+    for (const sid of attemptSessionIds) {
+      const sess = State.getSession(sid);
+      if (!sess) continue;
+      if (sess.entryType === 'Final Gazette' && sess.linkedPrelimSessionId &&
+          attemptSessionIds.includes(sess.linkedPrelimSessionId)) {
+        // This Gazette is paired with a Prelim already in the list — same attempt.
+        // Check if the Gazette result is still a KT value → Unsuccessful Reval.
+        const gazetteRow = mergedPerSessionSubject[sid];
+        if (gazetteRow) {
+          const gMarksMap = {};
+          if (gazetteRow.iatMarks  !== '') gMarksMap.IAT  = gazetteRow.iatMarks;
+          if (gazetteRow.eseMarks  !== '') gMarksMap.ESE  = gazetteRow.eseMarks;
+          // fill from prelim for complete picture
+          const pr = mergedPerSessionSubject[sess.linkedPrelimSessionId];
+          if (pr) {
+            if (!gMarksMap.IAT  && pr.iatMarks)  gMarksMap.IAT  = pr.iatMarks;
+            if (!gMarksMap.TW   && pr.twMarks)   gMarksMap.TW   = pr.twMarks;
+            if (!gMarksMap.Oral && pr.oralMarks) gMarksMap.Oral = pr.oralMarks;
+          }
+          if (gazetteRow.twMarks   !== '') gMarksMap.TW   = gazetteRow.twMarks;
+          if (gazetteRow.oralMarks !== '') gMarksMap.Oral = gazetteRow.oralMarks;
+          const gdr = computeDisplayResult(subject, gMarksMap);
+          if (CONFIG.KT_RESULT_VALUES.includes(gdr.result)) hasUnsuccessfulReval = true;
+        }
+        // Don't increment — paired Gazette doesn't add an attempt
+        continue;
+      }
+      attemptCount++;
+    }
 
     // Step 1: merge multiple ledger rows within the same session
     // (latest component value wins within a session, same as _getActiveKTsForStudent)
@@ -2929,6 +2961,7 @@ function _aktdRun() {
       batchYear:   student.batchYear,
       gender:      student.gender || '',
       attemptCount,
+      hasUnsuccessfulReval,
       lastSession,
       compMarks,
       result:      dr.result,
@@ -2982,11 +3015,15 @@ function _aktdRun() {
 
   rows.forEach((r, i) => {
     const markCells = fields.map(f => `<td>${UI.esc(r.compMarks[f])}</td>`).join('');
-    const attemptBadge = r.attemptCount >= 3
-      ? `<span class="badge badge-kt">${r.attemptCount}rd+ attempt</span>`
-      : r.attemptCount === 2
-        ? `<span class="badge badge-warning">${r.attemptCount}nd attempt</span>`
-        : `<span class="badge badge-pending">${r.attemptCount}st attempt</span>`;
+    const attemptBadge = r.hasUnsuccessfulReval && r.attemptCount <= 1
+      ? `<span class="badge badge-warning">Unsuccessful Reval</span>`
+      : r.hasUnsuccessfulReval
+        ? `<span class="badge badge-kt">${r.attemptCount}${r.attemptCount === 2 ? 'nd' : r.attemptCount === 3 ? 'rd' : 'th'} attempt · Unsuccessful Reval</span>`
+        : r.attemptCount >= 3
+          ? `<span class="badge badge-kt">${r.attemptCount}rd+ attempt</span>`
+          : r.attemptCount === 2
+            ? `<span class="badge badge-warning">${r.attemptCount}nd attempt</span>`
+            : `<span class="badge badge-pending">${r.attemptCount}st attempt</span>`;
 
     html += `<tr>
       <td class="muted">${i + 1}</td>
@@ -3025,10 +3062,10 @@ function _aktdExportCSV() {
     if (f === 'iatMarks')  return 'IAT Marks';
     return f;
   });
-  const headers = ['#','PRN','UIN','Name','Branch','Division','Batch Year','Gender','Attempts','Last Session',...markColHeaders,'Result'];
+  const headers = ['#','PRN','UIN','Name','Branch','Division','Batch Year','Gender','Attempts','Unsuccessful Reval','Last Session',...markColHeaders,'Result'];
   const data = _aktdLastResult.map((r, i) => [
     i + 1, r.prn, r.uin, r.name, r.branch, r.division, r.batchYear, r.gender,
-    r.attemptCount, r.lastSession,
+    r.attemptCount, r.hasUnsuccessfulReval ? 'Yes' : '', r.lastSession,
     ...fields.map(f => r.compMarks[f] || ''),
     r.result,
   ]);
