@@ -2845,6 +2845,14 @@ function _aktdRun() {
 
     if (allRows.length === 0) continue;
 
+    // Session chronology score — year × 12 + month from session name, never from entryDateTime
+    const _sessionScore = sess => {
+      if (!sess) return 0;
+      const year  = Number((sess.name || '').slice(0, 4));
+      const month = (sess.name || '').includes('May') ? 5 : 12;
+      return year * 12 + month;
+    };
+
     // Step 1: merge multiple ledger rows within the same session
     // (latest component value wins within a session, same as _getActiveKTsForStudent)
     const mergedPerSessionSubject = {};
@@ -2861,14 +2869,10 @@ function _aktdRun() {
       }
     }
 
-    // Count attempts as unique Prelim sittings only.
-    // A Gazette session paired with its Prelim = same attempt.
-    // Standalone Gazette (no linkedPrelimSessionId) counts as its own attempt.
+    // Count attempts — Prelim sittings only; paired Gazette = same attempt.
+    // Sort session IDs chronologically by session name so attempts are counted oldest-first.
     const attemptSessionIds = [...new Set(allRows.map(r => r.examSession))]
-      .sort((a, b) => {
-        const sA = State.getSession(a), sB = State.getSession(b);
-        return _sessionScore(sA) - _sessionScore(sB);
-      });
+      .sort((a, b) => _sessionScore(State.getSession(a)) - _sessionScore(State.getSession(b)));
     let attemptCount = 0;
     let hasUnsuccessfulReval = false;
     for (const sid of attemptSessionIds) {
@@ -2876,11 +2880,9 @@ function _aktdRun() {
       if (!sess) continue;
       if (sess.entryType === 'Final Gazette' && sess.linkedPrelimSessionId &&
           attemptSessionIds.includes(sess.linkedPrelimSessionId)) {
-        // This Gazette is paired with a Prelim already in the list — same attempt.
-        // Check if the Gazette result is still a KT value → Unsuccessful Reval.
+        // Paired Gazette — same attempt as its Prelim; check if still failing → Unsuccessful Reval
         const gazetteRow = mergedPerSessionSubject[sid];
         if (gazetteRow) {
-          // Fill components from linked Prelim first, then Gazette ESE overwrites
           const pr = mergedPerSessionSubject[sess.linkedPrelimSessionId];
           const gMarksMap = {};
           if (pr) {
@@ -2889,7 +2891,6 @@ function _aktdRun() {
             if (pr.oralMarks) gMarksMap.Oral = pr.oralMarks;
             if (pr.eseMarks)  gMarksMap.ESE  = pr.eseMarks;
           }
-          // Gazette ESE always overwrites Prelim ESE
           if (gazetteRow.eseMarks  !== '') gMarksMap.ESE  = gazetteRow.eseMarks;
           if (gazetteRow.twMarks   !== '') gMarksMap.TW   = gazetteRow.twMarks;
           if (gazetteRow.oralMarks !== '') gMarksMap.Oral = gazetteRow.oralMarks;
@@ -2897,48 +2898,48 @@ function _aktdRun() {
           const gdr = computeDisplayResult(subject, gMarksMap);
           if (CONFIG.KT_RESULT_VALUES.includes(gdr.result)) hasUnsuccessfulReval = true;
         }
-        // Don't increment — paired Gazette doesn't add an attempt
-        continue;
+        continue; // don't increment attempt count
       }
       attemptCount++;
     }
 
-    // Step 1: merge multiple ledger rows within the same session
-    // (latest component value wins within a session, same as _getActiveKTsForStudent)
-   
+    // Step 2: Determine effective row — latest Gazette (with Prelim components filled)
+    // or latest Prelim, always by session name chronology, never by entryDateTime.
+    let gazetteCandidate = null;
+    let prelimCandidate  = null;
 
-    // Step 2: Gazette wins over Prelim — but fill missing components FROM the
-    // linked Prelim (ESE-only Gazette rows need IAT/TW/Oral from Prelim to compute result)
-    let effectiveRow = null;
     for (const row of Object.values(mergedPerSessionSubject)) {
       const sess = State.getSession(row.examSession);
       if (!sess) continue;
 
-      let candidate = { ...row, _sess: sess };
-
-      if (sess.entryType === 'Final Gazette' && sess.linkedPrelimSessionId) {
-        // Pull IAT / TW / Oral from the linked Prelim if not present in Gazette row
-        const prelimRow = mergedPerSessionSubject[sess.linkedPrelimSessionId];
-        if (prelimRow) {
-          if (!candidate.iatMarks  && prelimRow.iatMarks)  candidate.iatMarks  = prelimRow.iatMarks;
-          if (!candidate.twMarks   && prelimRow.twMarks)   candidate.twMarks   = prelimRow.twMarks;
-          if (!candidate.oralMarks && prelimRow.oralMarks) candidate.oralMarks = prelimRow.oralMarks;
+      if (sess.entryType === 'Final Gazette') {
+        const candidate = { ...row, _sess: sess };
+        if (sess.linkedPrelimSessionId) {
+          const pr = mergedPerSessionSubject[sess.linkedPrelimSessionId];
+          if (pr) {
+            if (!candidate.iatMarks  && pr.iatMarks)  candidate.iatMarks  = pr.iatMarks;
+            if (!candidate.twMarks   && pr.twMarks)   candidate.twMarks   = pr.twMarks;
+            if (!candidate.oralMarks && pr.oralMarks) candidate.oralMarks = pr.oralMarks;
+          }
         }
-      }
-
-      if (!effectiveRow) {
-        effectiveRow = candidate;
+        if (!gazetteCandidate || _sessionScore(sess) > _sessionScore(gazetteCandidate._sess)) {
+          gazetteCandidate = candidate;
+        }
       } else {
-        const prevSess = effectiveRow._sess;
-        // Gazette always supersedes Prelim
-        if (sess.entryType === 'Final Gazette' && prevSess?.entryType !== 'Final Gazette') {
-          effectiveRow = candidate;
-        } else if (sess.entryType !== 'Final Gazette' && prevSess?.entryType === 'Final Gazette') {
-          // keep existing Gazette
-        } else if (row.entryDateTime > effectiveRow.entryDateTime) {
-          effectiveRow = candidate;
+        if (!prelimCandidate || _sessionScore(sess) > _sessionScore(prelimCandidate._sess)) {
+          prelimCandidate = { ...row, _sess: sess };
         }
       }
+    }
+
+    // Gazette wins only if it is at least as recent as the latest Prelim
+    let effectiveRow = null;
+    if (gazetteCandidate && prelimCandidate) {
+      effectiveRow = _sessionScore(gazetteCandidate._sess) >= _sessionScore(prelimCandidate._sess)
+        ? gazetteCandidate
+        : prelimCandidate;
+    } else {
+      effectiveRow = gazetteCandidate || prelimCandidate;
     }
 
     if (!effectiveRow) continue;
