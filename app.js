@@ -2944,8 +2944,18 @@ function _aktdRun() {
 
     if (!effectiveRow) continue;
 
-    // Build marks map from the fully merged effective row
+    // Build marks map from the fully merged effective row,
+    // supplementing any missing components from earlier sessions.
+    // This handles the case where e.g. IAT was entered in Dec Prelim
+    // and ESE in May Prelim — two separate sessions for the same subject.
     const marksMap = {};
+    for (const r of Object.values(mergedPerSessionSubject)) {
+      if (r.iatMarks  !== '' && !marksMap.IAT)  marksMap.IAT  = r.iatMarks;
+      if (r.eseMarks  !== '' && !marksMap.ESE)  marksMap.ESE  = r.eseMarks;
+      if (r.twMarks   !== '' && !marksMap.TW)   marksMap.TW   = r.twMarks;
+      if (r.oralMarks !== '' && !marksMap.Oral) marksMap.Oral = r.oralMarks;
+    }
+    // Effective row always wins (most recent values override earlier ones)
     if (effectiveRow.iatMarks  !== '') marksMap.IAT  = effectiveRow.iatMarks;
     if (effectiveRow.eseMarks  !== '') marksMap.ESE  = effectiveRow.eseMarks;
     if (effectiveRow.twMarks   !== '') marksMap.TW   = effectiveRow.twMarks;
