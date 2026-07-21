@@ -225,7 +225,7 @@ const State = (() => {
     const latest = {};
     for (const r of rows) {
       const key = r.subjectCode;
-      if (!latest[key] || r.entryDateTime > latest[key].entryDateTime) {
+      if (!latest[key] || new Date(r.entryDateTime) > new Date(latest[key].entryDateTime)) {
         latest[key] = r;
       }
     }
