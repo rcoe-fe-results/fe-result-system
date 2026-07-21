@@ -367,3 +367,6 @@ const LEDGER_COLS = [
   'Oral Marks','Total Marks','Grade','Credits Earned','Result',
   'Source','Entered By','Entry Date/Time','Gender'
 ];
+
+// ── Active KT result values (configurable) ────────────────────
+CONFIG.KT_RESULT_VALUES = ['Fail', 'AB'];

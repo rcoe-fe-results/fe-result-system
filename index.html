@@ -1279,6 +1279,47 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
           </div>
           <button id="rpt-my-entries" class="btn btn-secondary btn-sm">Export CSV</button>
         </div>
+
+        <!-- Active KT Drill-down -->
+        <div class="report-card" style="grid-column:1/-1;">
+          <h3>Active KT Drill-down</h3>
+          <p>Students with an Active KT in a specific subject and component. Shows last attempt marks, attempt count, and division. Filter by batch year.</p>
+          <div class="report-inputs" style="flex-wrap:wrap; gap:10px; align-items:flex-end;">
+            <div class="filter-group">
+              <label style="font-size:12px;">Subject</label>
+              <select id="rpt-aktd-subject" style="min-width:220px;"><option value="">— select subject —</option></select>
+            </div>
+            <div class="filter-group">
+              <label style="font-size:12px;">Component</label>
+              <select id="rpt-aktd-component" style="min-width:130px;">
+                <option value="ESE">Theory (ESE)</option>
+                <option value="TW_Oral">Lab (TW / Oral)</option>
+                <option value="IAT">IAT</option>
+              </select>
+            </div>
+            <div class="filter-group">
+              <label style="font-size:12px;">Batch Year</label>
+              <select id="rpt-aktd-batch" style="min-width:110px;"><option value="">All Batches</option></select>
+            </div>
+            <div class="filter-group">
+              <label style="font-size:12px;">Division</label>
+              <select id="rpt-aktd-division" style="min-width:100px;"><option value="">All Divisions</option></select>
+            </div>
+            <div class="filter-group">
+              <label style="font-size:12px;">Gender</label>
+              <select id="rpt-aktd-gender" style="min-width:100px;">
+                <option value="">All</option>
+                <option value="Male">Male</option>
+                <option value="Female">Female</option>
+              </select>
+            </div>
+            <button id="rpt-aktd-run" class="btn btn-primary btn-sm">Show List</button>
+            <button id="rpt-aktd-csv" class="btn btn-secondary btn-sm" style="display:none;">⬇ Export CSV</button>
+          </div>
+          <div id="rpt-aktd-summary" style="margin-top:10px; font-size:12px; color:var(--ink-3);"></div>
+          <div id="rpt-aktd-output" style="margin-top:10px; max-height:420px; overflow-y:auto;"></div>
+        </div>
+
       </div>
 
       <!-- ── Batch Comparison ── -->

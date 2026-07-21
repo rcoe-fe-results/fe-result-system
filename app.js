@@ -2003,7 +2003,17 @@ function initReports() {
   document.getElementById('rpt-bc-batch-b').addEventListener('change', () => _bcPopulateSessions('b'));
   document.getElementById('rpt-bc-run').onclick = _rptBatchCompare;
   document.getElementById('rpt-bc-csv').onclick = _rptBatchCompareCsv;
+
+  // Active KT Drill-down — populate subject dropdown from all known subjects
+  _aktdPopulateSubjects();
+  _aktdPopulateBatchYears();
+  ['rpt-aktd-subject','rpt-aktd-component','rpt-aktd-batch','rpt-aktd-division','rpt-aktd-gender'].forEach(id => {
+    document.getElementById(id)?.addEventListener('change', _aktdClearOutput);
+  });
+  document.getElementById('rpt-aktd-run').onclick  = _aktdRun;
+  document.getElementById('rpt-aktd-csv').onclick  = _aktdExportCSV;
 }
+
 
 // ── Batch Comparison ──────────────────────────────────────────
 function _bcPopulateSessions(side) {
@@ -2735,6 +2745,279 @@ function _rptMyEntries() {
   UI.toast(`Exported ${data.length} of your entries.`, 'success');
 }
 
+
+// ── Active KT Drill-down ──────────────────────────────────────
+
+function _aktdAllSubjects() {
+  // Merge Sem I + fixed Sem II + all elective pools, deduplicated by code
+  const all = [
+    ...SEM1_SUBJECTS,
+    ...getSem2Subjects('Computer', null),   // fixed Sem II subjects (branch-neutral codes)
+    ...ELECTIVE_PHYSICS_THEORY,
+    ...ELECTIVE_PHYSICS_LAB,
+    ...ELECTIVE_CHEMISTRY_THEORY,
+    ...ELECTIVE_CHEMISTRY_LAB,
+  ];
+  // Deduplicate by code; keep first occurrence
+  const seen = new Set();
+  return all.filter(s => { if (seen.has(s.code)) return false; seen.add(s.code); return true; });
+}
+
+function _aktdComponentKeys(component) {
+  // Returns the ledger field names and display label for each component option
+  if (component === 'ESE')     return { fields: ['eseMarks'],           label: 'ESE' };
+  if (component === 'TW_Oral') return { fields: ['twMarks','oralMarks'], label: 'TW / Oral' };
+  if (component === 'IAT')     return { fields: ['iatMarks'],            label: 'IAT' };
+  return { fields: [], label: '' };
+}
+
+function _aktdSubjectHasComponent(subject, component) {
+  if (!subject?.marks) return false;
+  if (component === 'ESE')     return !!subject.marks.ESE;
+  if (component === 'TW_Oral') return !!(subject.marks.TW || subject.marks.Oral);
+  if (component === 'IAT')     return !!subject.marks.IAT;
+  return false;
+}
+
+function _aktdPopulateSubjects() {
+  const el = document.getElementById('rpt-aktd-subject');
+  const subjects = _aktdAllSubjects();
+  el.innerHTML = '<option value="">— select subject —</option>' +
+    subjects.map(s => `<option value="${UI.esc(s.code)}">${UI.esc(s.code)} — ${UI.esc(s.name)}</option>`).join('');
+}
+
+function _aktdPopulateBatchYears() {
+  const years = State.getBatchYears();
+  const el = document.getElementById('rpt-aktd-batch');
+  el.innerHTML = '<option value="">All Batches</option>' +
+    years.map(y => `<option value="${UI.esc(y)}">${UI.esc(y)}</option>`).join('');
+}
+
+function _aktdClearOutput() {
+  document.getElementById('rpt-aktd-output').innerHTML = '';
+  document.getElementById('rpt-aktd-summary').textContent = '';
+  document.getElementById('rpt-aktd-csv').style.display = 'none';
+}
+
+// Stores last result for CSV export
+let _aktdLastResult = [];
+let _aktdLastMeta   = {};
+
+function _aktdRun() {
+  const subjectCode = document.getElementById('rpt-aktd-subject').value;
+  const component   = document.getElementById('rpt-aktd-component').value;
+  const batchYear   = document.getElementById('rpt-aktd-batch').value;
+  const division    = document.getElementById('rpt-aktd-division').value;
+  const gender      = document.getElementById('rpt-aktd-gender').value;
+  const output      = document.getElementById('rpt-aktd-output');
+  const summary     = document.getElementById('rpt-aktd-summary');
+
+  if (!subjectCode) { UI.toast('Please select a subject.', 'error'); return; }
+
+  const allSubjects = _aktdAllSubjects();
+  const subject     = allSubjects.find(s => s.code === subjectCode);
+  if (!subject) { UI.toast('Subject not found.', 'error'); return; }
+
+  if (!_aktdSubjectHasComponent(subject, component)) {
+    output.innerHTML = `<div class="empty-state">This subject does not have a <strong>${_aktdComponentKeys(component).label}</strong> component.</div>`;
+    summary.textContent = '';
+    document.getElementById('rpt-aktd-csv').style.display = 'none';
+    return;
+  }
+
+  const { fields, label } = _aktdComponentKeys(component);
+  const ktValues = CONFIG.KT_RESULT_VALUES;
+
+  // Gather all students, optionally filter
+  let students = State.getStudents({
+    batchYear: batchYear || undefined,
+    division:  division  || undefined,
+    gender:    gender    || undefined,
+  });
+
+  const rows = [];
+
+  for (const student of students) {
+    // Get all ledger rows for this student + subject
+    const allRows = State.ledger
+      .filter(r => r.uin === student.uin && r.subjectCode === subjectCode)
+      .sort((a, b) => a.entryDateTime.localeCompare(b.entryDateTime));
+
+    if (allRows.length === 0) continue;
+
+    // Count total attempts (unique sessions attempted)
+    const attemptSessions = [...new Set(allRows.map(r => r.examSession))];
+    const attemptCount    = attemptSessions.length;
+
+    // Get effective latest result using same Gazette-wins merge as _getActiveKTsForStudent
+    const mergedPerSession = {};
+    for (const r of allRows) {
+      const key = r.examSession;
+      if (!mergedPerSession[key]) {
+        mergedPerSession[key] = { ...r };
+      } else {
+        const m = mergedPerSession[key];
+        if (r.iatMarks  !== '') m.iatMarks  = r.iatMarks;
+        if (r.eseMarks  !== '') m.eseMarks  = r.eseMarks;
+        if (r.twMarks   !== '') m.twMarks   = r.twMarks;
+        if (r.oralMarks !== '') m.oralMarks = r.oralMarks;
+      }
+    }
+
+    // Gazette wins over Prelim for same subject
+    let effectiveRow = null;
+    for (const row of Object.values(mergedPerSession)) {
+      const sess = State.getSession(row.examSession);
+      if (!sess) continue;
+      if (!effectiveRow) { effectiveRow = { ...row, _sess: sess }; continue; }
+      // Prefer Gazette; otherwise prefer latest by entryDateTime
+      const prevSess = State.getSession(effectiveRow.examSession);
+      if (sess.entryType === 'Final Gazette' && prevSess?.entryType !== 'Final Gazette') {
+        effectiveRow = { ...row, _sess: sess };
+      } else if (sess.entryType !== 'Final Gazette' && prevSess?.entryType === 'Final Gazette') {
+        // keep existing Gazette
+      } else if (row.entryDateTime > effectiveRow.entryDateTime) {
+        effectiveRow = { ...row, _sess: sess };
+      }
+    }
+
+    if (!effectiveRow) continue;
+
+    // Check result is an Active KT value
+    const marksMap = {};
+    if (effectiveRow.iatMarks  !== '') marksMap.IAT  = effectiveRow.iatMarks;
+    if (effectiveRow.eseMarks  !== '') marksMap.ESE  = effectiveRow.eseMarks;
+    if (effectiveRow.twMarks   !== '') marksMap.TW   = effectiveRow.twMarks;
+    if (effectiveRow.oralMarks !== '') marksMap.Oral = effectiveRow.oralMarks;
+
+    const dr = computeDisplayResult(subject, marksMap);
+    if (dr.pending || !ktValues.includes(dr.result)) continue;
+
+    // Extract component mark(s) for display
+    const compMarks = {};
+    for (const f of fields) {
+      compMarks[f] = effectiveRow[f] || '—';
+    }
+
+    // Last session name
+    const lastSession = effectiveRow._sess?.name || effectiveRow.examSession;
+
+    rows.push({
+      uin:         student.uin,
+      prn:         student.prn,
+      name:        student.name,
+      branch:      student.branch,
+      division:    student.division,
+      batchYear:   student.batchYear,
+      gender:      student.gender || '',
+      attemptCount,
+      lastSession,
+      compMarks,
+      result:      dr.result,
+    });
+  }
+
+  // Sort: attempt count descending, then name
+  rows.sort((a, b) => b.attemptCount - a.attemptCount || a.name.localeCompare(b.name));
+
+  _aktdLastResult = rows;
+  _aktdLastMeta   = { subjectCode, subjectName: subject.name, component, label, fields, batchYear, division, gender };
+
+  // Summary bar
+  const batchLabel    = batchYear || 'All Batches';
+  const divLabel      = division  || 'All Divisions';
+  const genderLabel   = gender    || 'All';
+  summary.textContent = `${rows.length} student${rows.length !== 1 ? 's' : ''} with Active KT · ${subject.code} — ${subject.name} · ${label} · ${batchLabel} · ${divLabel} · ${genderLabel}`;
+
+  if (rows.length === 0) {
+    output.innerHTML = '<div class="empty-state">No students with an Active KT for this selection.</div>';
+    document.getElementById('rpt-aktd-csv').style.display = 'none';
+    return;
+  }
+
+  // Build mark column headers
+  const markHeaders = fields.map(f => {
+    if (f === 'eseMarks')  return `ESE <span class="muted">(max ${subject.marks.ESE ?? '—'})</span>`;
+    if (f === 'twMarks')   return `TW <span class="muted">(max ${subject.marks.TW ?? '—'})</span>`;
+    if (f === 'oralMarks') return `Oral <span class="muted">(max ${subject.marks.Oral ?? '—'})</span>`;
+    if (f === 'iatMarks')  return `IAT <span class="muted">(max ${subject.marks.IAT ?? '—'})</span>`;
+    return f;
+  }).join('</th><th>');
+
+  let html = `
+    <table class="progress-table" style="width:100%; font-size:12px;">
+      <thead><tr>
+        <th>#</th>
+        <th>Name</th>
+        <th>PRN / UIN</th>
+        <th>Branch</th>
+        <th>Div</th>
+        <th>Batch</th>
+        <th>Gender</th>
+        <th>Attempts</th>
+        <th>Last Session</th>
+        <th>${markHeaders}</th>
+        <th>Result</th>
+        <th></th>
+      </tr></thead>
+      <tbody>`;
+
+  rows.forEach((r, i) => {
+    const markCells = fields.map(f => `<td>${UI.esc(r.compMarks[f])}</td>`).join('');
+    const attemptBadge = r.attemptCount >= 3
+      ? `<span class="badge badge-kt">${r.attemptCount}rd+ attempt</span>`
+      : r.attemptCount === 2
+        ? `<span class="badge badge-warning">${r.attemptCount}nd attempt</span>`
+        : `<span class="badge badge-pending">${r.attemptCount}st attempt</span>`;
+
+    html += `<tr>
+      <td class="muted">${i + 1}</td>
+      <td><strong>${UI.esc(r.name)}</strong></td>
+      <td class="muted">${UI.esc(r.prn)}<br>${UI.esc(r.uin)}</td>
+      <td>${UI.esc(r.branch)}</td>
+      <td>${UI.esc(r.division)}</td>
+      <td>${UI.esc(r.batchYear)}</td>
+      <td>${UI.esc(r.gender)}</td>
+      <td>${attemptBadge}</td>
+      <td class="muted" style="font-size:11px;">${UI.esc(r.lastSession)}</td>
+      ${markCells}
+      <td><span class="badge ${r.result === 'AB' ? 'badge-warning' : 'badge-kt'}">${UI.esc(r.result)}</span></td>
+      <td><button class="btn btn-secondary btn-sm" onclick="_aktdOpenProgress('${UI.esc(r.uin)}')">More Details</button></td>
+    </tr>`;
+  });
+
+  html += '</tbody></table>';
+  output.innerHTML = html;
+  document.getElementById('rpt-aktd-csv').style.display = '';
+}
+
+function _aktdOpenProgress(uin) {
+  showTab('progress');
+  // Small delay to let the tab render before populating
+  setTimeout(() => _pvShowStudent(uin), 80);
+}
+
+function _aktdExportCSV() {
+  if (_aktdLastResult.length === 0) { UI.toast('Nothing to export.', 'error'); return; }
+  const { subjectCode, subjectName, label, fields, batchYear } = _aktdLastMeta;
+  const markColHeaders = fields.map(f => {
+    if (f === 'eseMarks')  return 'ESE Marks';
+    if (f === 'twMarks')   return 'TW Marks';
+    if (f === 'oralMarks') return 'Oral Marks';
+    if (f === 'iatMarks')  return 'IAT Marks';
+    return f;
+  });
+  const headers = ['#','PRN','UIN','Name','Branch','Division','Batch Year','Gender','Attempts','Last Session',...markColHeaders,'Result'];
+  const data = _aktdLastResult.map((r, i) => [
+    i + 1, r.prn, r.uin, r.name, r.branch, r.division, r.batchYear, r.gender,
+    r.attemptCount, r.lastSession,
+    ...fields.map(f => r.compMarks[f] || ''),
+    r.result,
+  ]);
+  const filename = `ActiveKT_${subjectCode}_${label.replace(/\s*\/\s*/g,'_')}_${batchYear || 'AllBatches'}`;
+  UI.exportCSV(filename, headers, data);
+  UI.toast(`Exported ${_aktdLastResult.length} rows.`, 'success');
+}
 
 // ═══════════════════════════════════════════════════════════════
 // TAB 5 — ADMIN  (admin-only)
