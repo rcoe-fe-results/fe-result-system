@@ -1166,7 +1166,27 @@ function reportResultSummary({ sessionId, branch, batchYear, subjectCode, compon
     }
     return Object.values(byStudent).filter(s => s.credits < minCredits);
   }
-
+  function _deriveResultFromMarks(ledgerRow) {
+    if (ledgerRow.result !== '') return ledgerRow.result;
+    // Find subject definition to get component maxes
+    const allSubjects = [...SEM1_SUBJECTS, ...ELECTIVE_PHYSICS_THEORY, ...ELECTIVE_PHYSICS_LAB,
+                         ...ELECTIVE_CHEMISTRY_THEORY, ...ELECTIVE_CHEMISTRY_LAB];
+    const subj = allSubjects.find(s => s.code === ledgerRow.subjectCode);
+    if (!subj) return 'Fail'; // unknown subject — treat as fail (safe default)
+    const components = [
+      { val: ledgerRow.iatMarks,  max: subj.marks.IAT  },
+      { val: ledgerRow.eseMarks,  max: subj.marks.ESE  },
+      { val: ledgerRow.twMarks,   max: subj.marks.TW   },
+      { val: ledgerRow.oralMarks, max: subj.marks.Oral },
+    ].filter(c => c.max);
+    for (const c of components) {
+      const parsed = parseMarkValue(c.val, c.max); // use existing parseMarkValue
+      if (!parsed.valid) return 'Fail';
+      if (parsed.absent) return 'AB';
+      if (!parsed.grace && parsed.value / c.max < 0.40) return 'Fail';
+    }
+    return 'Pass';
+  }
   function reportKTFilter(n, mode, scope, gender) {
     const byStudent = {};
     for (const student of students) {
@@ -1174,7 +1194,10 @@ function reportResultSummary({ sessionId, branch, batchYear, subjectCode, compon
       const results = getStudentResults(student.uin);
       const allLedgerForStudent = ledger.filter(r => r.uin === student.uin);
 
-      let activeKTs = Object.values(results).filter(r => r.result === 'Fail' || r.result === 'AB' || r.result === '');
+      let activeKTs = Object.values(results).filter(r => {
+        const res = _deriveResultFromMarks(r);
+        return res === 'Fail' || res === 'AB';
+      });
       let histKTs   = allLedgerForStudent.filter(r => r.result === 'Fail' || r.result === 'AB');
 
       let subjects = [];
