@@ -234,7 +234,21 @@ const State = (() => {
 
   function getActiveKTSubjects(uin) {
     const results = getStudentResults(uin);
-    return Object.values(results).filter(r => r.result === 'Fail' || r.result === 'AB');
+    // Also include rows where result is '' (empty) but a prior row for the same
+    // subject has a Fail/AB — meaning marks were entered across partial submissions
+    // and the latest row has no computed result yet.
+    return Object.values(results).filter(r => {
+      if (r.result === 'Fail' || r.result === 'AB') return true;
+      if (r.result === '') {
+        // Check if any earlier ledger row for this subject was a Fail/AB
+        return ledger.some(l =>
+          l.uin === uin &&
+          l.subjectCode === r.subjectCode &&
+          (l.result === 'Fail' || l.result === 'AB')
+        );
+      }
+      return false;
+    });
   }
 
   function getKTEligibleStudents(semester, branch) {
@@ -1257,8 +1271,14 @@ function reportResultSummary({ sessionId, branch, batchYear, subjectCode, compon
       if (row.oralMarks !== '') marksMap.Oral = row.oralMarks;
 
       const dr = computeDisplayResult(subj, marksMap);
-      if (dr.result === 'Fail' || dr.result === 'AB' ||
-          (dr.pending && (row.result === 'Fail' || row.result === 'AB'))) {
+      // If pending, fall back to the stored result on the ledger row itself.
+      // This handles the case where marks were entered across multiple partial
+      // submissions — the merged row may be incomplete for computeDisplayResult
+      // even though the student's overall result is a known Fail/AB.
+      const effectiveResult = dr.pending
+        ? (row.result || '')
+        : dr.result;
+      if (effectiveResult === 'Fail' || effectiveResult === 'AB') {
         activeKTs.push({ ...row, _dr: dr });
       }
     }
