@@ -3015,15 +3015,12 @@ function _aktdRun() {
 
   rows.forEach((r, i) => {
     const markCells = fields.map(f => `<td>${UI.esc(r.compMarks[f])}</td>`).join('');
-    const attemptBadge = r.hasUnsuccessfulReval && r.attemptCount <= 1
-      ? `<span class="badge badge-warning">Unsuccessful Reval</span>`
-      : r.hasUnsuccessfulReval
-        ? `<span class="badge badge-kt">${r.attemptCount}${r.attemptCount === 2 ? 'nd' : r.attemptCount === 3 ? 'rd' : 'th'} attempt · Unsuccessful Reval</span>`
-        : r.attemptCount >= 3
-          ? `<span class="badge badge-kt">${r.attemptCount}rd+ attempt</span>`
-          : r.attemptCount === 2
-            ? `<span class="badge badge-warning">${r.attemptCount}nd attempt</span>`
-            : `<span class="badge badge-pending">${r.attemptCount}st attempt</span>`;
+    const _ordinal = n => n === 1 ? '1st' : n === 2 ? '2nd' : n === 3 ? '3rd' : `${n}th`;
+    const _revalSuffix = r.hasUnsuccessfulReval ? ' · Unsuccessful Reval' : '';
+    const _badgeCls = r.attemptCount >= 3 || r.hasUnsuccessfulReval ? 'badge-kt'
+                    : r.attemptCount === 2 ? 'badge-warning'
+                    : 'badge-pending';
+    const attemptBadge = `<span class="badge ${_badgeCls}">${_ordinal(r.attemptCount)} attempt${_revalSuffix}</span>`;
 
     html += `<tr>
       <td class="muted">${i + 1}</td>
