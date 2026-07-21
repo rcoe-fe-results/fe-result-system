@@ -2899,19 +2899,7 @@ function _aktdRun() {
 
     // Step 1: merge multiple ledger rows within the same session
     // (latest component value wins within a session, same as _getActiveKTsForStudent)
-    const mergedPerSessionSubject = {};
-    for (const r of allRows) {
-      const key = r.examSession;
-      if (!mergedPerSessionSubject[key]) {
-        mergedPerSessionSubject[key] = { ...r };
-      } else {
-        const m = mergedPerSessionSubject[key];
-        if (r.iatMarks  !== '') m.iatMarks  = r.iatMarks;
-        if (r.eseMarks  !== '') m.eseMarks  = r.eseMarks;
-        if (r.twMarks   !== '') m.twMarks   = r.twMarks;
-        if (r.oralMarks !== '') m.oralMarks = r.oralMarks;
-      }
-    }
+   
 
     // Step 2: Gazette wins over Prelim — but fill missing components FROM the
     // linked Prelim (ESE-only Gazette rows need IAT/TW/Oral from Prelim to compute result)
