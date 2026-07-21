@@ -2845,6 +2845,22 @@ function _aktdRun() {
 
     if (allRows.length === 0) continue;
 
+    // Step 1: merge multiple ledger rows within the same session
+    // (latest component value wins within a session, same as _getActiveKTsForStudent)
+    const mergedPerSessionSubject = {};
+    for (const r of allRows) {
+      const key = r.examSession;
+      if (!mergedPerSessionSubject[key]) {
+        mergedPerSessionSubject[key] = { ...r };
+      } else {
+        const m = mergedPerSessionSubject[key];
+        if (r.iatMarks  !== '') m.iatMarks  = r.iatMarks;
+        if (r.eseMarks  !== '') m.eseMarks  = r.eseMarks;
+        if (r.twMarks   !== '') m.twMarks   = r.twMarks;
+        if (r.oralMarks !== '') m.oralMarks = r.oralMarks;
+      }
+    }
+
     // Count attempts as unique Prelim sittings only.
     // A Gazette session paired with its Prelim = same attempt.
     // Standalone Gazette (no linkedPrelimSessionId) counts as its own attempt.
