@@ -2864,7 +2864,11 @@ function _aktdRun() {
     // Count attempts as unique Prelim sittings only.
     // A Gazette session paired with its Prelim = same attempt.
     // Standalone Gazette (no linkedPrelimSessionId) counts as its own attempt.
-    const attemptSessionIds = [...new Set(allRows.map(r => r.examSession))];
+    const attemptSessionIds = [...new Set(allRows.map(r => r.examSession))]
+      .sort((a, b) => {
+        const sA = State.getSession(a), sB = State.getSession(b);
+        return _sessionScore(sA) - _sessionScore(sB);
+      });
     let attemptCount = 0;
     let hasUnsuccessfulReval = false;
     for (const sid of attemptSessionIds) {
@@ -2876,18 +2880,20 @@ function _aktdRun() {
         // Check if the Gazette result is still a KT value → Unsuccessful Reval.
         const gazetteRow = mergedPerSessionSubject[sid];
         if (gazetteRow) {
-          const gMarksMap = {};
-          if (gazetteRow.iatMarks  !== '') gMarksMap.IAT  = gazetteRow.iatMarks;
-          if (gazetteRow.eseMarks  !== '') gMarksMap.ESE  = gazetteRow.eseMarks;
-          // fill from prelim for complete picture
+          // Fill components from linked Prelim first, then Gazette ESE overwrites
           const pr = mergedPerSessionSubject[sess.linkedPrelimSessionId];
+          const gMarksMap = {};
           if (pr) {
-            if (!gMarksMap.IAT  && pr.iatMarks)  gMarksMap.IAT  = pr.iatMarks;
-            if (!gMarksMap.TW   && pr.twMarks)   gMarksMap.TW   = pr.twMarks;
-            if (!gMarksMap.Oral && pr.oralMarks) gMarksMap.Oral = pr.oralMarks;
+            if (pr.iatMarks)  gMarksMap.IAT  = pr.iatMarks;
+            if (pr.twMarks)   gMarksMap.TW   = pr.twMarks;
+            if (pr.oralMarks) gMarksMap.Oral = pr.oralMarks;
+            if (pr.eseMarks)  gMarksMap.ESE  = pr.eseMarks;
           }
+          // Gazette ESE always overwrites Prelim ESE
+          if (gazetteRow.eseMarks  !== '') gMarksMap.ESE  = gazetteRow.eseMarks;
           if (gazetteRow.twMarks   !== '') gMarksMap.TW   = gazetteRow.twMarks;
           if (gazetteRow.oralMarks !== '') gMarksMap.Oral = gazetteRow.oralMarks;
+          if (gazetteRow.iatMarks  !== '') gMarksMap.IAT  = gazetteRow.iatMarks;
           const gdr = computeDisplayResult(subject, gMarksMap);
           if (CONFIG.KT_RESULT_VALUES.includes(gdr.result)) hasUnsuccessfulReval = true;
         }
