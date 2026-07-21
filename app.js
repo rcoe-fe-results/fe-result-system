@@ -1931,8 +1931,10 @@ function _dashRenderHeatmap() {
 }
 
 function initReports() {
+  const sessions = sortSessions(State.getSessions());
+
   // Populate Year dropdown from session data (unique years present)
-  const allSessionYears = [...new Set(State.getSessions().map(s => Number(s.name.slice(0,4))))].sort((a,b) => b-a);
+  const allSessionYears = [...new Set(sessions.map(s => Number(s.name.slice(0,4))))].sort((a,b) => b-a);
   const yearEl = document.getElementById('rpt-year');
   yearEl.innerHTML = '<option value="">— all —</option>' +
     allSessionYears.map(y => `<option value="${y}">${y}</option>`).join('');
