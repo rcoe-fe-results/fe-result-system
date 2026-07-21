@@ -1187,6 +1187,80 @@ function reportResultSummary({ sessionId, branch, batchYear, subjectCode, compon
     }
     return 'Pass';
   }
+  function _getActiveKTsForStudent(uin) {
+    const student = getStudent(uin);
+    if (!student) return [];
+
+    // Step 1: Merge ledger rows per session+subject (latest component wins)
+    const mergedPerSessionSubject = {};
+    const allRows = ledger.filter(r => r.uin === uin)
+      .sort((a, b) => a.entryDateTime.localeCompare(b.entryDateTime));
+
+    for (const r of allRows) {
+      const key = r.examSession + '||' + r.subjectCode;
+      if (!mergedPerSessionSubject[key]) {
+        mergedPerSessionSubject[key] = { ...r };
+      } else {
+        const m = mergedPerSessionSubject[key];
+        if (r.iatMarks  !== '') m.iatMarks  = r.iatMarks;
+        if (r.eseMarks  !== '') m.eseMarks  = r.eseMarks;
+        if (r.twMarks   !== '') m.twMarks   = r.twMarks;
+        if (r.oralMarks !== '') m.oralMarks = r.oralMarks;
+      }
+    }
+
+    // Step 2: For each subject, Gazette always wins over Prelim.
+    // If Gazette exists for a subject → merge missing components from Prelim.
+    // If no Gazette entry → use Prelim row as-is.
+    const finalPerSubject = {}; // subjectCode → merged row to evaluate
+
+    for (const row of Object.values(mergedPerSessionSubject)) {
+      const sess = getSession(row.examSession);
+      if (!sess) continue;
+      const code = row.subjectCode;
+
+      if (sess.entryType === 'Final Gazette') {
+        // Gazette row — merge missing components from linked Prelim
+        const merged = { ...row };
+        if (sess.linkedPrelimSessionId) {
+          const prelimKey = sess.linkedPrelimSessionId + '||' + code;
+          const prelimRow = mergedPerSessionSubject[prelimKey];
+          if (prelimRow) {
+            if (!merged.iatMarks  && prelimRow.iatMarks)  merged.iatMarks  = prelimRow.iatMarks;
+            if (!merged.eseMarks  && prelimRow.eseMarks)  merged.eseMarks  = prelimRow.eseMarks;
+            if (!merged.twMarks   && prelimRow.twMarks)   merged.twMarks   = prelimRow.twMarks;
+            if (!merged.oralMarks && prelimRow.oralMarks) merged.oralMarks = prelimRow.oralMarks;
+          }
+        }
+        finalPerSubject[code] = merged; // Gazette always overwrites Prelim
+      } else {
+        // Prelim row — only use if no Gazette entry exists yet for this subject
+        if (!finalPerSubject[code]) finalPerSubject[code] = row;
+      }
+    }
+
+    // Step 3: Compute pass/fail for each subject from merged marks
+    const activeKTs = [];
+    for (const row of Object.values(finalPerSubject)) {
+      const sess = getSession(row.examSession);
+      const subjectList = getSubjectsForSem(Number(row.semester), row.branch || student.branch, sess);
+      const subj = subjectList.find(s => s.code === row.subjectCode);
+      if (!subj) continue;
+
+      const marksMap = {};
+      if (row.iatMarks  !== '') marksMap.IAT  = row.iatMarks;
+      if (row.eseMarks  !== '') marksMap.ESE  = row.eseMarks;
+      if (row.twMarks   !== '') marksMap.TW   = row.twMarks;
+      if (row.oralMarks !== '') marksMap.Oral = row.oralMarks;
+
+      const dr = computeDisplayResult(subj, marksMap);
+      if (!dr.pending && (dr.result === 'Fail' || dr.result === 'AB')) {
+        activeKTs.push({ ...row, _dr: dr });
+      }
+    }
+
+    return activeKTs;
+  }
   function reportKTFilter(n, mode, scope, gender) {
     const byStudent = {};
     for (const student of students) {
@@ -1194,10 +1268,8 @@ function reportResultSummary({ sessionId, branch, batchYear, subjectCode, compon
       const results = getStudentResults(student.uin);
       const allLedgerForStudent = ledger.filter(r => r.uin === student.uin);
 
-      let activeKTs = Object.values(results).filter(r => {
-        const res = _deriveResultFromMarks(r);
-        return res === 'Fail' || res === 'AB';
-      });
+      let activeKTs = _getActiveKTsForStudent(student.uin);
+      
       let histKTs   = allLedgerForStudent.filter(r => r.result === 'Fail' || r.result === 'AB');
 
       let subjects = [];
