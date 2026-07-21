@@ -1968,10 +1968,10 @@ function initReports() {
   // Topper filters
   UI.buildSelect('rpt-topper-branch', BRANCHES, '— all branches —');
   UI.buildSelect('rpt-topper-subject', [{ code:'', name:'All subjects' }, ...subjects], '— all subjects —', 'code', 'name');
-  UI.buildSelect('rpt-topper-session', sessions, '— select session —', 'id', 'name');
+  UI.buildSelect('rpt-topper-examgroup', State.getExamGroups(), '— select exam —', 'key', 'label');
   document.getElementById('rpt-topper-mode').onchange = _rptToggleTopperMode;
   _rptToggleTopperMode();
-  ['rpt-topper-session','rpt-topper-branch','rpt-topper-mode','rpt-topper-subject','rpt-topper-n'].forEach(id => {
+  ['rpt-topper-examgroup','rpt-topper-branch','rpt-topper-mode','rpt-topper-subject','rpt-topper-n'].forEach(id => {
     document.getElementById(id)?.addEventListener('change', _rptLiveToppers);
     document.getElementById(id)?.addEventListener('input', _rptLiveToppers);
   });
@@ -2554,10 +2554,12 @@ function _rptToggleTopperMode() {
 }
 
 function _rptLiveToppers() {
-  const sessionId   = document.getElementById('rpt-topper-session').value || null;
-  const toppersWrap = document.getElementById('rpt-toppers-wrap');
-  if (!sessionId) {
-    if (toppersWrap) toppersWrap.innerHTML = '<div style="text-align:center;color:var(--ink-4);padding:12px;font-size:12px;">Select a session.</div>';
+  const examGroupKey = document.getElementById('rpt-topper-examgroup').value || null;
+  const group        = examGroupKey ? State.getExamGroups().find(g => g.key === examGroupKey) : null;
+  const sessionId    = group?.prelimSessionId || null;
+  const toppersWrap  = document.getElementById('rpt-toppers-wrap');
+  if (!examGroupKey) {
+    if (toppersWrap) toppersWrap.innerHTML = '<div style="text-align:center;color:var(--ink-4);padding:12px;font-size:12px;">Select an exam period.</div>';
     return;
   }
   const mode        = document.getElementById('rpt-topper-mode').value || 'branch';
@@ -2650,7 +2652,9 @@ function _rptSwitchTopperPanel(panel) {
 }
 
 function _rptExportToppers() {
-  const sessionId   = document.getElementById('rpt-topper-session').value || null;
+  const examGroupKey = document.getElementById('rpt-topper-examgroup').value || null;
+  const group        = examGroupKey ? State.getExamGroups().find(g => g.key === examGroupKey) : null;
+  const sessionId    = group?.prelimSessionId || null;
   const mode        = document.getElementById('rpt-topper-mode').value || 'branch';
   const branch      = document.getElementById('rpt-topper-branch').value || null;
   const subjectCode = document.getElementById('rpt-topper-subject').value || null;

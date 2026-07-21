@@ -54,6 +54,24 @@ const State = (() => {
     return sessions.filter(s => s.batchYear === batchYear || s.status === 'Active');
   }
 
+  function getExamGroups() {
+    const map = {};
+    for (const s of sessions) {
+      const key = `${s.batchYear}_${s.month}_${s.semester}`;
+      if (!map[key]) map[key] = {
+        key,
+        label: `${s.month} ${s.batchYear} — Sem ${s.semester === 1 ? 'I' : 'II'}`,
+        semester:         s.semester,
+        month:            s.month,
+        year:             s.batchYear,
+        prelimSessionId:  '',
+        gazetteSessionId: '',
+      };
+      if (s.entryType === 'Final Gazette') map[key].gazetteSessionId = s.id;
+      else                                  map[key].prelimSessionId  = s.id;
+    }
+    return Object.values(map).sort((a, b) => b.key.localeCompare(a.key));
+  }
   async function addSession(year, month, semester, electives = {}, entryType = 'Preliminary', linkedPrelimSessionId = '') {
     const user      = Auth.getUser();
     const sem       = Number(semester);
@@ -1489,6 +1507,7 @@ const State = (() => {
     getSeatNumber, getSeatsForSession, uploadSeats, updateSeatNumber,getSeatsForSessionWithFallback,
     computeAttemptTag,
     reportResultSummary, reportRevalImpact, reportToppers, reportCreditFilter, reportKTFilter, getMyEntries,
+    getExamGroups,
     getDivisions, getBatchYears, getAllSubjects,
     get ledger() { return ledger; },
   };
