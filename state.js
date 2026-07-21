@@ -1182,7 +1182,9 @@ function reportResultSummary({ sessionId, branch, batchYear, subjectCode, compon
         subjects = activeKTs;
       } else if (scope === 'Historical') {
         // Must have zero active KTs — fully cleared
-        if (activeKTs.length > 0) continue;
+        if (activeKTs.length > 0){
+            console.log(`[KT Filter] Skipped ${student.name} — active KTs:`, activeKTs.map(r => `${r.subjectCode} (${r.result}) @ ${r.entryDateTime}`)); 
+            continue;
         // Count unique subjects ever failed
         subjects = [...new Map(histKTs.map(r => [r.subjectCode, r])).values()];
       } else {
