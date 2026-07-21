@@ -1931,8 +1931,11 @@ function _dashRenderHeatmap() {
 }
 
 function initReports() {
-  const sessions = sortSessions(State.getSessions());
-  UI.buildSelect('rpt-session', sessions, '— all sessions —', 'id', 'name');
+  // Populate Year dropdown from session data (unique years present)
+  const allSessionYears = [...new Set(State.getSessions().map(s => Number(s.name.slice(0,4))))].sort((a,b) => b-a);
+  const yearEl = document.getElementById('rpt-year');
+  yearEl.innerHTML = '<option value="">— all —</option>' +
+    allSessionYears.map(y => `<option value="${y}">${y}</option>`).join('');
 
   // Populate branch and batchYear dropdowns
   UI.buildSelect('rpt-branch', BRANCHES, '— all branches —');
@@ -1946,7 +1949,7 @@ function initReports() {
     subjects.map(s => `<option value="${UI.esc(s.code)}">${UI.esc(s.code)} — ${UI.esc(s.name)}</option>`).join('');
 
   // Wire live result summary
-  ['rpt-session','rpt-branch','rpt-batch','rpt-subject','rpt-component','rpt-gender'].forEach(id => {
+  ['rpt-year','rpt-month','rpt-semester','rpt-branch','rpt-batch','rpt-subject','rpt-component','rpt-gender'].forEach(id => {
     document.getElementById(id)?.addEventListener('change', _rptLiveResultSummary);
   });
   _rptLiveResultSummary(); // initial render
@@ -2329,7 +2332,9 @@ function _rptBatchCompareCsv() {
 // ── Result Summary (live) ─────────────────────────────────────
 function _rptGetSummaryFilters() {
   return {
-    sessionId:   document.getElementById('rpt-session').value   || null,
+    year:        document.getElementById('rpt-year').value      || null,
+    month:       document.getElementById('rpt-month').value     || null,
+    semester:    document.getElementById('rpt-semester').value  || null,
     branch:      document.getElementById('rpt-branch').value    || null,
     batchYear:   document.getElementById('rpt-batch').value     || null,
     subjectCode: document.getElementById('rpt-subject').value   || null,
@@ -2340,10 +2345,73 @@ function _rptGetSummaryFilters() {
 
 function _rptLiveResultSummary() {
   const filters = _rptGetSummaryFilters();
-  const data    = State.reportResultSummary(filters);
-  const comp    = filters.component;
   const tbody   = document.getElementById('rpt-summary-tbody');
+  const banner  = document.getElementById('rpt-summary-banner');
   if (!tbody) return;
+
+  // ── Resolve Prelim + Gazette session pair from year/month/semester ──
+  const { year, month, semester } = filters;
+  let prelimSessionId  = null;
+  let gazetteSessionId = null;
+  let bannerMode       = 'no-filter'; // 'no-filter'|'no-data'|'prelim-only'|'merged'
+
+  if (year && month && semester) {
+    const allSessions = State.getSessions();
+    // Match sessions by name pattern: "YYYY_Mon_Sem-N_*"
+    const mo  = month === 'December' ? 'Dec' : 'May';
+    const sem = semester === '1' ? 'Sem-I' : 'Sem-II';
+    const prefix = `${year}_${mo}_${sem}_`;
+
+    const prelim  = allSessions.find(s => s.name === prefix + 'Preliminary');
+    const gazette = allSessions.find(s => s.name === prefix + 'Final-Gazette');
+
+    if (!prelim && !gazette) {
+      bannerMode = 'no-data';
+    } else if (prelim && gazette && gazette.linkedPrelimSessionId === prelim.id) {
+      prelimSessionId  = prelim.id;
+      gazetteSessionId = gazette.id;
+      bannerMode = 'merged';
+    } else if (prelim) {
+      prelimSessionId = prelim.id;
+      bannerMode = gazette ? 'unlinked' : 'prelim-only';
+    }
+  }
+
+  // ── Banner ────────────────────────────────────────────────
+  const bannerStyles = {
+    'no-filter':  null,
+    'no-data':    { bg: 'var(--fail-bg)',   color: 'var(--fail)',  text: 'No sessions found for this combination.' },
+    'prelim-only':{ bg: 'var(--grace-bg)',  color: 'var(--grace)', text: '⏳ Reval results awaited — showing Preliminary results only.' },
+    'unlinked':   { bg: 'var(--grace-bg)',  color: 'var(--grace)', text: '⏳ A Final Gazette exists but is not linked to this Preliminary — showing Preliminary results only.' },
+    'merged':     { bg: 'var(--pass-bg)',   color: 'var(--pass)',  text: '✓ Reval results included — table reflects Final Gazette outcomes.' },
+  };
+  const bs = bannerStyles[bannerMode];
+  if (bs) {
+    banner.style.display     = '';
+    banner.style.background  = bs.bg;
+    banner.style.color       = bs.color;
+    banner.textContent       = bs.text;
+  } else {
+    banner.style.display = 'none';
+  }
+
+  // ── No session resolved → show prompt ────────────────────
+  if (!prelimSessionId) {
+    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--ink-4);padding:12px;">Select Year, Month and Semester to view results.</td></tr>';
+    return;
+  }
+
+  // ── Fetch data ────────────────────────────────────────────
+  const data = State.reportResultSummary({
+    prelimSessionId,
+    gazetteSessionId,
+    branch:      filters.branch      || undefined,
+    batchYear:   filters.batchYear   || undefined,
+    subjectCode: filters.subjectCode || undefined,
+    gender:      filters.gender      || undefined,
+  });
+
+  const comp = filters.component;
 
   if (data.length === 0) {
     tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--ink-4);padding:12px;">No data for this filter.</td></tr>';
@@ -2351,18 +2419,24 @@ function _rptLiveResultSummary() {
   }
 
   tbody.innerHTML = data.map(d => {
-    const passPct  = Math.round(d.passRate * 100);
-    const fmtAvg   = (v) => v != null ? v.toFixed(1) : '—';
-    const avgCell  = comp === 'IAT'  ? fmtAvg(d.avgMarks.IAT)
-                   : comp === 'ESE'  ? fmtAvg(d.avgMarks.ESE)
-                   : comp === 'TW'   ? fmtAvg(d.avgMarks.TW)
-                   : comp === 'Oral' ? fmtAvg(d.avgMarks.Oral)
-                   : '—';
+    const passPct = Math.round(d.passRate * 100);
+    const fmtAvg  = (v) => v != null ? v.toFixed(1) : '—';
+    const avgCell = comp === 'IAT'  ? fmtAvg(d.avgMarks.IAT)
+                  : comp === 'ESE'  ? fmtAvg(d.avgMarks.ESE)
+                  : comp === 'TW'   ? fmtAvg(d.avgMarks.TW)
+                  : comp === 'Oral' ? fmtAvg(d.avgMarks.Oral)
+                  : '—';
+
+    // Reval tag — only shown when gazette is merged and at least 1 student cleared via reval
+    const revalTag = (gazetteSessionId && d.revalPass > 0)
+      ? `<br><small style="color:var(--reval);font-weight:500;">${d.revalPass} via reval</small>`
+      : '';
+
     return `<tr>
       <td><span class="subj-code-small">${UI.esc(d.code)}</span></td>
       <td>${UI.esc(d.name)}</td>
       <td>${d.total}</td>
-      <td style="color:var(--pass);font-weight:600;">${d.pass}</td>
+      <td style="color:var(--pass);font-weight:600;">${d.pass}${revalTag}</td>
       <td style="color:var(--fail);font-weight:600;">${d.fail}</td>
       <td style="color:var(--ab);font-weight:600;">${d.ab}</td>
       <td><span class="badge ${passPct >= 60 ? 'badge-pass' : passPct >= 40 ? 'badge-pending' : 'badge-fail'}">${passPct}%</span></td>
@@ -2377,11 +2451,37 @@ function _rptLiveResultSummary() {
 }
 
 function _rptExportResultSummary() {
-  const filters = _rptGetSummaryFilters();
-  const data    = State.reportResultSummary(filters);
+  const filters  = _rptGetSummaryFilters();
+  const { year, month, semester } = filters;
+
+  // Resolve session pair (same logic as _rptLiveResultSummary)
+  let prelimSessionId  = null;
+  let gazetteSessionId = null;
+  if (year && month && semester) {
+    const mo     = month === 'December' ? 'Dec' : 'May';
+    const sem    = semester === '1' ? 'Sem-I' : 'Sem-II';
+    const prefix = `${year}_${mo}_${sem}_`;
+    const all    = State.getSessions();
+    const prelim  = all.find(s => s.name === prefix + 'Preliminary');
+    const gazette = all.find(s => s.name === prefix + 'Final-Gazette');
+    if (prelim) prelimSessionId = prelim.id;
+    if (prelim && gazette && gazette.linkedPrelimSessionId === prelim.id) gazetteSessionId = gazette.id;
+  }
+
+  if (!prelimSessionId) { UI.toast('Select Year, Month and Semester first.', 'error'); return; }
+
+  const data = State.reportResultSummary({
+    prelimSessionId,
+    gazetteSessionId,
+    branch:      filters.branch      || undefined,
+    batchYear:   filters.batchYear   || undefined,
+    subjectCode: filters.subjectCode || undefined,
+    gender:      filters.gender      || undefined,
+  });
+
   UI.exportCSV(`ResultSummary`,
-    ['Subject Code','Subject Name','Total','Pass','Fail','AB','Pass %','Avg IAT','Avg ESE','Avg TW','Avg Oral'],
-    data.map(d => [d.code, d.name, d.total, d.pass, d.fail, d.ab,
+    ['Subject Code','Subject Name','Total','Pass','Via Reval','Fail','AB','Pass %','Avg IAT','Avg ESE','Avg TW','Avg Oral'],
+    data.map(d => [d.code, d.name, d.total, d.pass, d.revalPass || 0, d.fail, d.ab,
       Math.round(d.passRate * 100) + '%',
       d.avgMarks.IAT  != null ? d.avgMarks.IAT.toFixed(1)  : '—',
       d.avgMarks.ESE  != null ? d.avgMarks.ESE.toFixed(1)  : '—',

@@ -967,25 +967,55 @@ const State = (() => {
 
   // ── Reports data ──────────────────────────────────────────
 
-  // Result Summary — filters: sessionId, branch?, subjectCode?, batchYear?, component?
-function reportResultSummary({ sessionId, branch, batchYear, subjectCode, component, gender } = {}) {
-    let rows = ledger;
-    if (sessionId)   rows = rows.filter(r => r.examSession === sessionId);
-    if (branch)      rows = rows.filter(r => r.branch === branch);
-    if (batchYear)   rows = rows.filter(r => r.batchYear === batchYear);
-    if (subjectCode) rows = rows.filter(r => r.subjectCode === subjectCode);
-    if (gender)      rows = rows.filter(r => r.gender === gender);
+  // Result Summary — filters: prelimSessionId (required), gazetteSessionId (optional),
+  //                           branch?, batchYear?, subjectCode?, gender?
+  // When gazetteSessionId is provided, Gazette ESE overrides Prelim ESE per student
+  // per subject. Result is recomputed. revalPass = students who were Fail in Prelim
+  // but Pass after the Gazette merge.
+  function reportResultSummary({ prelimSessionId, gazetteSessionId, branch, batchYear, subjectCode, gender } = {}) {
+    if (!prelimSessionId) return [];
 
-    // Group by subject
+    // ── Collect and filter Prelim rows ───────────────────────
+    let prelimRows = ledger.filter(r => r.examSession === prelimSessionId);
+    if (branch)      prelimRows = prelimRows.filter(r => r.branch      === branch);
+    if (batchYear)   prelimRows = prelimRows.filter(r => r.batchYear   === batchYear);
+    if (subjectCode) prelimRows = prelimRows.filter(r => r.subjectCode === subjectCode);
+    if (gender)      prelimRows = prelimRows.filter(r => r.gender      === gender);
+
+    // ── Collect Gazette rows indexed by uin+subjectCode ──────
+    const gazetteIndex = {}; // key: uin+'||'+subjectCode → merged gazette row
+    if (gazetteSessionId) {
+      let gazRows = ledger.filter(r => r.examSession === gazetteSessionId);
+      if (branch)      gazRows = gazRows.filter(r => r.branch      === branch);
+      if (batchYear)   gazRows = gazRows.filter(r => r.batchYear   === batchYear);
+      if (subjectCode) gazRows = gazRows.filter(r => r.subjectCode === subjectCode);
+      if (gender)      gazRows = gazRows.filter(r => r.gender      === gender);
+
+      // Merge multiple gazette rows per student+subject (latest component wins)
+      const sorted = [...gazRows].sort((a, b) => a.entryDateTime.localeCompare(b.entryDateTime));
+      for (const r of sorted) {
+        const key = r.uin + '||' + r.subjectCode;
+        if (!gazetteIndex[key]) {
+          gazetteIndex[key] = { ...r };
+        } else {
+          const m = gazetteIndex[key];
+          if (r.eseMarks  !== '') m.eseMarks  = r.eseMarks;
+          if (r.iatMarks  !== '') m.iatMarks  = r.iatMarks;
+          if (r.twMarks   !== '') m.twMarks   = r.twMarks;
+          if (r.oralMarks !== '') m.oralMarks = r.oralMarks;
+        }
+      }
+    }
+
+    // ── Group Prelim rows by subject ──────────────────────────
     const bySubject = {};
-    for (const r of rows) {
+    for (const r of prelimRows) {
       if (!bySubject[r.subjectCode]) bySubject[r.subjectCode] = { code: r.subjectCode, name: r.subjectName, rows: [] };
       bySubject[r.subjectCode].rows.push(r);
     }
 
     return Object.values(bySubject).map(({ code, name, rows }) => {
-      // ── Merge all rows per student per subject (same logic as computeStudentAcademics) ──
-      // Sort ascending by entryDateTime, then last-non-empty-wins per component per student.
+      // ── Merge Prelim rows per student (latest component wins) ─
       const sorted = [...rows].sort((a, b) => a.entryDateTime.localeCompare(b.entryDateTime));
       const mergedPerStudent = {};
       for (const r of sorted) {
@@ -997,7 +1027,6 @@ function reportResultSummary({ sessionId, branch, batchYear, subjectCode, compon
           if (r.eseMarks  !== '') m.eseMarks  = r.eseMarks;
           if (r.twMarks   !== '') m.twMarks   = r.twMarks;
           if (r.oralMarks !== '') m.oralMarks = r.oralMarks;
-          // Use latest result and entryDateTime
           if (r.result        !== '') m.result        = r.result;
           if (r.totalMarks    !== '') m.totalMarks    = r.totalMarks;
           if (r.creditsEarned !== '') m.creditsEarned = r.creditsEarned;
@@ -1005,28 +1034,68 @@ function reportResultSummary({ sessionId, branch, batchYear, subjectCode, compon
         }
       }
 
-      const entries = Object.values(mergedPerStudent);
-      const total   = entries.length;
-      const pass    = entries.filter(r => r.result === 'Pass').length;
-      const fail    = entries.filter(r => r.result === 'Fail').length;
-      const ab      = entries.filter(r => r.result === 'AB').length;
+      // ── Resolve subject config for computeDisplayResult ───────
+      const prelimSess  = getSession(prelimSessionId);
+      const subjectList = prelimSess
+        ? getSubjectsForSem(Number(prelimSess.semester), branch || 'Computer', prelimSess)
+        : SEM1_SUBJECTS;
+      const subj = subjectList.find(s => s.code === code);
 
-      // Average marks per component (across merged rows that have that component)
+      // ── Per-student: apply Gazette override if available ──────
+      let pass = 0, fail = 0, ab = 0, revalPass = 0;
+
       const compSums  = { IAT: 0, ESE: 0, TW: 0, Oral: 0 };
       const compCount = { IAT: 0, ESE: 0, TW: 0, Oral: 0 };
-      for (const r of entries) {
-        if (r.iatMarks  !== '') { compSums.IAT  += Number(r.iatMarks)  || 0; compCount.IAT++;  }
-        if (r.eseMarks  !== '') { compSums.ESE  += Number(r.eseMarks)  || 0; compCount.ESE++;  }
-        if (r.twMarks   !== '') { compSums.TW   += Number(r.twMarks)   || 0; compCount.TW++;   }
-        if (r.oralMarks !== '') { compSums.Oral += Number(r.oralMarks) || 0; compCount.Oral++; }
+
+      for (const prelim of Object.values(mergedPerStudent)) {
+        const gazKey = prelim.uin + '||' + code;
+        const gaz    = gazetteIndex[gazKey] || null;
+
+        // Build merged marks: start from Prelim, Gazette ESE overrides
+        let merged = { ...prelim };
+        if (gaz) {
+          if (gaz.eseMarks  !== '') merged.eseMarks  = gaz.eseMarks;
+          if (gaz.iatMarks  !== '') merged.iatMarks  = gaz.iatMarks;
+          if (gaz.twMarks   !== '') merged.twMarks   = gaz.twMarks;
+          if (gaz.oralMarks !== '') merged.oralMarks = gaz.oralMarks;
+        }
+
+        // Recompute result from merged marks using subject config
+        let result = merged.result; // fallback: stored string
+        if (subj) {
+          const marksMap = {};
+          if (merged.iatMarks  !== '') marksMap.IAT  = merged.iatMarks;
+          if (merged.eseMarks  !== '') marksMap.ESE  = merged.eseMarks;
+          if (merged.twMarks   !== '') marksMap.TW   = merged.twMarks;
+          if (merged.oralMarks !== '') marksMap.Oral = merged.oralMarks;
+          const dr = computeDisplayResult(subj, marksMap);
+          if (!dr.pending) result = dr.result;
+        }
+
+        // revalPass: was Fail/AB in Prelim, now Pass after Gazette merge
+        const prelimResult = prelim.result;
+        if (gaz && (prelimResult === 'Fail' || prelimResult === 'AB') && result === 'Pass') {
+          revalPass++;
+        }
+
+        if      (result === 'Pass') pass++;
+        else if (result === 'AB')   ab++;
+        else                        fail++;
+
+        // Average marks from merged row
+        if (merged.iatMarks  !== '') { compSums.IAT  += Number(merged.iatMarks)  || 0; compCount.IAT++;  }
+        if (merged.eseMarks  !== '') { compSums.ESE  += Number(merged.eseMarks)  || 0; compCount.ESE++;  }
+        if (merged.twMarks   !== '') { compSums.TW   += Number(merged.twMarks)   || 0; compCount.TW++;   }
+        if (merged.oralMarks !== '') { compSums.Oral += Number(merged.oralMarks) || 0; compCount.Oral++; }
       }
 
+      const total = pass + fail + ab;
       const avgMarks = {};
       for (const comp of ['IAT','ESE','TW','Oral']) {
         avgMarks[comp] = compCount[comp] > 0 ? (compSums[comp] / compCount[comp]) : null;
       }
 
-      return { code, name, total, pass, fail, ab, passRate: total ? pass/total : 0, avgMarks };
+      return { code, name, total, pass, fail, ab, revalPass, passRate: total ? pass/total : 0, avgMarks };
     });
   }
 

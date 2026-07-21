@@ -1039,8 +1039,24 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
         <p>Pass %, Fail %, AB % and average marks per subject. Filters update the table live.</p>
         <div class="report-filters">
           <div class="filter-group">
-            <label>Session</label>
-            <select id="rpt-session" style="min-width:180px;"><option value="">— all sessions —</option></select>
+            <label>Year</label>
+            <select id="rpt-year" style="min-width:90px;"><option value="">— all —</option></select>
+          </div>
+          <div class="filter-group">
+            <label>Month</label>
+            <select id="rpt-month" style="min-width:110px;">
+              <option value="">— all —</option>
+              <option value="December">December</option>
+              <option value="May">May</option>
+            </select>
+          </div>
+          <div class="filter-group">
+            <label>Semester</label>
+            <select id="rpt-semester" style="min-width:100px;">
+              <option value="">— all —</option>
+              <option value="1">Sem I</option>
+              <option value="2">Sem II</option>
+            </select>
           </div>
           <div class="filter-group">
             <label>Branch</label>
@@ -1077,6 +1093,7 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
             <button id="rpt-result-summary-csv" class="btn btn-secondary btn-sm">⬇ Export CSV</button>
           </div>
         </div>
+        <div id="rpt-summary-banner" style="display:none; margin-bottom:8px; padding:8px 12px; border-radius:6px; font-size:12px; font-weight:500;"></div>
         <div class="report-table-wrap">
           <table class="report-table">
             <thead>
