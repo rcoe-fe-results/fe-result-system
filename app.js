@@ -2018,19 +2018,22 @@ function initReports() {
   // Populate per-card session selects
   UI.buildSelect('rpt-my-session', sessions, '— all sessions —', 'id', 'name');
 
-  // Credit filter branch + gender dropdowns
-  UI.buildSelect('rpt-credit-branch', BRANCHES, '— all branches —');
-  UI.buildSelect('rpt-total-credit-branch', BRANCHES, '— all branches —');
-  // (gender selects are static HTML — no buildSelect needed)
+  // Shared eligibility branch dropdown
+  UI.buildSelect('rpt-elig-branch', BRANCHES, '— all branches —');
 
-  // Export buttons
-  document.getElementById('rpt-result-summary-csv').onclick  = _rptExportResultSummary;
-  document.getElementById('rpt-reval-impact-csv').onclick    = _rptExportRevalImpact;
-  document.getElementById('rpt-toppers-csv').onclick         = _rptExportToppers;
-  document.getElementById('rpt-credit-filter').onclick       = _rptCreditFilter;
-  document.getElementById('rpt-total-credit-filter').onclick = _rptTotalCreditFilter;
-  document.getElementById('rpt-kt-filter').onclick           = _rptKTFilter;
-  document.getElementById('rpt-my-entries').onclick          = _rptMyEntries;
+  // Export buttons — top 3 blocks
+  document.getElementById('rpt-result-summary-csv').onclick = _rptExportResultSummary;
+  document.getElementById('rpt-reval-impact-csv').onclick   = _rptExportRevalImpact;
+  document.getElementById('rpt-toppers-csv').onclick        = _rptExportToppers;
+
+  // Student Eligibility Checks — Run + Export wiring
+  document.getElementById('rpt-credit-run').onclick         = _rptCreditFilterRun;
+  document.getElementById('rpt-credit-csv').onclick         = _rptCreditFilterExport;
+  document.getElementById('rpt-total-credit-run').onclick   = _rptTotalCreditFilterRun;
+  document.getElementById('rpt-total-credit-csv').onclick   = _rptTotalCreditFilterExport;
+  document.getElementById('rpt-kt-run').onclick             = _rptKTFilterRun;
+  document.getElementById('rpt-kt-csv').onclick             = _rptKTFilterExport;
+  document.getElementById('rpt-my-entries').onclick         = _rptMyEntries;
 
   // Batch comparison
   const bcYears = State.getBatchYears();
@@ -2046,7 +2049,7 @@ function initReports() {
   // Active KT Drill-down — populate subject dropdown from all known subjects
   _aktdPopulateSubjects();
   _aktdPopulateBatchYears();
-  ['rpt-aktd-subject','rpt-aktd-component','rpt-aktd-batch','rpt-aktd-division','rpt-aktd-gender'].forEach(id => {
+  ['rpt-aktd-subject','rpt-aktd-component','rpt-aktd-batch','rpt-aktd-division'].forEach(id => {
     document.getElementById(id)?.addEventListener('change', _aktdClearOutput);
   });
   document.getElementById('rpt-aktd-run').onclick  = _aktdRun;
@@ -2815,10 +2818,22 @@ function _rptExportToppers() {
 // ── Credit Eligibility Filters ────────────────────────────────
 
 // Filter 1: Students who have not completed Sem N credits
-function _rptCreditFilter() {
+// ── Shared helper: enable/disable Export CSV button ───────────
+function _eligSetCsvEnabled(btnId, enabled) {
+  const btn = document.getElementById(btnId);
+  if (!btn) return;
+  btn.disabled       = !enabled;
+  btn.style.opacity  = enabled ? '1'            : '0.4';
+  btn.style.cursor   = enabled ? 'pointer'      : 'not-allowed';
+}
+
+let _creditFilterLastResult = [];
+let _creditFilterLastMeta   = {};
+
+function _rptCreditFilterRun() {
   const sem    = Number(document.getElementById('rpt-credit-sem').value || 0);
-  const branch = document.getElementById('rpt-credit-branch').value || null;
-  const gender = document.getElementById('rpt-credit-gender').value || null;
+  const branch = document.getElementById('rpt-elig-branch').value || null;
+  const gender = document.getElementById('rpt-elig-gender').value || null;
   if (!sem) { UI.toast('Select a semester.', 'error'); return; }
 
   const students = State.getStudents({ branch: branch || undefined, gender: gender || undefined });
@@ -2829,39 +2844,47 @@ function _rptCreditFilter() {
     if (!acad) continue;
     const sc = acad.semCredits[sem];
     if (!sc || sc.max === 0) continue;
-    if (sc.earned >= sc.max) continue;  // already completed — exclude
+    if (sc.earned >= sc.max) continue;
 
     rows.push({
-      uin:     s.uin,
-      prn:     s.prn,
-      name:    s.name,
-      branch:  s.branch,
-      division: s.division,
-      batchYear: s.batchYear,
-      gender:  s.gender || '',
-      semEarned: sc.earned,
-      semMax:    sc.max,
+      uin:        s.uin,
+      prn:        s.prn,
+      name:       s.name,
+      branch:     s.branch,
+      division:   s.division,
+      batchYear:  s.batchYear,
+      gender:     s.gender || '',
+      semEarned:  sc.earned,
+      semMax:     sc.max,
       semPending: sc.max - sc.earned,
-      cgpa:    acad.cgpa != null ? acad.cgpa.toFixed(2) : '—',
+      cgpa:       acad.cgpa != null ? acad.cgpa.toFixed(2) : '—',
     });
   }
 
-  // Display in table
+  _creditFilterLastResult = rows;
+  _creditFilterLastMeta   = { sem };
   _rptRenderCreditFilterTable(rows, sem);
+  _eligSetCsvEnabled('rpt-credit-csv', rows.length > 0);
+}
 
-  // Export CSV
+function _rptCreditFilterExport() {
+  if (!_creditFilterLastResult.length) { UI.toast('Run the filter first.', 'error'); return; }
+  const { sem } = _creditFilterLastMeta;
   UI.exportCSV(`Sem${sem}_IncompleteCredits`,
     ['UIN','PRN/ERN','Name','Branch','Division','Batch Year','Gender',`Sem ${sem} Earned`,`Sem ${sem} Max`,'Pending Credits','CGPA'],
-    rows.map(r => [r.uin, r.prn, r.name, r.branch, r.division, r.batchYear, r.gender, r.semEarned, r.semMax, r.semPending, r.cgpa])
+    _creditFilterLastResult.map(r => [r.uin, r.prn, r.name, r.branch, r.division, r.batchYear, r.gender, r.semEarned, r.semMax, r.semPending, r.cgpa])
   );
-  UI.toast(`${rows.length} students with incomplete Sem ${sem} credits exported.`, 'success');
+  UI.toast(`${_creditFilterLastResult.length} students exported.`, 'success');
 }
 
 // Filter 2: Students with total cumulative credits < X
-function _rptTotalCreditFilter() {
+let _totalCreditLastResult = [];
+let _totalCreditLastMeta   = {};
+
+function _rptTotalCreditFilterRun() {
   const threshold = Number(document.getElementById('rpt-credit-x').value || 0);
-  const branch    = document.getElementById('rpt-total-credit-branch').value || null;
-  const gender    = document.getElementById('rpt-total-credit-gender').value || null;
+  const branch    = document.getElementById('rpt-elig-branch').value || null;
+  const gender    = document.getElementById('rpt-elig-gender').value || null;
   if (!threshold) { UI.toast('Enter a credit threshold.', 'error'); return; }
 
   const students = State.getStudents({ branch: branch || undefined, gender: gender || undefined });
@@ -2890,13 +2913,20 @@ function _rptTotalCreditFilter() {
     });
   }
 
+  _totalCreditLastResult = rows;
+  _totalCreditLastMeta   = { threshold };
   _rptRenderTotalCreditFilterTable(rows, threshold);
+  _eligSetCsvEnabled('rpt-total-credit-csv', rows.length > 0);
+}
 
+function _rptTotalCreditFilterExport() {
+  if (!_totalCreditLastResult.length) { UI.toast('Run the filter first.', 'error'); return; }
+  const { threshold } = _totalCreditLastMeta;
   UI.exportCSV(`TotalCredits_lt${threshold}`,
     ['UIN','PRN/ERN','Name','Branch','Division','Batch Year','Sem 1 Earned','Sem 1 Max','Sem 2 Earned','Sem 2 Max','Total Earned','Total Max','CGPA'],
-    rows.map(r => [r.uin, r.prn, r.name, r.branch, r.division, r.batchYear, r.sem1Earned, r.sem1Max, r.sem2Earned, r.sem2Max, r.totalEarned, r.totalMax, r.cgpa])
+    _totalCreditLastResult.map(r => [r.uin, r.prn, r.name, r.branch, r.division, r.batchYear, r.sem1Earned, r.sem1Max, r.sem2Earned, r.sem2Max, r.totalEarned, r.totalMax, r.cgpa])
   );
-  UI.toast(`${rows.length} students with < ${threshold} total credits exported.`, 'success');
+  UI.toast(`${_totalCreditLastResult.length} students exported.`, 'success');
 }
 
 function _rptRenderCreditFilterTable(rows, sem) {
@@ -2959,15 +2989,60 @@ function _rptRenderTotalCreditFilterTable(rows, threshold) {
     </table></div>`;
 }
 
-function _rptKTFilter() {
+let _ktFilterLastResult = [];
+let _ktFilterLastMeta   = {};
+
+function _rptKTFilterRun() {
   const n      = Number(document.getElementById('rpt-kt-n').value || 1);
   const mode   = document.getElementById('rpt-kt-mode').value  || 'At least';
   const scope  = document.getElementById('rpt-kt-scope').value || 'Active';
-  const gender = document.getElementById('rpt-kt-gender').value || null;
-  const data = State.reportKTFilter(n, mode, scope, gender);
+  const branch = document.getElementById('rpt-elig-branch').value || null;
+  const gender = document.getElementById('rpt-elig-gender').value || null;
+  const raw    = State.reportKTFilter(n, mode, scope, gender);
+
+  // Group into one row per student with KT subjects comma-separated
+  const byStudent = {};
+  for (const d of raw) {
+    if (!byStudent[d.uin]) byStudent[d.uin] = { prn: d.prn, uin: d.uin, name: d.name, branch: d.branch, gender: d.gender || '', ktSubjects: [] };
+    if (branch && d.branch !== branch) continue;
+    byStudent[d.uin].ktSubjects.push(`${d.subjectCode} (${d.result})`);
+  }
+  const rows = Object.values(byStudent).filter(r => (!branch || r.branch === branch) && r.ktSubjects.length > 0);
+
+  _ktFilterLastResult = rows;
+  _ktFilterLastMeta   = { n, mode, scope };
+
+  const out = document.getElementById('rpt-kt-filter-output');
+  if (rows.length === 0) {
+    out.innerHTML = '<div class="empty-state">No students found for this filter.</div>';
+    _eligSetCsvEnabled('rpt-kt-csv', false);
+    return;
+  }
+
+  out.innerHTML = `
+    <div style="margin-bottom:8px; font-size:12px; color:var(--ink-3);">${rows.length} student${rows.length !== 1 ? 's' : ''}</div>
+    <div style="overflow-x:auto;">
+    <table class="audit-table">
+      <thead><tr><th>Name</th><th>PRN</th><th>UIN</th><th>Branch</th><th>Gender</th><th>KT Subjects</th></tr></thead>
+      <tbody>${rows.map(r => `<tr>
+        <td>${UI.esc(r.name)}</td>
+        <td>${UI.esc(r.prn)}</td>
+        <td><span class="subj-code-small">${UI.esc(r.uin)}</span></td>
+        <td>${UI.esc(r.branch)}</td>
+        <td>${UI.esc(r.gender || '—')}</td>
+        <td style="font-size:11px;">${UI.esc(r.ktSubjects.join(', '))}</td>
+      </tr>`).join('')}
+      </tbody>
+    </table></div>`;
+  _eligSetCsvEnabled('rpt-kt-csv', true);
+}
+
+function _rptKTFilterExport() {
+  if (!_ktFilterLastResult.length) { UI.toast('Run the filter first.', 'error'); return; }
+  const { n, mode, scope } = _ktFilterLastMeta;
   UI.exportCSV(`KTFilter_${mode.replace(' ','')}_${n}_${scope}`,
-    ['PRN/ERN','UIN','Name','Branch','Gender','Subject Code','Subject Name','Session','Result'],
-    data.map(d => [d.prn, d.uin, d.name, d.branch, d.gender||'', d.subjectCode, d.subjectName, d.session, d.result])
+    ['PRN/ERN','UIN','Name','Branch','Gender','KT Subjects'],
+    _ktFilterLastResult.map(r => [r.prn, r.uin, r.name, r.branch, r.gender, r.ktSubjects.join(', ')])
   );
   UI.toast('KT filter exported.', 'success');
 }
@@ -3046,7 +3121,8 @@ function _aktdRun() {
   const component   = document.getElementById('rpt-aktd-component').value;
   const batchYear   = document.getElementById('rpt-aktd-batch').value;
   const division    = document.getElementById('rpt-aktd-division').value;
-  const gender      = document.getElementById('rpt-aktd-gender').value;
+  const branch      = document.getElementById('rpt-elig-branch').value  || null;
+  const gender      = document.getElementById('rpt-elig-gender').value  || null;
   const output      = document.getElementById('rpt-aktd-output');
   const summary     = document.getElementById('rpt-aktd-summary');
 
@@ -3059,7 +3135,7 @@ function _aktdRun() {
   if (!_aktdSubjectHasComponent(subject, component)) {
     output.innerHTML = `<div class="empty-state">This subject does not have a <strong>${_aktdComponentKeys(component).label}</strong> component.</div>`;
     summary.textContent = '';
-    document.getElementById('rpt-aktd-csv').style.display = 'none';
+    _eligSetCsvEnabled('rpt-aktd-csv', false);
     return;
   }
 
@@ -3068,6 +3144,7 @@ function _aktdRun() {
 
   // Gather all students, optionally filter
   let students = State.getStudents({
+    branch:    branch    || undefined,
     batchYear: batchYear || undefined,
     division:  division  || undefined,
     gender:    gender    || undefined,
@@ -3231,17 +3308,18 @@ function _aktdRun() {
   rows.sort((a, b) => b.attemptCount - a.attemptCount || a.name.localeCompare(b.name));
 
   _aktdLastResult = rows;
-  _aktdLastMeta   = { subjectCode, subjectName: subject.name, component, label, fields, batchYear, division, gender };
+  _aktdLastMeta   = { subjectCode, subjectName: subject.name, component, label, fields, batchYear, division, branch, gender };
 
   // Summary bar
   const batchLabel    = batchYear || 'All Batches';
   const divLabel      = division  || 'All Divisions';
   const genderLabel   = gender    || 'All';
-  summary.textContent = `${rows.length} student${rows.length !== 1 ? 's' : ''} with Active KT · ${subject.code} — ${subject.name} · ${label} · ${batchLabel} · ${divLabel} · ${genderLabel}`;
+  const branchLabel   = branch    || 'All Branches';
+  summary.textContent = `${rows.length} student${rows.length !== 1 ? 's' : ''} with Active KT · ${subject.code} — ${subject.name} · ${label} · ${branchLabel} · ${batchLabel} · ${divLabel} · ${genderLabel}`;
 
   if (rows.length === 0) {
     output.innerHTML = '<div class="empty-state">No students with an Active KT for this selection.</div>';
-    document.getElementById('rpt-aktd-csv').style.display = 'none';
+    _eligSetCsvEnabled('rpt-aktd-csv', false);
     return;
   }
 
@@ -3299,7 +3377,7 @@ function _aktdRun() {
 
   html += '</tbody></table>';
   output.innerHTML = html;
-  document.getElementById('rpt-aktd-csv').style.display = '';
+  _eligSetCsvEnabled('rpt-aktd-csv', true);
 }
 
 function _aktdOpenProgress(uin) {
