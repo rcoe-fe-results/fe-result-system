@@ -2345,6 +2345,83 @@ function _rptGetSummaryFilters() {
   };
 }
 
+function _rptExportKTBucket(ktCount, students) {
+  const label  = ktCount === 0 ? '0_KT_AllClear' : `${ktCount}_KT`;
+  const header = ['PRN','UIN','Name','Branch','KT Subjects'];
+  const rows   = students.map(s => [
+    s.prn, s.uin, s.name, s.branch,
+    s.ktSubjects.map(k => k.subjectCode).join(', ') || '—',
+  ]);
+  UI.downloadCSV(`KT_Distribution_${label}.csv`, [header, ...rows]);
+}
+
+function _rptRenderKTStrip(distribution, { prelimSessionId, gazetteSessionId, branch, batchYear, gender }) {
+  const strip = document.getElementById('rpt-kt-strip');
+  if (!strip) return;
+  if (!distribution || distribution.length === 0) { strip.style.display = 'none'; return; }
+
+  let activeKey = null; // which bucket is expanded
+
+  function render() {
+    const pills = distribution.map(({ ktCount, students }) => {
+      const label  = ktCount === 0 ? '0 KT — All Clear' : `${ktCount} KT${ktCount > 1 ? 's' : ''}`;
+      const isOpen = activeKey === ktCount;
+      const color  = ktCount === 0 ? 'var(--pass)' : ktCount <= 2 ? 'var(--grace)' : 'var(--fail)';
+      return `<button class="kt-pill${isOpen ? ' kt-pill-open' : ''}" data-kt="${ktCount}"
+        style="border-color:${color};color:${color};">
+        ${UI.esc(label)}: <strong>${students.length}</strong> ${isOpen ? '▲' : '▼'}
+      </button>`;
+    }).join('');
+
+    const openBucket = activeKey !== null ? distribution.find(b => b.ktCount === activeKey) : null;
+    let detail = '';
+    if (openBucket) {
+      const { ktCount, students } = openBucket;
+      const heading = ktCount === 0 ? 'All Clear Students' : `${ktCount} KT${ktCount > 1 ? 's' : ''} — ${students.length} Student${students.length > 1 ? 's' : ''}`;
+      const rows = students.map(s => `<tr>
+        <td>${UI.esc(s.prn)}</td>
+        <td><span class="subj-code-small">${UI.esc(s.uin)}</span></td>
+        <td>${UI.esc(s.name)}</td>
+        <td>${UI.esc(s.branch)}</td>
+        <td>${ktCount === 0 ? '—' : s.ktSubjects.map(k =>
+          `<span class="subj-code-small">${UI.esc(k.subjectCode)}</span>`).join(' ')}</td>
+      </tr>`).join('');
+      detail = `<div class="kt-detail-wrap">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+          <span style="font-weight:600;font-size:13px;">${UI.esc(heading)}</span>
+          <button class="btn btn-secondary btn-sm" id="kt-export-btn">⬇ Export CSV</button>
+        </div>
+        <div class="report-table-wrap" style="max-height:320px;overflow-y:auto;">
+          <table class="report-table">
+            <thead><tr><th>PRN</th><th>UIN</th><th>Name</th><th>Branch</th><th>KT Subjects</th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+      </div>`;
+    }
+
+    strip.style.display = '';
+    strip.innerHTML = `<div class="kt-pill-row">${pills}</div>${detail}`;
+
+    // Wire pill clicks
+    strip.querySelectorAll('.kt-pill').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const k = Number(btn.dataset.kt);
+        activeKey = activeKey === k ? null : k; // toggle
+        render();
+      });
+    });
+
+    // Wire export
+    const exportBtn = strip.querySelector('#kt-export-btn');
+    if (exportBtn && openBucket) {
+      exportBtn.addEventListener('click', () => _rptExportKTBucket(openBucket.ktCount, openBucket.students));
+    }
+  }
+
+  render();
+}
+
 function _rptLiveResultSummary() {
   const filters = _rptGetSummaryFilters();
   const tbody   = document.getElementById('rpt-summary-tbody');
@@ -2417,7 +2494,23 @@ function _rptLiveResultSummary() {
 
   if (data.length === 0) {
     tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--ink-4);padding:12px;">No data for this filter.</td></tr>';
+    document.getElementById('rpt-kt-strip').style.display = 'none';
     return;
+  }
+
+  // ── KT Distribution strip ─────────────────────────────────
+  // Only meaningful when no subject filter is active (KT count = across all subjects)
+  if (!filters.subjectCode) {
+    const ktDist = State.reportKTDistribution({
+      prelimSessionId,
+      gazetteSessionId,
+      branch:    filters.branch    || undefined,
+      batchYear: filters.batchYear || undefined,
+      gender:    filters.gender    || undefined,
+    });
+    _rptRenderKTStrip(ktDist, { prelimSessionId, gazetteSessionId });
+  } else {
+    document.getElementById('rpt-kt-strip').style.display = 'none';
   }
 
   tbody.innerHTML = data.map(d => {

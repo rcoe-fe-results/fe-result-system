@@ -1441,6 +1441,57 @@ const State = (() => {
     return Object.values(byStudent);
   }
 
+  function reportKTDistribution({ prelimSessionId, gazetteSessionId, branch, batchYear, gender } = {}) {
+    if (!prelimSessionId) return [];
+
+    // Collect prelim rows with same filters as reportResultSummary
+    let prelimRows = ledger.filter(r => r.examSession === prelimSessionId);
+    if (branch)    prelimRows = prelimRows.filter(r => r.branch    === branch);
+    if (batchYear) prelimRows = prelimRows.filter(r => r.batchYear === batchYear);
+    if (gender)    prelimRows = prelimRows.filter(r => r.gender    === gender);
+
+    // Build gazette index (uin+subjectCode → gazette row)
+    const gazetteIndex = {};
+    if (gazetteSessionId) {
+      let gazRows = ledger.filter(r => r.examSession === gazetteSessionId);
+      if (branch)    gazRows = gazRows.filter(r => r.branch    === branch);
+      if (batchYear) gazRows = gazRows.filter(r => r.batchYear === batchYear);
+      if (gender)    gazRows = gazRows.filter(r => r.gender    === gender);
+      for (const r of gazRows) gazetteIndex[r.uin + '||' + r.subjectCode] = r;
+    }
+
+    // Per student: collect latest prelim row per subject, then apply gazette override
+    const byStudent = {};
+    for (const r of prelimRows) {
+      const key = r.uin + '||' + r.subjectCode;
+      if (!byStudent[r.uin]) byStudent[r.uin] = { uin: r.uin, prn: r.prn, name: r.name, branch: r.branch, subjectRows: {} };
+      // Latest prelim row wins per subject
+      const existing = byStudent[r.uin].subjectRows[r.subjectCode];
+      if (!existing || r.entryDateTime > existing.entryDateTime)
+        byStudent[r.uin].subjectRows[r.subjectCode] = r;
+    }
+
+    // Apply gazette override and compute KT subjects
+    const buckets = {}; // ktCount → [{ uin, prn, name, branch, ktSubjects }]
+    for (const { uin, prn, name, branch: br, subjectRows } of Object.values(byStudent)) {
+      const ktSubjects = [];
+      for (const [subjectCode, row] of Object.entries(subjectRows)) {
+        const gz = gazetteIndex[uin + '||' + subjectCode];
+        const result = gz ? (gz.result || row.result) : row.result;
+        if (result === 'Fail' || result === 'AB')
+          ktSubjects.push({ subjectCode, subjectName: row.subjectName, result });
+      }
+      const ktCount = ktSubjects.length;
+      if (!buckets[ktCount]) buckets[ktCount] = [];
+      buckets[ktCount].push({ uin, prn, name, branch: br, ktSubjects });
+    }
+
+    // Return sorted by ktCount ascending
+    return Object.entries(buckets)
+      .map(([ktCount, students]) => ({ ktCount: Number(ktCount), students }))
+      .sort((a, b) => a.ktCount - b.ktCount);
+  }
+
   function getMyEntries(email, sessionId) {
     return ledger.filter(r => r.enteredBy === email && (!sessionId || r.examSession === sessionId));
   }
@@ -1533,6 +1584,7 @@ const State = (() => {
     getSeatNumber, getSeatsForSession, uploadSeats, updateSeatNumber,getSeatsForSessionWithFallback,
     computeAttemptTag,
     reportResultSummary, reportRevalImpact, reportToppers, reportCreditFilter, reportKTFilter, getMyEntries,
+    reportKTDistribution,
     getExamGroups,
     getDivisions, getBatchYears, getAllSubjects,
     get ledger() { return ledger; },

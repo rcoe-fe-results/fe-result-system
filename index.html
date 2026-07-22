@@ -383,6 +383,12 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
 .report-table tbody tr:hover { background:var(--surface-2); }
 .report-table-wrap { max-height:400px; overflow-y:auto; border:1px solid var(--border); border-radius:var(--radius); margin-top:10px; }
 
+/* KT Distribution strip */
+.kt-pill-row { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:10px; }
+.kt-pill { background:transparent; border:1.5px solid; border-radius:20px; padding:4px 14px; font-size:12px; font-weight:500; cursor:pointer; transition:background .15s; }
+.kt-pill:hover, .kt-pill-open { background:color-mix(in srgb, currentColor 10%, transparent); }
+.kt-detail-wrap { border:1px solid var(--border); border-radius:var(--radius); padding:12px 14px; margin-bottom:12px; background:var(--surface); }
+
 /* Reval worsened row */
 .reval-worsened { background:#FFF5F5; }
 .reval-worsened:hover { background:#FEE2E2 !important; }
@@ -1094,6 +1100,7 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
           </div>
         </div>
         <div id="rpt-summary-banner" style="display:none; margin-bottom:8px; padding:8px 12px; border-radius:6px; font-size:12px; font-weight:500;"></div>
+        <div id="rpt-kt-strip" style="display:none; margin-bottom:12px;"></div>
         <div class="report-table-wrap">
           <table class="report-table">
             <thead>
