@@ -1639,52 +1639,30 @@ const State = (() => {
       for (const r of gazRows) gazetteIndex[r.uin + '||' + r.subjectCode] = r;
     }
 
-    // Per student: collect latest prelim row per subject, then apply gazette override
+    // Collect unique students who appear in this prelim session
     const byStudent = {};
     for (const r of prelimRows) {
-      const key = r.uin + '||' + r.subjectCode;
-      if (!byStudent[r.uin]) byStudent[r.uin] = { uin: r.uin, prn: r.prn, name: r.name, branch: r.branch, subjectRows: {} };
-      // Latest prelim row wins per subject
-      const existing = byStudent[r.uin].subjectRows[r.subjectCode];
-      if (!existing || r.entryDateTime > existing.entryDateTime)
-        byStudent[r.uin].subjectRows[r.subjectCode] = r;
+      if (!byStudent[r.uin]) byStudent[r.uin] = { uin: r.uin, prn: r.prn, name: r.name, branch: r.branch };
     }
 
-    // Apply gazette override, recompute result from merged marks
+    // For each student, use _getActiveKTsForStudent() which correctly accounts
+    // for all sessions, gazette overrides, and partial entries.
+    // Then optionally filter KTs to only those belonging to this session's semester.
     const prelimSess = getSession(prelimSessionId);
-    const buckets = {}; // ktCount → [{ uin, prn, name, branch, ktSubjects }]
-    for (const { uin, prn, name, branch: br, subjectRows } of Object.values(byStudent)) {
-      const ktSubjects = [];
-      for (const [subjectCode, row] of Object.entries(subjectRows)) {
-        const gz = gazetteIndex[uin + '||' + subjectCode];
+    const buckets = {};
+    for (const { uin, prn, name, branch: br } of Object.values(byStudent)) {
+      const activeKTs = _getActiveKTsForStudent(uin);
+      // Only count KTs for the same semester as this prelim session
+      const semKTs = prelimSess
+        ? activeKTs.filter(r => Number(r.semester) === prelimSess.semester)
+        : activeKTs;
 
-        // Merge marks: prelim base, gazette overrides any component it has
-        const mergedMarks = {};
-        if (row.iatMarks  !== '') mergedMarks.IAT  = row.iatMarks;
-        if (row.eseMarks  !== '') mergedMarks.ESE  = row.eseMarks;
-        if (row.twMarks   !== '') mergedMarks.TW   = row.twMarks;
-        if (row.oralMarks !== '') mergedMarks.Oral = row.oralMarks;
-        if (gz) {
-          if (gz.eseMarks  !== '') mergedMarks.ESE  = gz.eseMarks;
-          if (gz.iatMarks  !== '') mergedMarks.IAT  = gz.iatMarks;
-          if (gz.twMarks   !== '') mergedMarks.TW   = gz.twMarks;
-          if (gz.oralMarks !== '') mergedMarks.Oral = gz.oralMarks;
-        }
+      const ktSubjects = semKTs.map(r => ({
+        subjectCode: r.subjectCode,
+        subjectName: r.subjectName,
+        result:      r.result || r._dr?.result || 'Fail',
+      }));
 
-        // Recompute result from merged marks using subject config
-        const subjectList = getSubjectsForSem(Number(row.semester), br, prelimSess);
-        const subj = subjectList.find(s => s.code === subjectCode);
-        let result;
-        if (subj) {
-          const dr = computeDisplayResult(subj, mergedMarks);
-          result = dr.pending ? 'Pending' : dr.result;
-        } else {
-          result = gz ? (gz.result || row.result) : row.result; // fallback for unknown subject
-        }
-
-        if (result === 'Fail' || result === 'AB')
-          ktSubjects.push({ subjectCode, subjectName: row.subjectName, result });
-      }
       const ktCount = ktSubjects.length;
       if (!buckets[ktCount]) buckets[ktCount] = [];
       buckets[ktCount].push({ uin, prn, name, branch: br, ktSubjects });
