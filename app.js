@@ -1445,8 +1445,9 @@ function initProgress() {
 function _pvAttemptTag(uin, subjectCode, sessionId) {
   const tag = State.computeAttemptTag(uin, subjectCode, sessionId);
   if (!tag) return '<span class="badge badge-pending">—</span>';
-  const cls = tag.includes('KT')    ? 'badge-kt'
-            : tag.includes('Reval') ? 'badge-reval'
+  const cls = tag.includes('KT')             ? 'badge-kt'
+            : tag.startsWith('Unsuccessful') ? 'badge-unsuccessful'
+            : tag.includes('Reval')          ? 'badge-reval'
             : 'badge-regular';
   return `<span class="badge ${cls}" title="${UI.esc(tag)}">${UI.esc(tag)}</span>`;
 }

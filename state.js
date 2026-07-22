@@ -329,8 +329,6 @@ const State = (() => {
     const { result: resolvedResult, revalSuffix } =
       _resolveSessionResult(targetPrelimId, targetGazId);
 
-    if (resolvedResult !== 'Pass') return null;
-
     // Count attempt number by walking all Preliminary sessions for this semester+batch
     // in chronological order. Skip sessions with no record for this student+subject.
     const subjectSemester = Number(allRows[0]?.semester);
@@ -352,10 +350,15 @@ const State = (() => {
 
     if (attemptNumber === 0) return null;
 
-    const attemptLabel = attemptNumber === 1 ? 'Regular attempt'
-      : attemptNumber === 2 ? '2nd attempt'
-      : attemptNumber === 3 ? '3rd attempt'
-      : `${attemptNumber}th attempt`;
+    const attemptLabel = attemptNumber === 1 ? 'Regular Attempt'
+      : attemptNumber === 2 ? '2nd Attempt'
+      : attemptNumber === 3 ? '3rd Attempt'
+      : `${attemptNumber}th Attempt`;
+
+    if (resolvedResult !== 'Pass') {
+      if (resolvedResult !== 'Fail') return null; // AB, pending — no tag
+      return `Unsuccessful in ${attemptLabel}${revalSuffix}`;
+    }
 
     return `Cleared in ${attemptLabel}${revalSuffix}`;
   }
