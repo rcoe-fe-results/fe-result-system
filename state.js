@@ -175,6 +175,9 @@ const State = (() => {
   //   'Active KT'
   //   null — not yet cleared / still pending / AB with no prior
   function computeAttemptTag(uin, subjectCode, sessionId) {
+    const student = getStudents().find(s => s.uin === uin);
+    if (!student) return null;
+
     // All ledger rows for this student+subject, sorted chronologically
     const allRows = ledger
       .filter(r => r.uin === uin && r.subjectCode === subjectCode)
@@ -182,76 +185,95 @@ const State = (() => {
 
     if (allRows.length === 0) return null;
 
-    // Active KT = latest result overall is Fail or AB
-    const overallLatest = allRows[allRows.length - 1];
-    if (overallLatest.result === 'Fail' || overallLatest.result === 'AB') {
-      return 'Active KT';
-    }
+    // Resolve the target session — if gazette, resolve to its linked prelim
+    const targetSess = getSession(sessionId);
+    if (!targetSess) return null;
+    const targetPrelimId = targetSess.entryType === 'Final Gazette'
+      ? targetSess.linkedPrelimSessionId
+      : sessionId;
 
-    // Latest row for this specific session
-    const sessionRows = allRows.filter(r => r.examSession === sessionId);
-
-    // No rows in this session — subject was cleared in a prior session, carry forward that tag
+    // No rows in this session — carry forward tag from the session where subject was cleared
+    const sessionRows = allRows.filter(r => r.examSession === sessionId ||
+      (targetSess.entryType === 'Final Gazette' && r.examSession === targetPrelimId));
     if (sessionRows.length === 0) {
-      // Find the session where this subject was actually cleared (latest Pass)
-      const clearingRow = [...allRows].reverse().find(r => r.result === 'Pass');
-      if (!clearingRow) return null;
-      return computeAttemptTag(uin, subjectCode, clearingRow.examSession);
+      // Find the gazette or prelim session where this subject was last cleared
+      const allSessIds = [...new Set(allRows.map(r => r.examSession))];
+      const clearingSess = allSessIds
+        .map(id => getSession(id))
+        .filter(Boolean)
+        .sort((a, b) => b.id.localeCompare(a.id)) // latest first
+        .find(s => {
+          const rows = allRows.filter(r => r.examSession === s.id);
+          const last = rows[rows.length - 1];
+          return last?.result === 'Pass';
+        });
+      if (!clearingSess) return null;
+      // Recurse using gazette if one exists, else prelim
+      const allSessions = getSessions();
+      const gazette = allSessions.find(s =>
+        s.entryType === 'Final Gazette' && s.linkedPrelimSessionId === clearingSess.id);
+      return computeAttemptTag(uin, subjectCode, gazette?.id || clearingSess.id);
     }
 
-    const latest = sessionRows[sessionRows.length - 1];
+    // Determine overall pass/fail for the target session (merge prelim+gazette)
+    const prelimRows = allRows.filter(r => r.examSession === targetPrelimId)
+      .sort((a, b) => a.entryDateTime.localeCompare(b.entryDateTime));
+    const gazetteRows = targetSess.entryType === 'Final Gazette'
+      ? allRows.filter(r => r.examSession === sessionId)
+          .sort((a, b) => a.entryDateTime.localeCompare(b.entryDateTime))
+      : [];
 
-    // For Final Gazette sessions, the stored result is '' — recompute from merged marks
-    const sess = getSession(sessionId);
-    let resolvedResult = latest.result;
-    if (sess?.entryType === 'Final Gazette' && sess.linkedPrelimSessionId) {
-      // Merge gazette ESE with prelim IAT/TW/Oral
-      const prelimRows = allRows.filter(r => r.examSession === sess.linkedPrelimSessionId);
-      const prelimLatest = prelimRows[prelimRows.length - 1];
-      if (prelimLatest) {
-        const mergedMarks = {};
-        if (latest.eseMarks    !== '') mergedMarks.ESE  = latest.eseMarks;
-        if (prelimLatest.iatMarks  !== '') mergedMarks.IAT  = prelimLatest.iatMarks;
-        if (prelimLatest.twMarks   !== '') mergedMarks.TW   = prelimLatest.twMarks;
-        if (prelimLatest.oralMarks !== '') mergedMarks.Oral = prelimLatest.oralMarks;
-        // Fall back to prelim ESE if gazette has none
-        if (!mergedMarks.ESE && prelimLatest.eseMarks !== '') mergedMarks.ESE = prelimLatest.eseMarks;
-        const subjectList = getSubjectsForSem(Number(latest.semester), latest.branch, sess);
-        const subj = subjectList.find(s => s.code === subjectCode);
-        if (subj) {
-          const dr = computeDisplayResult(subj, mergedMarks);
-          resolvedResult = dr.pending ? '' : dr.result;
-        }
-      }
+    const prelimLatest  = prelimRows[prelimRows.length - 1];
+    const gazetteLatest = gazetteRows[gazetteRows.length - 1];
+
+    // Resolve final result and reval tag per Excel logic
+    let resolvedResult, revalSuffix;
+    if (gazetteLatest) {
+      const pRes = prelimLatest?.result;
+      const gRes = gazetteLatest.result;
+      if      (pRes === 'Pass' && gRes === 'Fail') { resolvedResult = 'Fail'; revalSuffix = ' after Reval'; }
+      else if (pRes === 'Fail' && gRes === 'Pass') { resolvedResult = 'Pass'; revalSuffix = ' after Reval'; }
+      else if (pRes === 'Pass' && gRes === 'Pass') { resolvedResult = 'Pass'; revalSuffix = ': Marks changed'; }
+      else if (pRes === 'Fail' && gRes === 'Fail') { resolvedResult = 'Fail'; revalSuffix = ': Marks changed'; }
+      else { resolvedResult = gRes || pRes; revalSuffix = ''; }
+    } else {
+      resolvedResult = prelimLatest?.result;
+      revalSuffix = '';
     }
 
     if (resolvedResult !== 'Pass') return null;
 
-    // Count attempts: each prior Preliminary session with a Fail/AB = one failed attempt
-    // Gazette sessions are never counted as standalone attempts — they're part of their prelim
-    const priorFailSessionIds = new Set(
-      allRows
-        .filter(r => {
-          if (r.entryDateTime >= latest.entryDateTime) return false;
-          if (r.result !== 'Fail' && r.result !== 'AB') return false;
-          const rSess = getSession(r.examSession);
-          // Only count Preliminary sessions — skip Final Gazette
-          return rSess?.entryType !== 'Final Gazette';
-        })
-        .map(r => r.examSession)
-    );
-    const attemptNumber = priorFailSessionIds.size + 1;
+    // Count attempt number:
+    // Walk ALL Preliminary sessions in chronological order,
+    // scoped to this subject's semester and applicable to this student's batch.
+    // Only count sessions where the student has a ledger row (No Record = skip).
+    // Stop at targetPrelimId.
+    const subjectSemester = Number(prelimLatest?.semester || allRows[0]?.semester);
+    const allPrelimSessions = getSessions()
+      .filter(s =>
+        s.entryType === 'Preliminary' &&
+        s.semester   === subjectSemester &&
+        Number(s.batchYear) >= Number(student.batchYear)
+      )
+      .sort((a, b) => a.id.localeCompare(b.id));
 
-    const isReval = _detectReval(uin, subjectCode, sessionId);
-
-    if (attemptNumber === 1) {
-      return isReval ? 'Cleared in Regular attempt after Reval' : 'Cleared in Regular attempt';
+    let attemptNumber = 0;
+    for (const s of allPrelimSessions) {
+      const hasRecord = allRows.some(r => r.examSession === s.id);
+      if (!hasRecord) continue; // No Record = do not count this attempt
+      attemptNumber++;
+      if (s.id === targetPrelimId) break;
     }
 
-    const ordinal = attemptNumber === 2 ? '2nd'
-                  : attemptNumber === 3 ? '3rd'
-                  : `${attemptNumber}th`;
-    return isReval ? `Cleared in ${ordinal} attempt after Reval` : `Cleared in ${ordinal} attempt`;
+    if (attemptNumber === 0) return null;
+
+    const outcomeWord = resolvedResult === 'Pass' ? 'Cleared in' : 'Unsuccessful in';
+    const attemptLabel = attemptNumber === 1 ? 'Regular attempt'
+      : attemptNumber === 2 ? '2nd attempt'
+      : attemptNumber === 3 ? '3rd attempt'
+      : `${attemptNumber}th attempt`;
+
+    return `${outcomeWord} ${attemptLabel}${revalSuffix}`;
   }
 
   // Detect reval: for a Final Gazette session, check if ESE differs from linked Preliminary session
