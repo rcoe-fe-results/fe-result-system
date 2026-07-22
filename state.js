@@ -1471,13 +1471,38 @@ const State = (() => {
         byStudent[r.uin].subjectRows[r.subjectCode] = r;
     }
 
-    // Apply gazette override and compute KT subjects
+    // Apply gazette override, recompute result from merged marks
+    const prelimSess = getSession(prelimSessionId);
     const buckets = {}; // ktCount → [{ uin, prn, name, branch, ktSubjects }]
     for (const { uin, prn, name, branch: br, subjectRows } of Object.values(byStudent)) {
       const ktSubjects = [];
       for (const [subjectCode, row] of Object.entries(subjectRows)) {
         const gz = gazetteIndex[uin + '||' + subjectCode];
-        const result = gz ? (gz.result || row.result) : row.result;
+
+        // Merge marks: prelim base, gazette overrides any component it has
+        const mergedMarks = {};
+        if (row.iatMarks  !== '') mergedMarks.IAT  = row.iatMarks;
+        if (row.eseMarks  !== '') mergedMarks.ESE  = row.eseMarks;
+        if (row.twMarks   !== '') mergedMarks.TW   = row.twMarks;
+        if (row.oralMarks !== '') mergedMarks.Oral = row.oralMarks;
+        if (gz) {
+          if (gz.eseMarks  !== '') mergedMarks.ESE  = gz.eseMarks;
+          if (gz.iatMarks  !== '') mergedMarks.IAT  = gz.iatMarks;
+          if (gz.twMarks   !== '') mergedMarks.TW   = gz.twMarks;
+          if (gz.oralMarks !== '') mergedMarks.Oral = gz.oralMarks;
+        }
+
+        // Recompute result from merged marks using subject config
+        const subjectList = getSubjectsForSem(Number(row.semester), br, prelimSess);
+        const subj = subjectList.find(s => s.code === subjectCode);
+        let result;
+        if (subj) {
+          const dr = computeDisplayResult(subj, mergedMarks);
+          result = dr.pending ? 'Pending' : dr.result;
+        } else {
+          result = gz ? (gz.result || row.result) : row.result; // fallback for unknown subject
+        }
+
         if (result === 'Fail' || result === 'AB')
           ktSubjects.push({ subjectCode, subjectName: row.subjectName, result });
       }
