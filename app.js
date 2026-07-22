@@ -1971,53 +1971,48 @@ function _dashRenderHeatmap() {
 
 function initReports() {
   const sessions = sortSessions(State.getSessions());
+  const subjects = State.getAllSubjects();
 
-  // Populate Year dropdown from session data (unique years present)
+  // ── Shared filters ────────────────────────────────────────
   const allSessionYears = [...new Set(sessions.map(s => Number(s.name.slice(0,4))))].sort((a,b) => b-a);
   const yearEl = document.getElementById('rpt-year');
   yearEl.innerHTML = '<option value="">— all —</option>' +
     allSessionYears.map(y => `<option value="${y}">${y}</option>`).join('');
+  UI.buildSelect('rpt-shared-branch', BRANCHES, '— all —');
 
-  // Populate branch and batchYear dropdowns
-  UI.buildSelect('rpt-branch', BRANCHES, '— all branches —');
+  // Fire all three blocks on shared filter change
+  const sharedIds = ['rpt-year','rpt-month','rpt-semester','rpt-shared-branch','rpt-shared-gender'];
+  sharedIds.forEach(id => {
+    document.getElementById(id)?.addEventListener('change', () => {
+      _rptLiveResultSummary();
+      _rptLiveRevalImpact();
+      _rptLiveToppers();
+    });
+  });
+
+  // ── Result Summary ────────────────────────────────────────
   const years = State.getBatchYears();
   UI.buildSelect('rpt-batch', years, '— all years —');
-
-  // Populate subject dropdown from ledger
-  const subjects = State.getAllSubjects();
   const subjEl = document.getElementById('rpt-subject');
   subjEl.innerHTML = '<option value="">— all subjects —</option>' +
     subjects.map(s => `<option value="${UI.esc(s.code)}">${UI.esc(s.code)} — ${UI.esc(s.name)}</option>`).join('');
-
-  // Wire live result summary
-  ['rpt-year','rpt-month','rpt-semester','rpt-branch','rpt-batch','rpt-subject','rpt-component','rpt-gender'].forEach(id => {
+  ['rpt-batch','rpt-subject','rpt-component'].forEach(id => {
     document.getElementById(id)?.addEventListener('change', _rptLiveResultSummary);
   });
-  _rptLiveResultSummary(); // initial render
+  _rptLiveResultSummary();
 
-  // Reval filters
-  UI.buildSelect('rpt-reval-branch', BRANCHES, '— all branches —');
+  // ── Reval Impact ──────────────────────────────────────────
   UI.buildSelect('rpt-reval-subject', [{ code:'', name:'All subjects' }, ...subjects], '— all subjects —', 'code', 'name');
-  ['rpt-reval-session','rpt-reval-branch','rpt-reval-subject'].forEach(id => {
-    document.getElementById(id)?.addEventListener('change', _rptLiveRevalImpact);
-  });
-  UI.buildSelect('rpt-reval-session', sessions, '— all sessions —', 'id', 'name');
+  document.getElementById('rpt-reval-subject')?.addEventListener('change', _rptLiveRevalImpact);
   _rptLiveRevalImpact();
 
-  // Topper filters
-  UI.buildSelect('rpt-topper-branch', BRANCHES, '— all branches —');
+  // ── Topper List ───────────────────────────────────────────
   UI.buildSelect('rpt-topper-subject', [{ code:'', name:'All subjects' }, ...subjects], '— all subjects —', 'code', 'name');
-  UI.buildSelect('rpt-topper-examgroup', State.getExamGroups(), '— select exam —', 'key', 'label');
   document.getElementById('rpt-topper-mode').onchange = _rptToggleTopperMode;
   _rptToggleTopperMode();
-  ['rpt-topper-examgroup','rpt-topper-branch','rpt-topper-mode','rpt-topper-subject','rpt-topper-n'].forEach(id => {
+  ['rpt-topper-mode','rpt-topper-subject','rpt-topper-n'].forEach(id => {
     document.getElementById(id)?.addEventListener('change', _rptLiveToppers);
     document.getElementById(id)?.addEventListener('input', _rptLiveToppers);
-  });
-
-  // Segmented control for topper gender panels
-  document.querySelectorAll('.topper-seg-btn').forEach(btn => {
-    btn.addEventListener('click', () => _rptSwitchTopperPanel(btn.dataset.panel));
   });
 
   // Populate per-card session selects
@@ -2371,16 +2366,34 @@ function _rptBatchCompareCsv() {
 }
 
 // ── Result Summary (live) ─────────────────────────────────────
+function _rptGetSharedExamGroup() {
+  const year     = document.getElementById('rpt-year').value     || null;
+  const month    = document.getElementById('rpt-month').value    || null;
+  const semester = document.getElementById('rpt-semester').value || null;
+  if (!year || !month || !semester) return null;
+  const allSessions = State.getSessions();
+  const mo     = month === 'December' ? 'Dec' : 'May';
+  const sem    = semester === '1' ? 'Sem-I' : 'Sem-II';
+  const prefix = `${year}_${mo}_${sem}_`;
+  const prelim  = allSessions.find(s => s.name === prefix + 'Preliminary');
+  const gazette = allSessions.find(s => s.name === prefix + 'Final-Gazette');
+  if (!prelim) return null;
+  return {
+    prelimSessionId:  prelim.id,
+    gazetteSessionId: (gazette?.linkedPrelimSessionId === prelim.id ? gazette.id : null),
+  };
+}
+
 function _rptGetSummaryFilters() {
   return {
     year:        document.getElementById('rpt-year').value      || null,
     month:       document.getElementById('rpt-month').value     || null,
     semester:    document.getElementById('rpt-semester').value  || null,
-    branch:      document.getElementById('rpt-branch').value    || null,
+    branch:      document.getElementById('rpt-shared-branch').value || null,
     batchYear:   document.getElementById('rpt-batch').value     || null,
     subjectCode: document.getElementById('rpt-subject').value   || null,
     component:   document.getElementById('rpt-component').value || null,
-    gender:      document.getElementById('rpt-gender').value    || null,
+    gender:      document.getElementById('rpt-shared-gender').value || null,
   };
 }
 
@@ -2628,10 +2641,11 @@ function _rptExportResultSummary() {
 
 // ── Reval Impact (live) ───────────────────────────────────────
 function _rptGetRevalFilters() {
+  const group = _rptGetSharedExamGroup();
   return {
-    sessionId:   document.getElementById('rpt-reval-session').value  || null,
-    branch:      document.getElementById('rpt-reval-branch').value   || null,
-    subjectCode: document.getElementById('rpt-reval-subject').value  || null,
+    gazetteSessionId: group?.gazetteSessionId || null,
+    branch:           document.getElementById('rpt-shared-branch').value  || null,
+    subjectCode:      document.getElementById('rpt-reval-subject').value  || null,
   };
 }
 
@@ -2686,21 +2700,21 @@ function _rptToggleTopperMode() {
 }
 
 function _rptLiveToppers() {
-  const examGroupKey     = document.getElementById('rpt-topper-examgroup').value || null;
-  const group            = examGroupKey ? State.getExamGroups().find(g => g.key === examGroupKey) : null;
+  const group            = _rptGetSharedExamGroup();
   const sessionId        = group?.prelimSessionId  || null;
   const gazetteSessionId = group?.gazetteSessionId || null;
   const toppersWrap      = document.getElementById('rpt-toppers-wrap');
-  if (!examGroupKey) {
-    if (toppersWrap) toppersWrap.innerHTML = '<div style="text-align:center;color:var(--ink-4);padding:12px;font-size:12px;">Select an exam period.</div>';
+  if (!group) {
+    if (toppersWrap) toppersWrap.innerHTML = '<div style="text-align:center;color:var(--ink-4);padding:12px;font-size:12px;">Select an exam period above.</div>';
     return;
   }
   const mode        = document.getElementById('rpt-topper-mode').value || 'branch';
-  const branch      = document.getElementById('rpt-topper-branch').value || null;
+  const branch      = document.getElementById('rpt-shared-branch').value || null;
   const subjectCode = document.getElementById('rpt-topper-subject').value || null;
   const topN        = Number(document.getElementById('rpt-topper-n').value || 10);
+  const gender      = document.getElementById('rpt-shared-gender').value || null;
 
-  const data = State.reportToppers({ sessionId, gazetteSessionId, mode, branch, subjectCode, topN });
+  const data = State.reportToppers({ sessionId, gazetteSessionId, mode, branch, subjectCode, topN, gender });
   // data = { all: [...], male: [...], female: [...] }
 
   // Active panel from segmented control
@@ -2766,55 +2780,15 @@ function _rptLiveToppers() {
     </table></div>`;
   }
 
-  // Store data on wrapper for panel switching without re-querying State
-  toppersWrap._toppersData = data;
-  toppersWrap._toppersMode = mode;
-  toppersWrap.innerHTML = _renderPanel(data[activePanel]);
-}
-
-function _rptSwitchTopperPanel(panel) {
-  document.querySelectorAll('.topper-seg-btn').forEach(b => b.classList.toggle('active', b.dataset.panel === panel));
-  const wrap = document.getElementById('rpt-toppers-wrap');
-  if (!wrap || !wrap._toppersData) return;
-  const mode = wrap._toppersMode || 'branch';
-  const list = wrap._toppersData[panel] || [];
-  if (list.length === 0) {
-    wrap.innerHTML = '<div style="text-align:center;color:var(--ink-4);padding:16px;font-size:12px;">No data for this selection.</div>';
-    return;
-  }
-  if (mode === 'branch') {
-    let branchRows = '';
-    let lastBranch = null;
-    for (const d of list) {
-      if (d.branchGroup !== lastBranch) {
-        branchRows += `<tr><td colspan="6" style="background:var(--surface-2);font-weight:700;font-size:11px;letter-spacing:.05em;padding:6px 10px;color:var(--ink-2);">${UI.esc(d.branchGroup)}</td></tr>`;
-        lastBranch = d.branchGroup;
-      }
-      branchRows += `<tr>
-        <td style="font-weight:700;color:var(--brand);">#${d.rank}</td>
-        <td>${UI.esc(d.name)}</td>
-        <td><span class="subj-code-small">${UI.esc(d.uin)}</span></td>
-        <td>${UI.esc(d.gender || '—')}</td>
-        <td style="font-weight:600;">${d.totalMarks}</td>
-        <td>${d.totalCredits}</td>
-      </tr>`;
-    }
-    wrap.innerHTML = `<div class="report-table-wrap"><table class="report-table">
-      <thead><tr><th>Rank</th><th>Name</th><th>UIN</th><th>Gender</th><th>Total Marks</th><th>Credits</th></tr></thead>
-      <tbody>${branchRows}</tbody>
-    </table></div>`;
-  } else {
-    wrap.innerHTML = _renderSubjectTable(list);
-  }
+  toppersWrap.innerHTML = _renderPanel(data.all);
 }
 
 function _rptExportToppers() {
-  const examGroupKey    = document.getElementById('rpt-topper-examgroup').value || null;
-  const group           = examGroupKey ? State.getExamGroups().find(g => g.key === examGroupKey) : null;
+  const group           = _rptGetSharedExamGroup();
   const sessionId       = group?.prelimSessionId  || null;
   const gazetteSessionId = group?.gazetteSessionId || null;
   const mode        = document.getElementById('rpt-topper-mode').value || 'branch';
-  const branch      = document.getElementById('rpt-topper-branch').value || null;
+  const branch      = document.getElementById('rpt-shared-branch').value || null;
   const subjectCode = document.getElementById('rpt-topper-subject').value || null;
   const topN        = Number(document.getElementById('rpt-topper-n').value || 10);
   const data = State.reportToppers({ sessionId, gazetteSessionId, mode, branch, subjectCode, topN });

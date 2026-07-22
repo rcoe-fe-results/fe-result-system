@@ -1120,10 +1120,10 @@ const State = (() => {
   // Reval Impact — filters: sessionId, branch?, subjectCode?
   // Returns both Fail→Pass (positive) and Pass→Fail (warning)
   // Reval is now determined dynamically: compares ESE between Final Gazette and linked Preliminary.
-  function reportRevalImpact({ sessionId, branch, subjectCode } = {}) {
+  function reportRevalImpact({ gazetteSessionId, branch, subjectCode } = {}) {
     // Find Final Gazette sessions matching the filter
     let finalSessions = sessions.filter(s => s.entryType === 'Final Gazette' && s.linkedPrelimSessionId);
-    if (sessionId) finalSessions = finalSessions.filter(s => s.id === sessionId);
+    if (gazetteSessionId) finalSessions = finalSessions.filter(s => s.id === gazetteSessionId);
 
     const result = [];
 

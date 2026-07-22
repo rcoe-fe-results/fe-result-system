@@ -1039,10 +1039,8 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
     <!-- ─── TAB: Reports ─── -->
     <div id="tab-reports" class="tab-pane hidden">
 
-      <!-- ── Result Summary ── -->
-      <div class="report-section">
-        <h3>Result Summary</h3>
-        <p>Pass %, Fail %, AB % and average marks per subject. Filters update the table live.</p>
+      <!-- ── Shared Report Filters ── -->
+      <div class="report-section" style="padding-bottom:12px;">
         <div class="report-filters">
           <div class="filter-group">
             <label>Year</label>
@@ -1066,8 +1064,24 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
           </div>
           <div class="filter-group">
             <label>Branch</label>
-            <select id="rpt-branch" style="min-width:130px;"><option value="">— all —</option></select>
+            <select id="rpt-shared-branch" style="min-width:130px;"><option value="">— all —</option></select>
           </div>
+          <div class="filter-group">
+            <label>Gender</label>
+            <select id="rpt-shared-gender" style="min-width:100px;">
+              <option value="">All</option>
+              <option value="Male">Male</option>
+              <option value="Female">Female</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Result Summary ── -->
+      <div class="report-section">
+        <h3>Result Summary</h3>
+        <p>Pass %, Fail %, AB % and average marks per subject. Filters update the table live.</p>
+        <div class="report-filters">
           <div class="filter-group">
             <label>Batch Year</label>
             <select id="rpt-batch" style="min-width:110px;"><option value="">— all —</option></select>
@@ -1084,14 +1098,6 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
               <option value="ESE">ESE only</option>
               <option value="TW">TW only</option>
               <option value="Oral">Oral only</option>
-            </select>
-          </div>
-          <div class="filter-group">
-            <label>Gender</label>
-            <select id="rpt-gender" style="min-width:100px;">
-              <option value="">All</option>
-              <option value="Male">Male</option>
-              <option value="Female">Female</option>
             </select>
           </div>
           <div class="filter-group" style="justify-content:flex-end;">
@@ -1123,14 +1129,6 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
         <p>Students whose result changed after revaluation. <span style="color:var(--pass);font-weight:600;">↑ Improved</span> = Fail→Pass. <span style="color:var(--fail);font-weight:600;">⚠ Worsened</span> = Pass→Fail (flagged).</p>
         <div class="report-filters">
           <div class="filter-group">
-            <label>Session</label>
-            <select id="rpt-reval-session" style="min-width:180px;"><option value="">— all sessions —</option></select>
-          </div>
-          <div class="filter-group">
-            <label>Branch</label>
-            <select id="rpt-reval-branch" style="min-width:130px;"><option value="">— all —</option></select>
-          </div>
-          <div class="filter-group">
             <label>Subject</label>
             <select id="rpt-reval-subject" style="min-width:200px;"><option value="">— all subjects —</option></select>
           </div>
@@ -1160,19 +1158,11 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
         <p>Branch-wise: top N by total marks per branch. Subject-wise: top 3 per branch for a given subject.</p>
         <div class="report-filters">
           <div class="filter-group">
-            <label>Exam Period <span style="color:var(--fail);">*</span></label>
-            <select id="rpt-topper-examgroup" style="min-width:220px;"><option value="">— select exam —</option></select>
-          </div>
-          <div class="filter-group">
             <label>Mode</label>
             <select id="rpt-topper-mode" style="min-width:130px;">
               <option value="branch">Branch-wise</option>
               <option value="subject">Subject-wise</option>
             </select>
-          </div>
-          <div class="filter-group">
-            <label>Branch</label>
-            <select id="rpt-topper-branch" style="min-width:130px;"><option value="">— all branches —</option></select>
           </div>
           <div class="filter-group" id="rpt-topper-subject-row">
             <label>Subject</label>
@@ -1186,11 +1176,6 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
             <label>&nbsp;</label>
             <button id="rpt-toppers-csv" class="btn btn-secondary btn-sm">⬇ Export CSV</button>
           </div>
-        </div>
-        <div class="seg-control" style="margin-bottom:10px;">
-          <button class="topper-seg-btn active" data-panel="all">All</button>
-          <button class="topper-seg-btn" data-panel="male">Male</button>
-          <button class="topper-seg-btn" data-panel="female">Female</button>
         </div>
         <div id="rpt-toppers-wrap">
           <div style="text-align:center;color:var(--ink-4);padding:12px;font-size:12px;">Select a session.</div>
