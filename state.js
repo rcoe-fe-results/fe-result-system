@@ -182,37 +182,62 @@ const State = (() => {
 
     if (allRows.length === 0) return null;
 
-    // Latest row for this specific session
-    const sessionRows = allRows.filter(r => r.examSession === sessionId);
-    if (sessionRows.length === 0) return null;
-    const latest = sessionRows[sessionRows.length - 1];
-
     // Active KT = latest result overall is Fail or AB
     const overallLatest = allRows[allRows.length - 1];
     if (overallLatest.result === 'Fail' || overallLatest.result === 'AB') {
       return 'Active KT';
     }
 
+    // Latest row for this specific session
+    const sessionRows = allRows.filter(r => r.examSession === sessionId);
+
+    // No rows in this session — subject was cleared in a prior session, carry forward that tag
+    if (sessionRows.length === 0) {
+      // Find the session where this subject was actually cleared (latest Pass)
+      const clearingRow = [...allRows].reverse().find(r => r.result === 'Pass');
+      if (!clearingRow) return null;
+      return computeAttemptTag(uin, subjectCode, clearingRow.examSession);
+    }
+
+    const latest = sessionRows[sessionRows.length - 1];
     if (latest.result !== 'Pass') return null;
 
-    // Is this a KT attempt? — student had any prior Fail/AB for this subject in EARLIER session
-    const session = getSession(sessionId);
-    const priorFail = allRows.some(r => {
-      if (r.examSession === sessionId) return false;
-      const rSession = getSession(r.examSession);
-      // Earlier in time = session created before current (compare session IDs as timestamps via prefix)
-      // We compare entryDateTime as a proxy — any Fail/AB before the earliest entry in this session
-      return (r.result === 'Fail' || r.result === 'AB') &&
-             r.entryDateTime < (sessionRows[0]?.entryDateTime || '');
-    });
+    // Count distinct attempt sittings for this subject up to and including this session
+    // A Preliminary + its linked Final Gazette = one attempt
+    const allSessionIds = [...new Set(allRows.map(r => r.examSession))];
+    const orderedSessions = allSessionIds
+      .map(id => getSession(id))
+      .filter(Boolean)
+      .sort((a, b) => a.id.localeCompare(b.id));
 
-    // Is this a Reval? — compare ESE between Preliminary and Final Gazette
+    // Deduplicate: gazette counts as same attempt as its linked prelim
+    const countedIds = new Set();
+    let attemptNumber = 0;
+    for (const s of orderedSessions) {
+      if (countedIds.has(s.id)) continue;
+      if (s.entryType === 'Final Gazette' && s.linkedPrelimSessionId &&
+          allSessionIds.includes(s.linkedPrelimSessionId)) {
+        countedIds.add(s.id);
+        countedIds.add(s.linkedPrelimSessionId);
+      } else {
+        countedIds.add(s.id);
+      }
+      attemptNumber++;
+      // Stop once we've counted up to the clearing session
+      if (s.id === sessionId ||
+          (s.entryType === 'Final Gazette' && s.linkedPrelimSessionId === sessionId)) break;
+    }
+
     const isReval = _detectReval(uin, subjectCode, sessionId);
 
-    if (priorFail) {
-      return isReval ? 'Cleared in KT attempt after Reval' : 'Cleared in KT attempt';
+    if (attemptNumber === 1) {
+      return isReval ? 'Cleared in Regular attempt after Reval' : 'Cleared in Regular attempt';
     }
-    return isReval ? 'Cleared in Regular attempt after Reval' : 'Cleared in Regular attempt';
+
+    const ordinal = attemptNumber === 2 ? '2nd'
+                  : attemptNumber === 3 ? '3rd'
+                  : `${attemptNumber}th`;
+    return isReval ? `Cleared in ${ordinal} attempt after Reval` : `Cleared in ${ordinal} attempt`;
   }
 
   // Detect reval: for a Final Gazette session, check if ESE differs from linked Preliminary session
