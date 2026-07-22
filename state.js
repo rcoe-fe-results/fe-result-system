@@ -278,8 +278,8 @@ const State = (() => {
         let revalSuffix = '';
         if (prelimResult === 'Pass' && mergedResult === 'Fail') revalSuffix = ' after Reval';
         else if (prelimResult === 'Fail' && mergedResult === 'Pass') revalSuffix = ' after Reval';
-        else if (prelimResult === 'Pass' && mergedResult === 'Pass') revalSuffix = ': Marks changed';
-        else if (prelimResult === 'Fail' && mergedResult === 'Fail') revalSuffix = ': Marks changed';
+        else if (prelimResult === 'Pass' && mergedResult === 'Pass') revalSuffix = ': Marks Revaluated';
+        else if (prelimResult === 'Fail' && mergedResult === 'Fail') revalSuffix = ': Marks Revaluated';
 
         return { result: mergedResult, revalSuffix };
       }
