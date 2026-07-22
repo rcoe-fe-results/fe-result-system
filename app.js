@@ -1516,10 +1516,23 @@ function _pvShowStudent(uin) {
     2: sortSessionsChronological(sessionsWithData.filter(s => s.semester === 2)),
   };
 
-  // Track selected session per sem (default: latest = last in chronological)
+  // Default to latest Preliminary; Gazette remains selectable but not the default
+  function _latestPrelim(list) {
+    if (!list.length) return null;
+    const prelims = list.filter(s => s.entryType !== 'Final Gazette');
+    return prelims.length
+      ? prelims[prelims.length - 1].id
+      : list[list.length - 1].id;
+  }
+  // Default to Final Gazette if present (merged/final marks); else latest Prelim/KT
+  function _defaultSession(list) {
+    if (!list.length) return null;
+    const gazette = [...list].reverse().find(s => s.entryType === 'Final Gazette');
+    return gazette ? gazette.id : list[list.length - 1].id;
+  }
   const selectedSessId = {
-    1: semSessions[1].length > 0 ? semSessions[1][semSessions[1].length - 1].id : null,
-    2: semSessions[2].length > 0 ? semSessions[2][semSessions[2].length - 1].id : null,
+    1: _defaultSession(semSessions[1]),
+    2: _defaultSession(semSessions[2]),
   };
 
   // ── Render helper: one semester table ─────────────────────────
@@ -1528,6 +1541,10 @@ function _pvShowStudent(uin) {
     const sessId    = selectedSessId[sem];
     const sess      = sessId ? sessionMap[sessId] : null;
     const acadSess  = academics?.sessionResults.find(sr => sr.session.id === sessId);
+    // For Final Gazette: also get the linked Prelim acadSess for full subject list
+    const prelimAcadSess = (sess?.entryType === 'Final Gazette' && sess.linkedPrelimSessionId)
+      ? academics?.sessionResults.find(sr => sr.session.id === sess.linkedPrelimSessionId)
+      : null;
 
     // Session selector — hidden if only one session
     const selectorHtml = sessions.length <= 1
@@ -1570,9 +1587,20 @@ function _pvShowStudent(uin) {
     if (!sess) {
       rowsHtml = `<tr><td colspan="14" class="muted" style="text-align:center;padding:16px;">No records yet.</td></tr>`;
     } else {
-      const displaySubjects = acadSess
-        ? acadSess.subjects
-        : [];
+      // When Gazette is selected: use Prelim subject list as base (full list),
+      // overlay Gazette entries (merged marks + revalMap) where they exist
+      let displaySubjects = [];
+      if (acadSess && prelimAcadSess) {
+        // Build gazette subject lookup by subjectCode
+        const gazMap = {};
+        for (const s of acadSess.subjects) gazMap[s.r.subjectCode] = s;
+        // Start from prelim full list, substitute gazette entry where present
+        displaySubjects = prelimAcadSess.subjects.map(s =>
+          gazMap[s.r.subjectCode] || s
+        );
+      } else {
+        displaySubjects = acadSess ? acadSess.subjects : [];
+      }
 
       for (const subjEntry of displaySubjects) {
         const r        = subjEntry.r;
