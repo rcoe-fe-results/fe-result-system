@@ -195,7 +195,8 @@ const State = (() => {
       return m;
     }
 
-    // Helper: merge all ledger rows for a given sessionId into one pseudo-row
+    // Helper: merge all ledger rows for a given sessionId into one pseudo-row,
+    // carrying forward passing component marks from prior sessions when missing.
     function _mergedRow(sid) {
       const rows = allRows.filter(r => r.examSession === sid)
         .sort((a, b) => a.entryDateTime.localeCompare(b.entryDateTime));
@@ -207,6 +208,37 @@ const State = (() => {
         if (r.twMarks   !== '') base.twMarks   = r.twMarks;
         if (r.oralMarks !== '') base.oralMarks = r.oralMarks;
       }
+
+      // Carry forward passing component marks from prior sessions if missing here
+      const priorRows = allRows
+        .filter(r => r.examSession !== sid && r.entryDateTime < rows[0].entryDateTime)
+        .sort((a, b) => a.entryDateTime.localeCompare(b.entryDateTime));
+
+      const priorMerged = {};
+      for (const r of priorRows) {
+        if (r.iatMarks  !== '') priorMerged.iatMarks  = r.iatMarks;
+        if (r.eseMarks  !== '') priorMerged.eseMarks  = r.eseMarks;
+        if (r.twMarks   !== '') priorMerged.twMarks   = r.twMarks;
+        if (r.oralMarks !== '') priorMerged.oralMarks = r.oralMarks;
+      }
+
+      const subj = (() => {
+        const sess = getSession(sid);
+        const list = getSubjectsForSem(Number(base.semester), base.branch || student.branch, sess);
+        return list.find(s => s.code === subjectCode) || null;
+      })();
+
+      for (const [field, comp] of [['iatMarks','IAT'],['eseMarks','ESE'],['twMarks','TW'],['oralMarks','Oral']]) {
+        if (base[field] !== '') continue; // already has value
+        if (!priorMerged[field]) continue; // no prior value
+        if (!subj) continue;
+        const max = subj.marks[comp];
+        const parsed = parseMarkValue(priorMerged[field], max);
+        const passed = parsed.valid && !parsed.absent &&
+          (parsed.grace || (max && parsed.value / max >= 0.40));
+        if (passed) base[field] = priorMerged[field];
+      }
+
       return base;
     }
 
