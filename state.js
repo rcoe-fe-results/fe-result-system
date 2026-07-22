@@ -828,13 +828,13 @@ const State = (() => {
         // For KT sessions (different batchYear from student): carry forward
         // passing component marks from prior sessions of the same semester.
         // Only failed components get new marks; passed ones are carried forward.
-        if (sess.batchYear !== student.batchYear) {
-          const priorSessRows = Object.values(latestPerSessionSubject).filter(pr =>
-            pr.subjectCode === r.subjectCode &&
-            pr.examSession !== sess.id &&
-            Number(pr.semester) === Number(r.semester)
-          ).sort((a, b) => a.entryDateTime.localeCompare(b.entryDateTime));
+        const priorSessRows = Object.values(latestPerSessionSubject).filter(pr =>
+          pr.subjectCode === r.subjectCode &&
+          pr.examSession !== sess.id &&
+          Number(pr.semester) === Number(r.semester)
+        ).sort((a, b) => a.entryDateTime.localeCompare(b.entryDateTime));
 
+        if (priorSessRows.length > 0) {
           // Build latest prior component values
           const priorMarks = {};
           for (const pr of priorSessRows) {
