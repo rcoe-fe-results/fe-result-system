@@ -1467,6 +1467,7 @@ function _pvMarkTag(markStr, maxMark) {
 }
 
 function _pvShowStudent(uin) {
+  try {
   const student  = State.getStudent(uin);
   const ledger   = State.getLedgerForStudent(uin);
   document.getElementById('pv-results').innerHTML = '';
@@ -1738,6 +1739,13 @@ function _pvShowStudent(uin) {
     const block = document.getElementById(`pv-sem-block-${sem}`);
     if (block) block.outerHTML = _pvRenderSemTable(sem);
   });
+  } catch(e) {
+    document.getElementById('pv-timeline').innerHTML =
+      `<div style="color:red;padding:16px;font-size:12px;font-family:monospace;">
+        ERROR: ${e.message}<br><pre>${e.stack}</pre>
+      </div>`;
+    console.error('[_pvShowStudent]', e);
+  }
 }
 
 
