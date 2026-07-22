@@ -227,34 +227,20 @@ const State = (() => {
 
     if (resolvedResult !== 'Pass') return null;
 
-    // Count attempts: each prior Fail/AB submission = one failed attempt, final Pass = +1
-    // Prelim + linked Gazette = one attempt (reval), not two
-    const priorFailRows = allRows.filter(r => {
-      if (r.entryDateTime >= latest.entryDateTime) return false;
-      if (r.result === 'Fail' || r.result === 'AB') return true;
-      // For gazette rows with empty result, treat as fail if it's not the clearing session
-      if (r.result === '' && r.examSession !== sessionId) {
-        const rSess = getSession(r.examSession);
-        // Only count prelim of a gazette pair once — skip the gazette half
-        if (rSess?.entryType === 'Final Gazette') return false;
-        return true;
-      }
-      return false;
-    });
-
-    // Deduplicate: group prelim+gazette as one attempt
-    const failSessionIds = [...new Set(priorFailRows.map(r => r.examSession))];
-    const deduped = new Set();
-    for (const sid of failSessionIds) {
-      const s = getSession(sid);
-      if (s?.entryType === 'Final Gazette' && s.linkedPrelimSessionId &&
-          failSessionIds.includes(s.linkedPrelimSessionId)) {
-        deduped.add(s.linkedPrelimSessionId); // count as one under the prelim
-      } else {
-        deduped.add(sid);
-      }
-    }
-    const attemptNumber = deduped.size + 1;
+    // Count attempts: each prior Preliminary session with a Fail/AB = one failed attempt
+    // Gazette sessions are never counted as standalone attempts — they're part of their prelim
+    const priorFailSessionIds = new Set(
+      allRows
+        .filter(r => {
+          if (r.entryDateTime >= latest.entryDateTime) return false;
+          if (r.result !== 'Fail' && r.result !== 'AB') return false;
+          const rSess = getSession(r.examSession);
+          // Only count Preliminary sessions — skip Final Gazette
+          return rSess?.entryType !== 'Final Gazette';
+        })
+        .map(r => r.examSession)
+    );
+    const attemptNumber = priorFailSessionIds.size + 1;
 
     const isReval = _detectReval(uin, subjectCode, sessionId);
 
