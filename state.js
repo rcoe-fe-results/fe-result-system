@@ -1234,6 +1234,37 @@ const State = (() => {
           if (merged.eseMarks  !== '') marksMap.ESE  = merged.eseMarks;
           if (merged.twMarks   !== '') marksMap.TW   = merged.twMarks;
           if (merged.oralMarks !== '') marksMap.Oral = merged.oralMarks;
+
+          // Carry forward passing component marks from prior sessions
+          // (handles KT sessions where e.g. IAT was passed in an earlier attempt)
+          if (Object.keys(marksMap).length < Object.keys(subj.marks).length) {
+            const priorRows = ledger
+              .filter(r =>
+                r.uin         === prelim.uin &&
+                r.subjectCode === code &&
+                r.examSession !== prelimSessionId &&
+                (!gazetteSessionId || r.examSession !== gazetteSessionId)
+              )
+              .sort((a, b) => a.entryDateTime.localeCompare(b.entryDateTime));
+
+            const priorMerged = {};
+            for (const r of priorRows) {
+              if (r.iatMarks  !== '') priorMerged.IAT  = r.iatMarks;
+              if (r.eseMarks  !== '') priorMerged.ESE  = r.eseMarks;
+              if (r.twMarks   !== '') priorMerged.TW   = r.twMarks;
+              if (r.oralMarks !== '') priorMerged.Oral = r.oralMarks;
+            }
+
+            for (const [comp, val] of Object.entries(priorMerged)) {
+              if (marksMap[comp] !== undefined) continue; // already have a value
+              const max    = subj.marks[comp];
+              const parsed = parseMarkValue(val, max);
+              const passed = parsed.valid && !parsed.absent &&
+                (parsed.grace || (max && parsed.value / max >= 0.40));
+              if (passed) marksMap[comp] = val;
+            }
+          }
+
           const dr = computeDisplayResult(subj, marksMap);
           if (!dr.pending) result = dr.result;
         }
