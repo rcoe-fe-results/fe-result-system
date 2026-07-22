@@ -1504,7 +1504,8 @@ function _pvShowStudent(uin) {
   const studentSessionIds = [...new Set(ledger.map(r => r.examSession))];
   const sessionsWithData  = studentSessionIds
     .map(id => sessionMap[id])
-    .filter(Boolean);
+    .filter(Boolean)
+    .filter(s => s.entryType !== 'Final Gazette'); // Gazette data is already merged into Prelim acadSess via revalMap
 
   const semSessions = {
     1: sortSessionsChronological(sessionsWithData.filter(s => s.semester === 1)),
