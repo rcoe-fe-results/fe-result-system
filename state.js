@@ -200,33 +200,61 @@ const State = (() => {
     }
 
     const latest = sessionRows[sessionRows.length - 1];
-    if (latest.result !== 'Pass') return null;
 
-    // Count distinct attempt sittings for this subject up to and including this session
-    // A Preliminary + its linked Final Gazette = one attempt
-    const allSessionIds = [...new Set(allRows.map(r => r.examSession))];
-    const orderedSessions = allSessionIds
-      .map(id => getSession(id))
-      .filter(Boolean)
-      .sort((a, b) => a.id.localeCompare(b.id));
-
-    // Deduplicate: gazette counts as same attempt as its linked prelim
-    const countedIds = new Set();
-    let attemptNumber = 0;
-    for (const s of orderedSessions) {
-      if (countedIds.has(s.id)) continue;
-      if (s.entryType === 'Final Gazette' && s.linkedPrelimSessionId &&
-          allSessionIds.includes(s.linkedPrelimSessionId)) {
-        countedIds.add(s.id);
-        countedIds.add(s.linkedPrelimSessionId);
-      } else {
-        countedIds.add(s.id);
+    // For Final Gazette sessions, the stored result is '' — recompute from merged marks
+    const sess = getSession(sessionId);
+    let resolvedResult = latest.result;
+    if (sess?.entryType === 'Final Gazette' && sess.linkedPrelimSessionId) {
+      // Merge gazette ESE with prelim IAT/TW/Oral
+      const prelimRows = allRows.filter(r => r.examSession === sess.linkedPrelimSessionId);
+      const prelimLatest = prelimRows[prelimRows.length - 1];
+      if (prelimLatest) {
+        const mergedMarks = {};
+        if (latest.eseMarks    !== '') mergedMarks.ESE  = latest.eseMarks;
+        if (prelimLatest.iatMarks  !== '') mergedMarks.IAT  = prelimLatest.iatMarks;
+        if (prelimLatest.twMarks   !== '') mergedMarks.TW   = prelimLatest.twMarks;
+        if (prelimLatest.oralMarks !== '') mergedMarks.Oral = prelimLatest.oralMarks;
+        // Fall back to prelim ESE if gazette has none
+        if (!mergedMarks.ESE && prelimLatest.eseMarks !== '') mergedMarks.ESE = prelimLatest.eseMarks;
+        const subjectList = getSubjectsForSem(Number(latest.semester), latest.branch, sess);
+        const subj = subjectList.find(s => s.code === subjectCode);
+        if (subj) {
+          const dr = computeDisplayResult(subj, mergedMarks);
+          resolvedResult = dr.pending ? '' : dr.result;
+        }
       }
-      attemptNumber++;
-      // Stop once we've counted up to the clearing session
-      if (s.id === sessionId ||
-          (s.entryType === 'Final Gazette' && s.linkedPrelimSessionId === sessionId)) break;
     }
+
+    if (resolvedResult !== 'Pass') return null;
+
+    // Count attempts: each prior Fail/AB submission = one failed attempt, final Pass = +1
+    // Prelim + linked Gazette = one attempt (reval), not two
+    const priorFailRows = allRows.filter(r => {
+      if (r.entryDateTime >= latest.entryDateTime) return false;
+      if (r.result === 'Fail' || r.result === 'AB') return true;
+      // For gazette rows with empty result, treat as fail if it's not the clearing session
+      if (r.result === '' && r.examSession !== sessionId) {
+        const rSess = getSession(r.examSession);
+        // Only count prelim of a gazette pair once — skip the gazette half
+        if (rSess?.entryType === 'Final Gazette') return false;
+        return true;
+      }
+      return false;
+    });
+
+    // Deduplicate: group prelim+gazette as one attempt
+    const failSessionIds = [...new Set(priorFailRows.map(r => r.examSession))];
+    const deduped = new Set();
+    for (const sid of failSessionIds) {
+      const s = getSession(sid);
+      if (s?.entryType === 'Final Gazette' && s.linkedPrelimSessionId &&
+          failSessionIds.includes(s.linkedPrelimSessionId)) {
+        deduped.add(s.linkedPrelimSessionId); // count as one under the prelim
+      } else {
+        deduped.add(sid);
+      }
+    }
+    const attemptNumber = deduped.size + 1;
 
     const isReval = _detectReval(uin, subjectCode, sessionId);
 
