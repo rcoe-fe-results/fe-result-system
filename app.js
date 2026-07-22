@@ -2600,19 +2600,38 @@ function _rptLiveToppers() {
         <tbody>${branchRows}</tbody>
       </table></div>`;
     } else {
-      return `<div class="report-table-wrap"><table class="report-table">
-        <thead><tr><th>Rank</th><th>Name</th><th>UIN</th><th>Branch</th><th>Gender</th><th>Subject</th><th>Total Marks</th></tr></thead>
-        <tbody>${list.map(d => `<tr>
-          <td style="font-weight:700;color:var(--brand);">#${d.rank}</td>
-          <td>${UI.esc(d.name)}</td>
-          <td><span class="subj-code-small">${UI.esc(d.uin)}</span></td>
-          <td>${UI.esc(d.branch)}</td>
-          <td>${UI.esc(d.gender || '—')}</td>
-          <td><span class="subj-code-small">${UI.esc(d.subjectCode)}</span></td>
-          <td style="font-weight:600;">${d.totalMarks}</td>
-        </tr>`).join('')}</tbody>
-      </table></div>`;
+      return _renderSubjectTable(list);
     }
+  }
+
+  function _renderSubjectTable(list) {
+    const multiSubject = new Set(list.map(d => d.subjectGroup)).size > 1;
+    const multiBranch  = new Set(list.map(d => d.branchGroup)).size  > 1;
+    let rows = '';
+    let lastSubj = null;
+    let lastBranch = null;
+    for (const d of list) {
+      if (multiSubject && d.subjectGroup !== lastSubj) {
+        rows += `<tr><td colspan="5" style="background:var(--brand);color:#fff;font-weight:700;font-size:12px;letter-spacing:.04em;padding:7px 10px;">${UI.esc(d.subjectName)} — <span style="opacity:.85;font-size:11px;">${UI.esc(d.subjectCode)}</span></td></tr>`;
+        lastSubj   = d.subjectGroup;
+        lastBranch = null; // reset branch tracker on new subject
+      }
+      if (multiBranch && d.branchGroup !== lastBranch) {
+        rows += `<tr><td colspan="5" style="background:var(--surface-2);font-weight:700;font-size:11px;letter-spacing:.05em;padding:6px 10px;color:var(--ink-2);">${UI.esc(d.branchGroup)}</td></tr>`;
+        lastBranch = d.branchGroup;
+      }
+      rows += `<tr>
+        <td style="font-weight:700;color:var(--brand);">#${d.rank}</td>
+        <td>${UI.esc(d.name)}</td>
+        <td><span class="subj-code-small">${UI.esc(d.uin)}</span></td>
+        <td>${UI.esc(d.gender || '—')}</td>
+        <td style="font-weight:600;">${d.totalMarks}</td>
+      </tr>`;
+    }
+    return `<div class="report-table-wrap"><table class="report-table">
+      <thead><tr><th>Rank</th><th>Name</th><th>UIN</th><th>Gender</th><th>Total Marks</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>`;
   }
 
   // Store data on wrapper for panel switching without re-querying State
@@ -2653,18 +2672,7 @@ function _rptSwitchTopperPanel(panel) {
       <tbody>${branchRows}</tbody>
     </table></div>`;
   } else {
-    wrap.innerHTML = `<div class="report-table-wrap"><table class="report-table">
-      <thead><tr><th>Rank</th><th>Name</th><th>UIN</th><th>Branch</th><th>Gender</th><th>Subject</th><th>Total Marks</th></tr></thead>
-      <tbody>${list.map(d => `<tr>
-        <td style="font-weight:700;color:var(--brand);">#${d.rank}</td>
-        <td>${UI.esc(d.name)}</td>
-        <td><span class="subj-code-small">${UI.esc(d.uin)}</span></td>
-        <td>${UI.esc(d.branch)}</td>
-        <td>${UI.esc(d.gender || '—')}</td>
-        <td><span class="subj-code-small">${UI.esc(d.subjectCode)}</span></td>
-        <td style="font-weight:600;">${d.totalMarks}</td>
-      </tr>`).join('')}</tbody>
-    </table></div>`;
+    wrap.innerHTML = _renderSubjectTable(list);
   }
 }
 

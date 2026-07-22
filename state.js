@@ -1256,10 +1256,10 @@ const State = (() => {
           totalMarks: Number(r.totalMarks)||0 });
       }
       const result = [];
-      for (const [, branches] of Object.entries(bySubjBranch)) {
-        for (const [, list] of Object.entries(branches)) {
+      for (const [sk, branches] of Object.entries(bySubjBranch)) {
+        for (const [bk, list] of Object.entries(branches)) {
           list.sort((a,b) => b.totalMarks - a.totalMarks);
-          list.slice(0, 3).forEach((s, i) => result.push({ rank: i+1, ...s }));
+          list.slice(0, 3).forEach((s, i) => result.push({ rank: i+1, subjectGroup: sk, branchGroup: bk, ...s }));
         }
       }
       return result;
