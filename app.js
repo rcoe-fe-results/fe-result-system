@@ -2579,17 +2579,25 @@ function _rptLiveToppers() {
       return '<div style="text-align:center;color:var(--ink-4);padding:16px;font-size:12px;">No data for this selection.</div>';
     }
     if (mode === 'branch') {
-      return `<div class="report-table-wrap"><table class="report-table">
-        <thead><tr><th>Rank</th><th>Name</th><th>UIN</th><th>Branch</th><th>Gender</th><th>Total Marks</th><th>Credits</th></tr></thead>
-        <tbody>${list.map(d => `<tr>
+      let branchRows = '';
+      let lastBranch = null;
+      for (const d of list) {
+        if (d.branchGroup !== lastBranch) {
+          branchRows += `<tr><td colspan="6" style="background:var(--surface-2);font-weight:700;font-size:11px;letter-spacing:.05em;padding:6px 10px;color:var(--ink-2);">${UI.esc(d.branchGroup)}</td></tr>`;
+          lastBranch = d.branchGroup;
+        }
+        branchRows += `<tr>
           <td style="font-weight:700;color:var(--brand);">#${d.rank}</td>
           <td>${UI.esc(d.name)}</td>
           <td><span class="subj-code-small">${UI.esc(d.uin)}</span></td>
-          <td>${UI.esc(d.branch)}</td>
           <td>${UI.esc(d.gender || '—')}</td>
           <td style="font-weight:600;">${d.totalMarks}</td>
           <td>${d.totalCredits}</td>
-        </tr>`).join('')}</tbody>
+        </tr>`;
+      }
+      return `<div class="report-table-wrap"><table class="report-table">
+        <thead><tr><th>Rank</th><th>Name</th><th>UIN</th><th>Gender</th><th>Total Marks</th><th>Credits</th></tr></thead>
+        <tbody>${branchRows}</tbody>
       </table></div>`;
     } else {
       return `<div class="report-table-wrap"><table class="report-table">
@@ -2624,17 +2632,25 @@ function _rptSwitchTopperPanel(panel) {
     return;
   }
   if (mode === 'branch') {
-    wrap.innerHTML = `<div class="report-table-wrap"><table class="report-table">
-      <thead><tr><th>Rank</th><th>Name</th><th>UIN</th><th>Branch</th><th>Gender</th><th>Total Marks</th><th>Credits</th></tr></thead>
-      <tbody>${list.map(d => `<tr>
+    let branchRows = '';
+    let lastBranch = null;
+    for (const d of list) {
+      if (d.branchGroup !== lastBranch) {
+        branchRows += `<tr><td colspan="6" style="background:var(--surface-2);font-weight:700;font-size:11px;letter-spacing:.05em;padding:6px 10px;color:var(--ink-2);">${UI.esc(d.branchGroup)}</td></tr>`;
+        lastBranch = d.branchGroup;
+      }
+      branchRows += `<tr>
         <td style="font-weight:700;color:var(--brand);">#${d.rank}</td>
         <td>${UI.esc(d.name)}</td>
         <td><span class="subj-code-small">${UI.esc(d.uin)}</span></td>
-        <td>${UI.esc(d.branch)}</td>
         <td>${UI.esc(d.gender || '—')}</td>
         <td style="font-weight:600;">${d.totalMarks}</td>
         <td>${d.totalCredits}</td>
-      </tr>`).join('')}</tbody>
+      </tr>`;
+    }
+    wrap.innerHTML = `<div class="report-table-wrap"><table class="report-table">
+      <thead><tr><th>Rank</th><th>Name</th><th>UIN</th><th>Gender</th><th>Total Marks</th><th>Credits</th></tr></thead>
+      <tbody>${branchRows}</tbody>
     </table></div>`;
   } else {
     wrap.innerHTML = `<div class="report-table-wrap"><table class="report-table">

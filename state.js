@@ -1232,9 +1232,9 @@ const State = (() => {
         byBranch[s.branch].push(s);
       }
       const result = [];
-      for (const [, list] of Object.entries(byBranch)) {
+      for (const [branchName, list] of Object.entries(byBranch)) {
         list.sort((a,b) => b.totalMarks - a.totalMarks || b.totalCredits - a.totalCredits);
-        list.slice(0, topN).forEach((s, i) => result.push({ rank: i+1, ...s }));
+        list.slice(0, topN).forEach((s, i) => result.push({ rank: i+1, branchGroup: branchName, ...s }));
       }
       return result;
     }
