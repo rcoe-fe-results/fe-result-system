@@ -1256,7 +1256,18 @@ const State = (() => {
           totalMarks: Number(r.totalMarks)||0 });
       }
       const result = [];
-      for (const [sk, branches] of Object.entries(bySubjBranch)) {
+      // Sort subjects by canonical syllabus order
+      const sess         = sessions.find(s => s.id === sessionId);
+      const canonicalList = sess
+        ? getSubjectsForSem(Number(sess.semester), branch || 'Computer', sess)
+        : SEM1_SUBJECTS;
+      const subjOrder = {};
+      canonicalList.forEach((s, i) => { subjOrder[s.code] = i; });
+
+      const sortedSubjEntries = Object.entries(bySubjBranch)
+        .sort(([a], [b]) => (subjOrder[a] ?? 999) - (subjOrder[b] ?? 999));
+
+      for (const [sk, branches] of sortedSubjEntries) {
         for (const [bk, list] of Object.entries(branches)) {
           list.sort((a,b) => b.totalMarks - a.totalMarks);
           list.slice(0, 3).forEach((s, i) => result.push({ rank: i+1, subjectGroup: sk, branchGroup: bk, ...s }));
