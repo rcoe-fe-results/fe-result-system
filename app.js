@@ -1397,6 +1397,9 @@ function initProgress() {
   document.getElementById('pv-timeline').innerHTML = '';
   document.getElementById('pv-student-info').innerHTML = '';
 
+  if (searchInput._pvBound) return; // already wired — don't add duplicate listener
+  searchInput._pvBound = true;
+
   searchInput.addEventListener('input', _debounce(() => {
     const q = searchInput.value.trim();
     if (q.length < 2) { resultsBox.innerHTML = ''; return; }
