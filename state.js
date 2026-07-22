@@ -275,11 +275,17 @@ const State = (() => {
         // Prelim-only result (without gazette ESE) for reval comparison
         const prelimResult  = _resolveResult(prelimRow);
 
+        const prelimESE = parseFloat(prelimRow.eseMarks) || 0;
+        const gazESE    = parseFloat(gazRow.eseMarks)    || 0;
+        const marksTag  = prelimESE === gazESE ? ': Marks Revaluated & Unchanged'
+                        : gazESE > prelimESE   ? ': Marks Revaluated & Increased'
+                        :                        ': Marks Revaluated & Decreased';
+
         let revalSuffix = '';
-        if (prelimResult === 'Pass' && mergedResult === 'Fail') revalSuffix = ' after Reval';
+        if      (prelimResult === 'Pass' && mergedResult === 'Fail') revalSuffix = ' after Reval';
         else if (prelimResult === 'Fail' && mergedResult === 'Pass') revalSuffix = ' after Reval';
-        else if (prelimResult === 'Pass' && mergedResult === 'Pass') revalSuffix = ': Marks Revaluated';
-        else if (prelimResult === 'Fail' && mergedResult === 'Fail') revalSuffix = ': Marks Revaluated';
+        else if (prelimResult === 'Pass' && mergedResult === 'Pass') revalSuffix = gazESE === prelimESE ? '' : marksTag;
+        else if (prelimResult === 'Fail' && mergedResult === 'Fail') revalSuffix = marksTag;
 
         return { result: mergedResult, revalSuffix };
       }
