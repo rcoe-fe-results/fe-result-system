@@ -1674,6 +1674,202 @@ const State = (() => {
       .sort((a, b) => a.ktCount - b.ktCount);
   }
 
+// ── Cleared-in-N-attempts helper ──────────────────────────
+  // Returns { cleared, attemptCount, clearedInSession } for a student+subject
+  function _getSubjectAttemptCount(uin, subjectCode) {
+    const student = getStudent(uin);
+    if (!student) return { cleared: false, attemptCount: 0, clearedInSession: null };
+
+    const allRows = ledger
+      .filter(r => r.uin === uin && r.subjectCode === subjectCode)
+      .sort((a, b) => a.entryDateTime.localeCompare(b.entryDateTime));
+
+    if (allRows.length === 0) return { cleared: false, attemptCount: 0, clearedInSession: null };
+
+    const subjectSemester = Number(allRows[0].semester);
+
+    // Merge rows per session (latest component wins)
+    const mergedPerSession = {};
+    for (const r of allRows) {
+      const sid = r.examSession;
+      if (!mergedPerSession[sid]) {
+        mergedPerSession[sid] = { ...r };
+      } else {
+        const m = mergedPerSession[sid];
+        if (r.iatMarks  !== '') m.iatMarks  = r.iatMarks;
+        if (r.eseMarks  !== '') m.eseMarks  = r.eseMarks;
+        if (r.twMarks   !== '') m.twMarks   = r.twMarks;
+        if (r.oralMarks !== '') m.oralMarks = r.oralMarks;
+      }
+    }
+
+    // Session chronological score
+    const _sessionScore = sess => {
+      if (!sess) return 0;
+      const year  = Number((sess.name || '').slice(0, 4));
+      const month = (sess.name || '').includes('May') ? 5 : 12;
+      return year * 12 + month;
+    };
+
+    // All Preliminary sessions for this subject's semester, chronologically
+    const allPrelimSessions = getSessions()
+      .filter(s =>
+        s.entryType === 'Preliminary' &&
+        s.semester  === subjectSemester &&
+        Number(s.batchYear) >= Number(student.batchYear)
+      )
+      .sort((a, b) => _sessionScore(a) - _sessionScore(b));
+
+    // Count attempts (only Prelim sessions where student has a record)
+    let attemptCount    = 0;
+    let clearedInSession = null;
+    let cleared         = false;
+
+    for (const prelim of allPrelimSessions) {
+      const hasRecord = allRows.some(r => r.examSession === prelim.id);
+      if (!hasRecord) continue;
+      attemptCount++;
+
+      // Find paired gazette if any
+      const gazette = getSessions().find(s =>
+        s.entryType === 'Final Gazette' &&
+        s.linkedPrelimSessionId === prelim.id
+      );
+
+      // Build merged marks: prelim base, gazette ESE overrides
+      const prelimRow = mergedPerSession[prelim.id];
+      const gazRow    = gazette ? mergedPerSession[gazette.id] : null;
+
+      const merged = { ...prelimRow };
+      if (gazRow) {
+        if (gazRow.eseMarks  !== '') merged.eseMarks  = gazRow.eseMarks;
+        if (gazRow.iatMarks  !== '') merged.iatMarks  = gazRow.iatMarks;
+        if (gazRow.twMarks   !== '') merged.twMarks   = gazRow.twMarks;
+        if (gazRow.oralMarks !== '') merged.oralMarks = gazRow.oralMarks;
+      }
+
+      // Get subject config
+      const sess = gazette || prelim;
+      const subjectList = getSubjectsForSem(subjectSemester, student.branch, sess);
+      const subj = subjectList.find(s => s.code === subjectCode);
+      if (!subj) continue;
+
+      const marksMap = {};
+      if (merged.iatMarks  !== '') marksMap.IAT  = merged.iatMarks;
+      if (merged.eseMarks  !== '') marksMap.ESE  = merged.eseMarks;
+      if (merged.twMarks   !== '') marksMap.TW   = merged.twMarks;
+      if (merged.oralMarks !== '') marksMap.Oral = merged.oralMarks;
+
+      const dr = computeDisplayResult(subj, marksMap);
+      if (!dr.pending && dr.result === 'Pass') {
+        cleared          = true;
+        clearedInSession = gazette ? gazette.name : prelim.name;
+        break; // stop at first clearing attempt
+      }
+    }
+
+    return { cleared, attemptCount, clearedInSession };
+  }
+
+  // ── Cleared-in-N-attempts report ──────────────────────────
+  // subjectCode: specific code, or 'SEM1', 'SEM2', 'FY'
+  function reportClearedInAttempts({ subjectCode, targetAttempts, branch, division, batchYear, gender } = {}) {
+    if (!subjectCode || !targetAttempts) return [];
+
+    const allStudents = getStudents({
+      branch:    branch    || undefined,
+      division:  division  || undefined,
+      batchYear: batchYear || undefined,
+      gender:    gender    || undefined,
+    });
+
+    const rows = [];
+
+    for (const student of allStudents) {
+      if (subjectCode === 'SEM1' || subjectCode === 'SEM2' || subjectCode === 'FY') {
+        // Semester / FY mode
+        const sems = subjectCode === 'SEM1' ? [1]
+                   : subjectCode === 'SEM2' ? [2]
+                   : [1, 2];
+
+        // For each semester, find a session to get subject list
+        const semResults = {};
+        for (const sem of sems) {
+          // Find a session this student has records in for this semester
+          const semSession = getSessions().find(s =>
+            s.semester === sem &&
+            ledger.some(r => r.uin === student.uin && r.examSession === s.id)
+          );
+          if (!semSession) { semResults[sem] = null; continue; }
+
+          const subjects = getSubjectsForSem(sem, student.branch, semSession);
+          let allCleared  = true;
+          let maxAttempts = 0;
+          let lastSession = null;
+
+          for (const subj of subjects) {
+            const result = _getSubjectAttemptCount(student.uin, subj.code);
+            if (!result.cleared) { allCleared = false; break; }
+            if (result.attemptCount > maxAttempts) {
+              maxAttempts = result.attemptCount;
+              lastSession = result.clearedInSession;
+            }
+          }
+
+          semResults[sem] = allCleared ? { maxAttempts, lastSession } : null;
+        }
+
+        if (subjectCode === 'FY') {
+          const r1 = semResults[1];
+          const r2 = semResults[2];
+          if (!r1 || !r2) continue;
+          const fyAttempts = Math.max(r1.maxAttempts, r2.maxAttempts);
+          if (fyAttempts !== targetAttempts) continue;
+          // Last session = whichever semester was completed later
+          const sess1 = getSessions().find(s => s.name === r1.lastSession);
+          const sess2 = getSessions().find(s => s.name === r2.lastSession);
+          const _score = s => {
+            if (!s) return 0;
+            const y = Number((s.name||'').slice(0,4));
+            const m = (s.name||'').includes('May') ? 5 : 12;
+            return y * 12 + m;
+          };
+          const lastSession = _score(sess1) >= _score(sess2) ? r1.lastSession : r2.lastSession;
+          rows.push({
+            uin: student.uin, prn: student.prn, name: student.name,
+            branch: student.branch, division: student.division,
+            batchYear: student.batchYear, gender: student.gender || '',
+            attemptCount: fyAttempts, clearedInSession: lastSession,
+          });
+        } else {
+          const sem  = sems[0];
+          const res  = semResults[sem];
+          if (!res || res.maxAttempts !== targetAttempts) continue;
+          rows.push({
+            uin: student.uin, prn: student.prn, name: student.name,
+            branch: student.branch, division: student.division,
+            batchYear: student.batchYear, gender: student.gender || '',
+            attemptCount: res.maxAttempts, clearedInSession: res.lastSession,
+          });
+        }
+
+      } else {
+        // Single subject mode
+        const result = _getSubjectAttemptCount(student.uin, subjectCode);
+        if (!result.cleared || result.attemptCount !== targetAttempts) continue;
+        rows.push({
+          uin: student.uin, prn: student.prn, name: student.name,
+          branch: student.branch, division: student.division,
+          batchYear: student.batchYear, gender: student.gender || '',
+          attemptCount: result.attemptCount, clearedInSession: result.clearedInSession,
+        });
+      }
+    }
+
+    return rows.sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+
   function getMyEntries(email, sessionId) {
     return ledger.filter(r => r.enteredBy === email && (!sessionId || r.examSession === sessionId));
   }
@@ -1768,7 +1964,7 @@ const State = (() => {
     reportResultSummary, reportRevalImpact, reportToppers, reportCreditFilter, reportKTFilter, getMyEntries,
     reportKTDistribution,
     getExamGroups,
-    getDivisions, getBatchYears, getAllSubjects,
+    getDivisions, getBatchYears, getAllSubjects,reportClearedInAttempts,
     get ledger() { return ledger; },
   };
 })();

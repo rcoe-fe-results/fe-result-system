@@ -1305,7 +1305,47 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
           </div>
 
         </div>
+
+        <!-- Cleared in N Attempts -->
+        <div class="report-card" style="grid-column:1/-1;">
+          <h3>Cleared in N Attempts</h3>
+          <p>Students who cleared a subject, semester, or full First Year in exactly N attempts. Uses merged Gazette + Preliminary marks where available.</p>
+          <div class="report-inputs" style="flex-wrap:wrap; gap:10px; align-items:flex-end;">
+            <div class="filter-group">
+              <label style="font-size:12px;">Subject / Scope</label>
+              <select id="rpt-cia-subject" style="min-width:240px;"><option value="">— select —</option></select>
+            </div>
+            <div class="filter-group">
+              <label style="font-size:12px;">Attempts</label>
+              <select id="rpt-cia-attempts" style="min-width:100px;">
+                <option value="">— select —</option>
+                <option value="1">1st attempt</option>
+                <option value="2">2nd attempt</option>
+                <option value="3">3rd attempt</option>
+                <option value="4">4th attempt</option>
+                <option value="5">5th attempt</option>
+                <option value="6">6th attempt</option>
+                <option value="7">7th attempt</option>
+                <option value="8">8th attempt</option>
+              </select>
+            </div>
+            <div class="filter-group">
+              <label style="font-size:12px;">Batch Year</label>
+              <select id="rpt-cia-batch" style="min-width:110px;"><option value="">All Batches</option></select>
+            </div>
+            <div class="filter-group">
+              <label style="font-size:12px;">Division</label>
+              <select id="rpt-cia-division" style="min-width:100px;"><option value="">All Divisions</option></select>
+            </div>
+            <button id="rpt-cia-run" class="btn btn-primary btn-sm">Show List</button>
+            <button id="rpt-cia-csv" class="btn btn-secondary btn-sm" disabled style="opacity:0.4; cursor:not-allowed;">⬇ Export CSV</button>
+          </div>
+          <div id="rpt-cia-summary" style="margin-top:10px; font-size:12px; color:var(--ink-3);"></div>
+          <div id="rpt-cia-output" style="margin-top:10px; max-height:420px; overflow-y:auto;"></div>
+        </div>
+
       </div>
+    </div>
 
       <!-- ── Batch Comparison ── -->
       <div class="report-section" id="rpt-batch-compare-section">

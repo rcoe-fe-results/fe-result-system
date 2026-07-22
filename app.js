@@ -2055,6 +2055,15 @@ function initReports() {
   });
   document.getElementById('rpt-aktd-run').onclick  = _aktdRun;
   document.getElementById('rpt-aktd-csv').onclick  = _aktdExportCSV;
+
+  // Cleared in N Attempts
+  _ciaPopulateSubjects();
+  _ciaPopulateBatchYears();
+  ['rpt-cia-subject','rpt-cia-attempts','rpt-cia-batch','rpt-cia-division'].forEach(id => {
+    document.getElementById(id)?.addEventListener('change', _ciaClearOutput);
+  });
+  document.getElementById('rpt-cia-run').onclick = _ciaRun;
+  document.getElementById('rpt-cia-csv').onclick = _ciaExportCSV;
 }
 
 
@@ -4319,6 +4328,148 @@ function exportGazette(sessionId) {
   XLSX.writeFile(wb, filename);
   UI.toast(`✓ Gazette exported: ${filename}`, 'success');
 }
+
+// ═══════════════════════════════════════════════════════════════
+// REPORTS — Cleared in N Attempts
+// ═══════════════════════════════════════════════════════════════
+function _ciaPopulateSubjects() {
+  const el = document.getElementById('rpt-cia-subject');
+  if (!el) return;
+
+  const allSubjects = _aktdAllSubjects();
+
+  el.innerHTML =
+    '<option value="">— select —</option>' +
+    '<option value="SEM1">— Semester I (all subjects) —</option>' +
+    '<option value="SEM2">— Semester II (all subjects) —</option>' +
+    '<option value="FY">— First Year (both sems) —</option>' +
+    '<optgroup label="Individual Subjects">' +
+    allSubjects.map(s =>
+      `<option value="${UI.esc(s.code)}">${UI.esc(s.code)} — ${UI.esc(s.name)}</option>`
+    ).join('') +
+    '</optgroup>';
+}
+
+function _ciaPopulateBatchYears() {
+  const el = document.getElementById('rpt-cia-batch');
+  if (!el) return;
+  const years = State.getBatchYears();
+  el.innerHTML = '<option value="">All Batches</option>' +
+    years.map(y => `<option value="${UI.esc(y)}">${UI.esc(y)}</option>`).join('');
+}
+
+function _ciaClearOutput() {
+  document.getElementById('rpt-cia-output').innerHTML  = '';
+  document.getElementById('rpt-cia-summary').textContent = '';
+  _eligSetCsvEnabled('rpt-cia-csv', false);
+}
+
+let _ciaLastResult = [];
+let _ciaLastMeta   = {};
+
+function _ciaRun() {
+  const subjectCode     = document.getElementById('rpt-cia-subject').value;
+  const targetAttempts  = Number(document.getElementById('rpt-cia-attempts').value);
+  const batchYear       = document.getElementById('rpt-cia-batch').value;
+  const division        = document.getElementById('rpt-cia-division').value;
+  const branch          = document.getElementById('rpt-elig-branch').value  || null;
+  const gender          = document.getElementById('rpt-elig-gender').value  || null;
+  const output          = document.getElementById('rpt-cia-output');
+  const summary         = document.getElementById('rpt-cia-summary');
+
+  if (!subjectCode)    { UI.toast('Please select a subject or scope.', 'error'); return; }
+  if (!targetAttempts) { UI.toast('Please select number of attempts.', 'error'); return; }
+
+  const rows = State.reportClearedInAttempts({
+    subjectCode, targetAttempts, branch, division: division || undefined,
+    batchYear: batchYear || undefined, gender: gender || undefined,
+  });
+
+  _ciaLastResult = rows;
+  _ciaLastMeta   = { subjectCode, targetAttempts, branch, division, batchYear, gender };
+
+  // Summary label
+  const scopeLabel = subjectCode === 'SEM1' ? 'Semester I'
+                   : subjectCode === 'SEM2' ? 'Semester II'
+                   : subjectCode === 'FY'   ? 'First Year'
+                   : subjectCode;
+  const attemptLabel = targetAttempts === 1 ? '1st attempt'
+                     : targetAttempts === 2 ? '2nd attempt'
+                     : targetAttempts === 3 ? '3rd attempt'
+                     : `${targetAttempts}th attempt`;
+  const branchLabel  = branch    || 'All Branches';
+  const divLabel     = division  || 'All Divisions';
+  const batchLabel   = batchYear || 'All Batches';
+  const genderLabel  = gender    || 'All';
+
+  summary.textContent = `${rows.length} student${rows.length !== 1 ? 's' : ''} cleared ${scopeLabel} in ${attemptLabel} · ${branchLabel} · ${divLabel} · ${batchLabel} · ${genderLabel}`;
+
+  if (rows.length === 0) {
+    output.innerHTML = '<div class="empty-state">No students found for this selection.</div>';
+    _eligSetCsvEnabled('rpt-cia-csv', false);
+    return;
+  }
+
+  const ordinal = n => n === 1 ? '1st' : n === 2 ? '2nd' : n === 3 ? '3rd' : `${n}th`;
+
+  let html = `
+    <table class="progress-table" style="width:100%; font-size:12px;">
+      <thead><tr>
+        <th>#</th>
+        <th>Name</th>
+        <th>PRN / UIN</th>
+        <th>Branch</th>
+        <th>Div</th>
+        <th>Batch</th>
+        <th>Gender</th>
+        <th>Attempts</th>
+        <th>Cleared In Session</th>
+        <th></th>
+      </tr></thead>
+      <tbody>`;
+
+  rows.forEach((r, i) => {
+    const attemptBadgeCls = r.attemptCount === 1 ? 'badge-pass'
+                          : r.attemptCount === 2 ? 'badge-regular'
+                          : r.attemptCount <= 4  ? 'badge-pending'
+                          : 'badge-kt';
+    html += `<tr>
+      <td class="muted">${i + 1}</td>
+      <td><strong>${UI.esc(r.name)}</strong></td>
+      <td class="muted">${UI.esc(r.prn)}<br>${UI.esc(r.uin)}</td>
+      <td>${UI.esc(r.branch)}</td>
+      <td>${UI.esc(r.division)}</td>
+      <td>${UI.esc(r.batchYear)}</td>
+      <td>${UI.esc(r.gender)}</td>
+      <td><span class="badge ${attemptBadgeCls}">${ordinal(r.attemptCount)} attempt</span></td>
+      <td class="muted" style="font-size:11px;">${UI.esc(r.clearedInSession || '—')}</td>
+      <td><button class="btn btn-secondary btn-sm"
+            onclick="_aktdOpenProgress('${UI.esc(r.uin)}')">More Details</button></td>
+    </tr>`;
+  });
+
+  html += '</tbody></table>';
+  output.innerHTML = html;
+  _eligSetCsvEnabled('rpt-cia-csv', true);
+}
+
+function _ciaExportCSV() {
+  if (!_ciaLastResult.length) { UI.toast('Nothing to export.', 'error'); return; }
+  const { subjectCode, targetAttempts } = _ciaLastMeta;
+  const scopeLabel = subjectCode === 'SEM1' ? 'Sem1'
+                   : subjectCode === 'SEM2' ? 'Sem2'
+                   : subjectCode === 'FY'   ? 'FirstYear'
+                   : subjectCode;
+  const headers = ['#', 'PRN', 'UIN', 'Name', 'Branch', 'Division',
+                   'Batch Year', 'Gender', 'Attempts', 'Cleared In Session'];
+  const data = _ciaLastResult.map((r, i) => [
+    i + 1, r.prn, r.uin, r.name, r.branch, r.division,
+    r.batchYear, r.gender, r.attemptCount, r.clearedInSession || '',
+  ]);
+  UI.exportCSV(`ClearedIn_${targetAttempts}Attempts_${scopeLabel}`, headers, data);
+  UI.toast(`Exported ${_ciaLastResult.length} rows.`, 'success');
+}
+
 
 // ═══════════════════════════════════════════════════════════════
 // Utilities
