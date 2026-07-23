@@ -1971,6 +1971,8 @@ function _dashRenderHeatmap() {
 }
 
 function initReports() {
+  if (document.getElementById('tab-reports')._inited) return;
+  document.getElementById('tab-reports')._inited = true;
   const sessions = sortSessions(State.getSessions());
   const subjects = State.getAllSubjects();
 
@@ -2034,7 +2036,8 @@ function initReports() {
   document.getElementById('rpt-total-credit-csv').onclick   = _rptTotalCreditFilterExport;
   document.getElementById('rpt-kt-run').onclick             = _rptKTFilterRun;
   document.getElementById('rpt-kt-csv').onclick             = _rptKTFilterExport;
-  document.getElementById('rpt-my-entries').onclick         = _rptMyEntries;
+  const myEntriesBtn = document.getElementById('rpt-my-entries');
+if (myEntriesBtn) myEntriesBtn.onclick = _rptMyEntries;
 
   // Batch comparison
   const bcYears = State.getBatchYears();
