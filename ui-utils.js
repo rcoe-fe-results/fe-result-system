@@ -101,13 +101,15 @@ const UI = (() => {
   function resultBadge(result) {
     if (!result) return '<span class="badge badge-pending">—</span>';
     const cls = { Pass:'badge-pass', Fail:'badge-fail', AB:'badge-ab' }[result] || 'badge-pending';
-    return `<span class="badge ${cls}">${esc(result)}</span>`;
+    const label = { Pass: 'Successful', Fail: 'Unsuccessful', AB: 'Absent' }[result] || result;
+    return `<span class="badge ${cls}">${esc(label)}</span>`;
   }
 
   // ── Attempt type badge ────────────────────────────────────
   function attemptBadge(type) {
     const cls = { Regular:'badge-regular', Reval:'badge-reval', KT:'badge-kt', Grace:'badge-grace' }[type] || '';
-    return `<span class="badge ${cls}">${esc(type)}</span>`;
+    const label = type === 'Regular' ? 'Regular' : type;
+    return `<span class="badge ${cls}">${esc(label)}</span>`;
   }
 
   return { toast, showModal, hideModal, showSpinner, hideSpinner, buildSelect, exportCSV, esc, markClass, resultBadge, attemptBadge };

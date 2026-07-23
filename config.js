@@ -189,7 +189,22 @@ function parseMarkValue(raw, componentMax) {
   return { value: null, valid: false, grace: false, absent: false };
 }
 
-// computeResult — used at ENTRY TIME (stored in ledger)
+// ── Component-level result resolver ──────────────────────────
+// Used by _buildKTCache() in state.js.
+// Returns 'Successful' | 'Unsuccessful' | 'Absent' | 'Pending'
+function resolveComponentResult(rawValue, max) {
+  if (rawValue === undefined || rawValue === null || rawValue === '') {
+    return 'Pending';
+  }
+  const s = String(rawValue).trim().toUpperCase();
+  if (s === 'AB') return 'Absent';
+  const graceMatch = s.match(/^(\d+)\*$/);
+  if (graceMatch) return 'Successful';
+  const n = Number(s);
+  if (isNaN(n)) return 'Pending';
+  if (max && n / max >= 0.40) return 'Successful';
+  return 'Unsuccessful';
+}
 // Uses raw mark values. Grace treated as passing, value stored as-is.
 function computeResult(subject, marks) {
   const components = Object.keys(subject.marks);

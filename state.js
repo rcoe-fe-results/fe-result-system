@@ -7,7 +7,303 @@ const State = (() => {
   let sessions  = [];
   let ledger    = [];
   let seats     = [];   // [{ uin, sessionId, seatNumber }]
+  let _ktCache  = {};   // built by _buildKTCache(), keyed by uin
   let _loaded   = false;
+
+  // ── Applicable sessions per student per semester ──────────
+  // Returns { sem1: [...], sem2: [...] } of Preliminary sessions
+  // in chronological order, filtered by batch year rules:
+  //   Sem-I  starts from the batch's admission December.
+  //   Sem-II starts from the following May.
+  // Sessions where the student has no ledger record are included
+  // (caller decides whether to skip — "no record" = didn't sit).
+  function _getApplicableSessions(student) {
+    const batchYear = Number(student.batchYear);
+
+    // Chronological score: year × 12 + month
+    const _score = s => {
+      const year  = Number((s.name || '').slice(0, 4));
+      const month = (s.name || '').includes('May') ? 5 : 12;
+      return year * 12 + month;
+    };
+
+    // Sem-I: batch's own December onwards (Dec of batchYear)
+    const sem1Start = batchYear * 12 + 12;
+
+    // Sem-II: following May onwards (May of batchYear + 1)
+    const sem2Start = (batchYear + 1) * 12 + 5;
+
+    const prelims = sessions
+      .filter(s => s.entryType !== 'Final Gazette')
+      .sort((a, b) => _score(a) - _score(b));
+
+    return {
+      sem1: prelims.filter(s => s.semester === 1 && _score(s) >= sem1Start),
+      sem2: prelims.filter(s => s.semester === 2 && _score(s) >= sem2Start),
+    };
+  }
+
+  // ── Attempt tag builder ───────────────────────────────────
+  // Builds the human-readable attempt tag for a subject.
+  // prelimResult / gazetteResult: 'Successful' | 'Unsuccessful' | 'Absent' | null
+  // prelimESE / gazetteESE: raw mark strings for reval suffix comparison.
+  function _resolveAttemptTag(attemptNumber, prelimResult, gazetteResult, prelimESE, gazetteESE) {
+    const label = attemptNumber === 1 ? 'Regular Attempt'
+                : attemptNumber === 2 ? '2nd Attempt'
+                : attemptNumber === 3 ? '3rd Attempt'
+                : `${attemptNumber}th Attempt`;
+
+    // Effective result: gazette overrides prelim if gazette exists
+    const effective = gazetteResult !== null ? gazetteResult : prelimResult;
+    if (!effective || effective === 'Pending') return null;
+
+    const successStr = effective === 'Successful'
+      ? `Successful in ${label}`
+      : `Unsuccessful in ${label}`;
+
+    // No gazette → no reval suffix
+    if (gazetteResult === null) return successStr;
+
+    // Gazette exists — determine reval suffix
+    if (prelimResult === 'Unsuccessful' && gazetteResult === 'Successful') {
+      return `${successStr} after Reval`;
+    }
+    if (prelimResult === 'Successful' && gazetteResult === 'Unsuccessful') {
+      return `${successStr} after Reval`;
+    }
+
+    // Same result — check if marks changed
+    const pESE = parseFloat(String(prelimESE  || '').replace('*', '')) || 0;
+    const gESE = parseFloat(String(gazetteESE || '').replace('*', '')) || 0;
+
+    if (pESE === gESE) {
+      // Pass/Pass unchanged = just successful, no suffix
+      if (effective === 'Successful') return successStr;
+      return `${successStr}: Marks Revaluated & Unchanged`;
+    }
+    const direction = gESE > pESE ? 'Increased' : 'Decreased';
+    return `${successStr}: Marks Revaluated & ${direction}`;
+  }
+
+  // ── KT Cache builder ──────────────────────────────────────
+  // Rebuilds _ktCache for ALL students from scratch.
+  // Called after loadAll() and after submitEntries().
+  function _buildKTCache() {
+    _ktCache = {};
+
+    for (const student of students) {
+      const applicable = _getApplicableSessions(student);
+      const allSems    = [
+        ...applicable.sem1.map(s => ({ sess: s, sem: 1 })),
+        ...applicable.sem2.map(s => ({ sess: s, sem: 2 })),
+      ];
+
+      // Per component tracking:
+      // key = subjectCode + '||' + component
+      // value = { latestResult, attemptNumber, subjectCode, subjectName, semester, component }
+      const compTracker  = {};
+
+      // Historical: distinct subject+component ever Unsuccessful/Absent
+      const historicalSet = new Set(); // key = subjectCode + '||' + component
+
+      // Attempt counter per semester
+      const attemptCount = { 1: 0, 2: 0 };
+
+      // Subject-level attempt tags: key = subjectCode → latest tag
+      const subjectTags = {};
+
+      for (const { sess, sem } of allSems) {
+        // Get all ledger rows for this student in this session
+        const sessRows = ledger.filter(r =>
+          r.uin === student.uin && r.examSession === sess.id
+        );
+
+        // No record → student didn't sit → skip, don't count attempt
+        if (sessRows.length === 0) continue;
+
+        attemptCount[sem]++;
+        const currentAttempt = attemptCount[sem];
+
+        // Find paired gazette session if any
+        const gazette = sessions.find(s =>
+          s.entryType === 'Final Gazette' &&
+          s.linkedPrelimSessionId === sess.id
+        );
+
+        // Gazette rows for this student (only if gazette exists)
+        const gazetteRows = gazette
+          ? ledger.filter(r => r.uin === student.uin && r.examSession === gazette.id)
+          : [];
+        const hasGazette = gazetteRows.length > 0;
+
+        // Merge prelim rows per subject (latest component wins)
+        const prelimBySubject = {};
+        for (const r of sessRows.sort((a, b) => a.entryDateTime.localeCompare(b.entryDateTime))) {
+          if (!prelimBySubject[r.subjectCode]) prelimBySubject[r.subjectCode] = { ...r };
+          else {
+            const m = prelimBySubject[r.subjectCode];
+            if (r.iatMarks  !== '') m.iatMarks  = r.iatMarks;
+            if (r.eseMarks  !== '') m.eseMarks  = r.eseMarks;
+            if (r.twMarks   !== '') m.twMarks   = r.twMarks;
+            if (r.oralMarks !== '') m.oralMarks = r.oralMarks;
+          }
+        }
+
+        // Merge gazette rows per subject (latest component wins)
+        const gazetteBySubject = {};
+        for (const r of gazetteRows.sort((a, b) => a.entryDateTime.localeCompare(b.entryDateTime))) {
+          if (!gazetteBySubject[r.subjectCode]) gazetteBySubject[r.subjectCode] = { ...r };
+          else {
+            const m = gazetteBySubject[r.subjectCode];
+            if (r.iatMarks  !== '') m.iatMarks  = r.iatMarks;
+            if (r.eseMarks  !== '') m.eseMarks  = r.eseMarks;
+            if (r.twMarks   !== '') m.twMarks   = r.twMarks;
+            if (r.oralMarks !== '') m.oralMarks = r.oralMarks;
+          }
+        }
+
+        // Get subject list for this session
+        const subjectList = getSubjectsForSem(sem, student.branch, sess);
+
+        for (const subj of subjectList) {
+          const prelim  = prelimBySubject[subj.code]  || null;
+          const gaz     = gazetteBySubject[subj.code] || null;
+          if (!prelim) continue; // subject not attempted
+
+          const compFields = {
+            IAT:  { prelim: prelim.iatMarks,  gazette: gaz?.iatMarks  ?? '' },
+            ESE:  { prelim: prelim.eseMarks,  gazette: gaz?.eseMarks  ?? '' },
+            TW:   { prelim: prelim.twMarks,   gazette: gaz?.twMarks   ?? '' },
+            Oral: { prelim: prelim.oralMarks, gazette: gaz?.oralMarks ?? '' },
+          };
+
+          // Subject-level prelim and gazette results (for attempt tag)
+          // Use worst-state priority across components
+          const _worstState = results => {
+            if (results.includes('Unsuccessful')) return 'Unsuccessful';
+            if (results.includes('Absent'))       return 'Absent';
+            if (results.includes('Pending'))      return 'Pending';
+            return 'Successful';
+          };
+
+          const prelimCompResults  = [];
+          const gazetteCompResults = [];
+
+          for (const [comp, max] of Object.entries(subj.marks)) {
+            const fields = compFields[comp];
+            if (!fields) continue;
+
+            const prelimVal  = fields.prelim  || '';
+            const gazetteVal = hasGazette ? (fields.gazette || '') : null;
+
+            const prelimRes  = resolveComponentResult(prelimVal,  max);
+            // Gazette: if no gazette at all → null; if gazette but no value for this comp → use prelim
+            const gazetteRes = gazetteVal === null ? null
+                             : gazetteVal === ''   ? prelimRes
+                             : resolveComponentResult(gazetteVal, max);
+
+            // Effective = gazette overrides prelim if gazette exists
+            const effectiveRes = gazetteRes !== null ? gazetteRes : prelimRes;
+
+            prelimCompResults.push(prelimRes);
+            if (gazetteRes !== null) gazetteCompResults.push(gazetteRes);
+
+            const compKey = subj.code + '||' + comp;
+
+            // Update component tracker with latest attempt
+            compTracker[compKey] = {
+              subjectCode:  subj.code,
+              subjectName:  subj.name,
+              semester:     sem,
+              component:    comp,
+              effectiveResult: effectiveRes,
+              ktCount:      (effectiveRes === 'Unsuccessful' || effectiveRes === 'Absent') ? 1 : 0,
+              pendingFlag:  effectiveRes === 'Pending',
+              attemptNumber: currentAttempt,
+            };
+
+            // Historical: record if ever Unsuccessful or Absent
+            if (effectiveRes === 'Unsuccessful' || effectiveRes === 'Absent') {
+              historicalSet.add(compKey);
+            }
+          }
+
+          // Build attempt tag for this subject
+          const subjPrelimResult  = _worstState(prelimCompResults);
+          const subjGazetteResult = hasGazette && gaz
+            ? _worstState(gazetteCompResults)
+            : null;
+
+          const tag = _resolveAttemptTag(
+            currentAttempt,
+            subjPrelimResult,
+            subjGazetteResult,
+            prelim.eseMarks  || '',
+            gaz?.eseMarks    || '',
+          );
+          if (tag) subjectTags[subj.code] = tag;
+        }
+      }
+
+      // ── Build per-component array ────────────────────────
+      const components = Object.values(compTracker);
+
+      // ── Build per-subject array ──────────────────────────
+      const subjectMap = {};
+      for (const c of components) {
+        if (!subjectMap[c.subjectCode]) {
+          subjectMap[c.subjectCode] = {
+            subjectCode:    c.subjectCode,
+            subjectName:    c.subjectName,
+            semester:       c.semester,
+            ktCount:        0,
+            pendingCount:   0,
+            effectiveResult: 'Successful',
+            attemptTag:     subjectTags[c.subjectCode] || null,
+          };
+        }
+        const s = subjectMap[c.subjectCode];
+        s.ktCount      += c.ktCount;
+        if (c.pendingFlag) s.pendingCount++;
+
+        // Worst-state priority for subject effectiveResult
+        const priority = { 'Unsuccessful': 4, 'Absent': 3, 'Pending': 2, 'Successful': 1 };
+        if ((priority[c.effectiveResult] || 0) > (priority[s.effectiveResult] || 0)) {
+          s.effectiveResult = c.effectiveResult;
+        }
+      }
+
+      const subjects = Object.values(subjectMap);
+
+      // ── Student-level aggregates ─────────────────────────
+      const activeKTCount     = components.reduce((n, c) => n + c.ktCount, 0);
+      const failingSubjectCount = subjects.filter(s =>
+        s.effectiveResult === 'Unsuccessful' || s.effectiveResult === 'Absent'
+      ).length;
+      const pendingComponentCount = components.filter(c => c.pendingFlag).length;
+
+      const historicalKTComponents = [...historicalSet].map(key => {
+        const [subjectCode, component] = key.split('||');
+        const comp = components.find(c => c.subjectCode === subjectCode && c.component === component);
+        return {
+          subjectCode,
+          subjectName: comp?.subjectName || '',
+          semester:    comp?.semester    || null,
+          component,
+        };
+      });
+
+      _ktCache[student.uin] = {
+        components,
+        subjects,
+        activeKTCount,
+        historicalKTCount:    historicalSet.size,
+        failingSubjectCount,
+        pendingComponentCount,
+        historicalKTComponents,
+      };
+    }
+  }
 
   // ── Load all data ─────────────────────────────────────────
   async function loadAll() {
@@ -17,6 +313,7 @@ const State = (() => {
       Sheets.getLedger(),
       Sheets.getSeats(),
     ]);
+    _buildKTCache();
     _loaded = true;
   }
 
@@ -399,22 +696,19 @@ const State = (() => {
   }
 
   function getActiveKTSubjects(uin) {
-    const results = getStudentResults(uin);
-    // Also include rows where result is '' (empty) but a prior row for the same
-    // subject has a Fail/AB — meaning marks were entered across partial submissions
-    // and the latest row has no computed result yet.
-    return Object.values(results).filter(r => {
-      if (r.result === 'Fail' || r.result === 'AB') return true;
-      if (r.result === '') {
-        // Check if any earlier ledger row for this subject was a Fail/AB
-        return ledger.some(l =>
-          l.uin === uin &&
-          l.subjectCode === r.subjectCode &&
-          (l.result === 'Fail' || l.result === 'AB')
-        );
-      }
-      return false;
-    });
+    const data = _ktCache[uin];
+    if (!data) return [];
+    // Return subjects with at least one active Unsuccessful/Absent component,
+    // in a shape compatible with existing callers (subjectCode, subjectName, semester, result)
+    return data.subjects
+      .filter(s => s.effectiveResult === 'Unsuccessful' || s.effectiveResult === 'Absent')
+      .map(s => ({
+        uin,
+        subjectCode:  s.subjectCode,
+        subjectName:  s.subjectName,
+        semester:     String(s.semester),
+        result:       s.effectiveResult === 'Absent' ? 'AB' : 'Fail',
+      }));
   }
 
   function getKTEligibleStudents(semester, branch) {
@@ -651,6 +945,7 @@ const State = (() => {
 
     await Sheets.appendLedgerRows(toAppend);
     ledger.push(...toAppend);
+    _buildKTCache();
     return toAppend.length;
   }
 
@@ -1494,125 +1789,62 @@ const State = (() => {
     return 'Pass';
   }
   function _getActiveKTsForStudent(uin) {
-    const student = getStudent(uin);
-    if (!student) return [];
-
-    // Step 1: Merge ledger rows per session+subject (latest component wins)
-    const mergedPerSessionSubject = {};
-    const allRows = ledger.filter(r => r.uin === uin)
-      .sort((a, b) => a.entryDateTime.localeCompare(b.entryDateTime));
-
-    for (const r of allRows) {
-      const key = r.examSession + '||' + r.subjectCode;
-      if (!mergedPerSessionSubject[key]) {
-        mergedPerSessionSubject[key] = { ...r };
-      } else {
-        const m = mergedPerSessionSubject[key];
-        if (r.iatMarks  !== '') m.iatMarks  = r.iatMarks;
-        if (r.eseMarks  !== '') m.eseMarks  = r.eseMarks;
-        if (r.twMarks   !== '') m.twMarks   = r.twMarks;
-        if (r.oralMarks !== '') m.oralMarks = r.oralMarks;
-      }
-    }
-
-    // Step 2: For each subject, Gazette always wins over Prelim.
-    // If Gazette exists for a subject → merge missing components from Prelim.
-    // If no Gazette entry → use Prelim row as-is.
-    const finalPerSubject = {}; // subjectCode → merged row to evaluate
-
-    for (const row of Object.values(mergedPerSessionSubject)) {
-      const sess = getSession(row.examSession);
-      if (!sess) continue;
-      const code = row.subjectCode;
-
-      if (sess.entryType === 'Final Gazette') {
-        // Gazette row — merge missing components from linked Prelim
-        const merged = { ...row };
-        if (sess.linkedPrelimSessionId) {
-          const prelimKey = sess.linkedPrelimSessionId + '||' + code;
-          const prelimRow = mergedPerSessionSubject[prelimKey];
-          if (prelimRow) {
-            if (!merged.iatMarks  && prelimRow.iatMarks)  merged.iatMarks  = prelimRow.iatMarks;
-            if (!merged.eseMarks  && prelimRow.eseMarks)  merged.eseMarks  = prelimRow.eseMarks;
-            if (!merged.twMarks   && prelimRow.twMarks)   merged.twMarks   = prelimRow.twMarks;
-            if (!merged.oralMarks && prelimRow.oralMarks) merged.oralMarks = prelimRow.oralMarks;
-          }
-        }
-        finalPerSubject[code] = merged; // Gazette always overwrites Prelim
-      } else {
-        // Prelim row — only use if no Gazette entry exists yet for this subject
-        if (!finalPerSubject[code] ||
-            (finalPerSubject[code].entryDateTime < row.entryDateTime)) {
-          finalPerSubject[code] = row;
-        }
-      }
-    }
-
-    // Step 3: Compute pass/fail for each subject from merged marks
-    const activeKTs = [];
-    for (const row of Object.values(finalPerSubject)) {
-      const sess = getSession(row.examSession);
-      const subjectList = getSubjectsForSem(Number(row.semester), row.branch || student.branch, sess);
-      const subj = subjectList.find(s => s.code === row.subjectCode);
-      if (!subj) continue;
-
-      const marksMap = {};
-      if (row.iatMarks  !== '') marksMap.IAT  = row.iatMarks;
-      if (row.eseMarks  !== '') marksMap.ESE  = row.eseMarks;
-      if (row.twMarks   !== '') marksMap.TW   = row.twMarks;
-      if (row.oralMarks !== '') marksMap.Oral = row.oralMarks;
-
-      const dr = computeDisplayResult(subj, marksMap);
-      // If pending, fall back to the stored result on the ledger row itself.
-      // This handles the case where marks were entered across multiple partial
-      // submissions — the merged row may be incomplete for computeDisplayResult
-      // even though the student's overall result is a known Fail/AB.
-      const effectiveResult = dr.pending
-        ? (row.result || '')
-        : dr.result;
-      if (effectiveResult === 'Fail' || effectiveResult === 'AB') {
-        activeKTs.push({ ...row, _dr: dr });
-      }
-    }
-
-    return activeKTs;
+    return getActiveKTSubjects(uin);
   }
   function reportKTFilter(n, mode, scope, gender) {
     const byStudent = {};
     for (const student of students) {
       if (gender && student.gender !== gender) continue;
-      const results = getStudentResults(student.uin);
-      const allLedgerForStudent = ledger.filter(r => r.uin === student.uin);
-
-      let activeKTs = _getActiveKTsForStudent(student.uin);
-
-      let histKTs   = allLedgerForStudent.filter(r => r.result === 'Fail' || r.result === 'AB');
+      const data = _ktCache[student.uin];
+      if (!data) continue;
 
       let subjects = [];
       if (scope === 'Active') {
-        subjects = activeKTs;
+        subjects = data.subjects.filter(s =>
+          s.effectiveResult === 'Unsuccessful' || s.effectiveResult === 'Absent'
+        );
       } else if (scope === 'Historical') {
-        // Must have zero active KTs — fully cleared
-        if (activeKTs.length > 0){
-          console.log(`[KT Filter] Skipped ${student.name} — active KTs:`, activeKTs.map(r => `${r.subjectCode} (${r.result}) @ ${r.entryDateTime}`)); 
-          continue;
-        }
-        // Count unique subjects ever failed
-        subjects = [...new Map(histKTs.map(r => [r.subjectCode, r])).values()];
+        // Must have zero active KTs to appear in historical-only
+        if (data.activeKTCount > 0) continue;
+        subjects = data.historicalKTComponents.map(h => ({
+          subjectCode: h.subjectCode,
+          subjectName: h.subjectName,
+        }));
+        // Deduplicate by subjectCode
+        subjects = [...new Map(subjects.map(s => [s.subjectCode, s])).values()];
       } else {
-        subjects = [...new Map([...activeKTs,...histKTs].map(r => [r.subjectCode,r])).values()];
+        // Both: union of active subjects + historical subjects
+        const activeSubjCodes = new Set(
+          data.subjects
+            .filter(s => s.effectiveResult === 'Unsuccessful' || s.effectiveResult === 'Absent')
+            .map(s => s.subjectCode)
+        );
+        const allSubjCodes = new Set([
+          ...activeSubjCodes,
+          ...data.historicalKTComponents.map(h => h.subjectCode),
+        ]);
+        subjects = [...allSubjCodes].map(code => {
+          const found = data.subjects.find(s => s.subjectCode === code)
+            || data.historicalKTComponents.find(h => h.subjectCode === code);
+          return { subjectCode: code, subjectName: found?.subjectName || '' };
+        });
       }
 
-      const uniqueCodes = [...new Set(subjects.map(r => r.subjectCode))];
+      const uniqueCodes = [...new Set(subjects.map(s => s.subjectCode))];
       const matches = mode === 'Exactly' ? uniqueCodes.length === n : uniqueCodes.length >= n;
 
       if (matches && uniqueCodes.length > 0) {
         for (const s of subjects) {
           byStudent[student.uin + s.subjectCode] = {
-            prn: student.prn, uin: student.uin, name: student.name,
-            branch: student.branch, gender: student.gender || '',
+            prn:         student.prn,
+            uin:         student.uin,
+            name:        student.name,
+            branch:      student.branch,
+            gender:      student.gender || '',
             subjectCode: s.subjectCode,
-            subjectName: s.subjectName, session: s.examSession, result: s.result
+            subjectName: s.subjectName,
+            result:      s.effectiveResult === 'Absent' ? 'AB'
+                       : s.effectiveResult === 'Successful' ? 'Pass' : 'Fail',
           };
         }
       }
@@ -1623,52 +1855,51 @@ const State = (() => {
   function reportKTDistribution({ prelimSessionId, gazetteSessionId, branch, batchYear, gender } = {}) {
     if (!prelimSessionId) return [];
 
-    // Collect prelim rows with same filters as reportResultSummary
-    let prelimRows = ledger.filter(r => r.examSession === prelimSessionId);
-    if (branch)    prelimRows = prelimRows.filter(r => r.branch    === branch);
-    if (batchYear) prelimRows = prelimRows.filter(r => r.batchYear === batchYear);
-    if (gender)    prelimRows = prelimRows.filter(r => r.gender    === gender);
-
-    // Build gazette index (uin+subjectCode → gazette row)
-    const gazetteIndex = {};
-    if (gazetteSessionId) {
-      let gazRows = ledger.filter(r => r.examSession === gazetteSessionId);
-      if (branch)    gazRows = gazRows.filter(r => r.branch    === branch);
-      if (batchYear) gazRows = gazRows.filter(r => r.batchYear === batchYear);
-      if (gender)    gazRows = gazRows.filter(r => r.gender    === gender);
-      for (const r of gazRows) gazetteIndex[r.uin + '||' + r.subjectCode] = r;
-    }
-
-    // Collect unique students who appear in this prelim session
-    const byStudent = {};
-    for (const r of prelimRows) {
-      if (!byStudent[r.uin]) byStudent[r.uin] = { uin: r.uin, prn: r.prn, name: r.name, branch: r.branch };
-    }
-
-    // For each student, use _getActiveKTsForStudent() which correctly accounts
-    // for all sessions, gazette overrides, and partial entries.
-    // Then optionally filter KTs to only those belonging to this session's semester.
     const prelimSess = getSession(prelimSessionId);
-    const buckets = {};
-    for (const { uin, prn, name, branch: br } of Object.values(byStudent)) {
-      const activeKTs = _getActiveKTsForStudent(uin);
-      // Only count KTs for the same semester as this prelim session
-      const semKTs = prelimSess
-        ? activeKTs.filter(r => Number(r.semester) === prelimSess.semester)
-        : activeKTs;
+    if (!prelimSess) return [];
+    const sem = prelimSess.semester;
 
-      const ktSubjects = semKTs.map(r => ({
-        subjectCode: r.subjectCode,
-        subjectName: r.subjectName,
-        result:      r.result || r._dr?.result || 'Fail',
+    // Collect students who appeared in this prelim session
+    const appearedUINs = new Set(
+      ledger
+        .filter(r => r.examSession === prelimSessionId)
+        .map(r => r.uin)
+    );
+
+    const buckets = {};
+
+    for (const student of students) {
+      if (!appearedUINs.has(student.uin))          continue;
+      if (branch    && student.branch    !== branch)    continue;
+      if (batchYear && student.batchYear !== batchYear) continue;
+      if (gender    && student.gender    !== gender)    continue;
+
+      const data = _ktCache[student.uin];
+      if (!data) continue;
+
+      // Count active KT subjects for this semester only
+      const semActiveSubjects = data.subjects.filter(s =>
+        s.semester === sem &&
+        (s.effectiveResult === 'Unsuccessful' || s.effectiveResult === 'Absent')
+      );
+
+      const ktSubjects = semActiveSubjects.map(s => ({
+        subjectCode: s.subjectCode,
+        subjectName: s.subjectName,
+        result:      s.effectiveResult === 'Absent' ? 'AB' : 'Fail',
       }));
 
       const ktCount = ktSubjects.length;
       if (!buckets[ktCount]) buckets[ktCount] = [];
-      buckets[ktCount].push({ uin, prn, name, branch: br, ktSubjects });
+      buckets[ktCount].push({
+        uin:        student.uin,
+        prn:        student.prn,
+        name:       student.name,
+        branch:     student.branch,
+        ktSubjects,
+      });
     }
 
-    // Return sorted by ktCount ascending
     return Object.entries(buckets)
       .map(([ktCount, students]) => ({ ktCount: Number(ktCount), students }))
       .sort((a, b) => a.ktCount - b.ktCount);
@@ -1898,15 +2129,21 @@ const State = (() => {
       getSubjectsForSem(sem, branch || 'Computer', session).map(s => s.code)
     );
 
-    // For each student, compute active KT subjects in this semester
+    // For each student, get active KT subjects in this semester from cache
     const ktSubjectsByStudent = {};
     for (const s of branchStudents) {
-      const activeKTs = getActiveKTSubjects(s.uin)
-        .filter(r => {
-          // Must belong to this semester's subject list
-          // Check via stored semester on ledger row
-          return Number(r.semester) === sem;
-        });
+      const data = _ktCache[s.uin];
+      if (!data) continue;
+      const activeKTs = data.subjects.filter(subj =>
+        subj.semester === sem &&
+        (subj.effectiveResult === 'Unsuccessful' || subj.effectiveResult === 'Absent')
+      ).map(subj => ({
+        uin:         s.uin,
+        subjectCode: subj.subjectCode,
+        subjectName: subj.subjectName,
+        semester:    String(subj.semester),
+        result:      subj.effectiveResult === 'Absent' ? 'AB' : 'Fail',
+      }));
       if (activeKTs.length > 0) {
         ktSubjectsByStudent[s.uin] = activeKTs;
       }
@@ -1961,6 +2198,9 @@ const State = (() => {
     submitEntries,
     getSeatNumber, getSeatsForSession, uploadSeats, updateSeatNumber,getSeatsForSessionWithFallback,
     computeAttemptTag,
+    getKTData:           (uin) => _ktCache[uin] || null,
+    getKTCount:          (uin) => _ktCache[uin]?.activeKTCount    ?? 0,
+    getHistoricalKTData: (uin) => _ktCache[uin]?.historicalKTComponents ?? [],
     reportResultSummary, reportRevalImpact, reportToppers, reportCreditFilter, reportKTFilter, getMyEntries,
     reportKTDistribution,
     getExamGroups,

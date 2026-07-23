@@ -306,7 +306,7 @@ function _meAdhocShowSessionPicker(sessions) {
 
   function _sessionTag(status) {
     if (status === 'cleared') {
-      return `<span class="session-status-tag tag-cleared">✓ Cleared</span>`;
+      return `<span class="session-status-tag tag-cleared">✓ Successful</span>`;
     }
     if (status === 'unsuccessful') {
       return `<span class="session-status-tag tag-unsuccessful">✗ Unsuccessful</span>`;
@@ -351,8 +351,8 @@ function _meStudentInfoHtml(student, session) {
       <div class="sc-name">${UI.esc(student.name)}
         ${session
           ? isKT
-            ? '<span class="badge badge-kt" style="margin-left:8px;">KT</span>'
-            : '<span class="badge badge-regular" style="margin-left:8px;">Regular</span>'
+            ? '<span class="badge badge-kt" style="margin-left:8px;">KT Student</span>'
+            : '<span class="badge badge-regular" style="margin-left:8px;">Regular Student</span>'
           : ''}
       </div>
       <div class="sc-meta">
@@ -801,11 +801,11 @@ function _meQueueShowSummary() {
       <div style="display:flex; gap:24px; margin-bottom:16px; flex-wrap:wrap;">
         <div class="pv-stat">
           <span class="pv-stat-val" style="color:var(--pass);">${students.length}</span>
-          <span class="pv-stat-lbl">Total students</span>
+          <span class="pv-stat-lbl">Total Students</span>
         </div>
         <div class="pv-stat">
           <span class="pv-stat-val" style="color:var(--brand);">${entered}</span>
-          <span class="pv-stat-lbl">Saved</span>
+          <span class="pv-stat-lbl">Marks Saved</span>
         </div>
         <div class="pv-stat">
           <span class="pv-stat-val" style="color:var(--grace);">${skipped}</span>
@@ -1443,12 +1443,15 @@ function initProgress() {
 
 // ── Computed attempt tag HTML (for progress view) ─────────────
 function _pvAttemptTag(uin, subjectCode, sessionId) {
-  const tag = State.computeAttemptTag(uin, subjectCode, sessionId);
+  // Read attempt tag from unified KT cache via subject code
+  const data = State.getKTData(uin);
+  const subj = data?.subjects.find(s => s.subjectCode === subjectCode);
+  const tag  = subj?.attemptTag || State.computeAttemptTag(uin, subjectCode, sessionId);
   if (!tag) return '<span class="badge badge-pending">—</span>';
-  const cls = tag.includes('KT')             ? 'badge-kt'
-            : tag.startsWith('Unsuccessful') ? 'badge-unsuccessful'
-            : tag.includes('Reval')          ? 'badge-reval'
-            : 'badge-regular';
+  const cls = tag.startsWith('Unsuccessful') ? 'badge-fail'
+            : tag.includes('after Reval')    ? 'badge-reval'
+            : tag.includes('Marks Reval')    ? 'badge-reval'
+            : 'badge-pass';
   return `<span class="badge ${cls}" title="${UI.esc(tag)}">${UI.esc(tag)}</span>`;
 }
 
@@ -1571,7 +1574,7 @@ function _pvShowStudent(uin) {
 
     let sessionBadge = '';
     if (sessionStatus === 'successful') {
-      sessionBadge = `<span class="pv-session-badge pv-session-success">🎉 First Attempt</span>`;
+      sessionBadge = `<span class="pv-session-badge pv-session-success">🎉 Successful in Regular Attempt</span>`;
     } else if (sessionStatus === 'pending') {
       sessionBadge = `<span class="pv-session-badge pv-session-pending">⏳ Pending</span>`;
     }
@@ -1824,16 +1827,19 @@ function _dashSessionCompletion() {
 
 function _dashActiveKTs() {
   const students = State.getStudents();
-  let   ktCount  = 0;
+  let studentCount = 0;
+  let componentCount = 0;
   for (const student of students) {
-    const acad = State.computeStudentAcademics(student.uin);
-    const hasActiveKT = acad?.sessionResults.some(sr =>
-      sr.subjects.some(s => !s.pending && (s.dr.result === 'Fail' || s.dr.result === 'AB'))
-    );
-    if (hasActiveKT) ktCount++;
+    const data = State.getKTData(student.uin);
+    if (!data) continue;
+    if (data.activeKTCount > 0) {
+      studentCount++;
+      componentCount += data.activeKTCount;
+    }
   }
-  document.getElementById('dash-kt-count').textContent = ktCount;
-  document.getElementById('dash-kt-sub').textContent   = `students with active KT / backlog`;
+  document.getElementById('dash-kt-count').textContent = studentCount;
+  document.getElementById('dash-kt-sub').textContent   =
+    `students with active KT · ${componentCount} component${componentCount !== 1 ? 's' : ''} failing`;
 }
 
 function _dashBranchPassRates() {
@@ -2678,10 +2684,10 @@ function _rptLiveRevalImpact() {
 
   tbody.innerHTML = data.map(d => {
     const dirBadge = {
-      'improved':     '<span class="badge badge-pass">↑ Fail → Pass</span>',
-      'worsened':     '<span class="badge badge-fail">⚠ Pass → Fail</span>',
-      'fail-to-fail': `<span class="badge badge-kt">${d.markDelta >= 0 ? '↑' : '↓'} Fail → Fail (ESE ${d.prelimEse} → ${d.gazEse})</span>`,
-      'pass-to-pass': `<span class="badge badge-regular">${d.markDelta >= 0 ? '↑' : '↓'} Pass → Pass (ESE ${d.prelimEse} → ${d.gazEse})</span>`,
+      'improved':     '<span class="badge badge-pass">↑ Unsuccessful → Successful</span>',
+      'worsened':     '<span class="badge badge-fail">⚠ Successful → Unsuccessful</span>',
+      'fail-to-fail': `<span class="badge badge-kt">${d.markDelta >= 0 ? '↑' : '↓'} Unsuccessful → Unsuccessful (ESE ${d.prelimEse} → ${d.gazEse})</span>`,
+      'pass-to-pass': `<span class="badge badge-regular">${d.markDelta >= 0 ? '↑' : '↓'} Successful → Successful (ESE ${d.prelimEse} → ${d.gazEse})</span>`,
     }[d.direction] || '<span class="badge">Changed</span>';
     return `
     <tr class="${d.direction === 'worsened' ? 'reval-worsened' : ''}">
