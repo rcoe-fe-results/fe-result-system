@@ -219,6 +219,11 @@ function _isStudentEligibleForSession(student, session) {
   }
 
   // Different batch year — only if active KT in this semester
+  // AND session is not before the student's own batch year
+  const sessionYear = Number(session.name.slice(0, 4));
+  const studentBatchYear = Number(student.batchYear);
+  if (sessionYear < studentBatchYear) return false;
+
   const activeKTs = State.getActiveKTSubjects(student.uin);
   return activeKTs.some(r => Number(r.semester) === session.semester);
 }
