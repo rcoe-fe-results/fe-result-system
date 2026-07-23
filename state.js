@@ -662,7 +662,7 @@ const State = (() => {
       return `Unsuccessful in ${attemptLabel}${revalSuffix}`;
     }
 
-    return `Cleared in ${attemptLabel}${revalSuffix}`;
+    return `Successful in ${attemptLabel}${revalSuffix}`;
   }
 
   // Detect reval: for a Final Gazette session, check if ESE differs from linked Preliminary session
