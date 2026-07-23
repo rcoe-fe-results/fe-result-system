@@ -1991,12 +1991,33 @@ const State = (() => {
       if (!subj) continue;
 
       const marksMap = {};
-      if (merged.iatMarks  !== '') marksMap.IAT  = merged.iatMarks;
-      if (merged.eseMarks  !== '') marksMap.ESE  = merged.eseMarks;
-      if (merged.twMarks   !== '') marksMap.TW   = merged.twMarks;
-      if (merged.oralMarks !== '') marksMap.Oral = merged.oralMarks;
+        if (merged.iatMarks  !== '') marksMap.IAT  = merged.iatMarks;
+        if (merged.eseMarks  !== '') marksMap.ESE  = merged.eseMarks;
+        if (merged.twMarks   !== '') marksMap.TW   = merged.twMarks;
+        if (merged.oralMarks !== '') marksMap.Oral = merged.oralMarks;
 
-      const dr = computeDisplayResult(subj, marksMap);
+        // Carry forward passing component marks from prior sessions
+        // (mirrors computeStudentAcademics KT handling)
+        const priorRows = allRows
+          .filter(r => r.examSession !== prelim.id && (!gazette || r.examSession !== gazette.id))
+          .sort((a, b) => a.entryDateTime.localeCompare(b.entryDateTime));
+        const priorMerged = {};
+        for (const r of priorRows) {
+          if (r.iatMarks  !== '') priorMerged.IAT  = r.iatMarks;
+          if (r.eseMarks  !== '') priorMerged.ESE  = r.eseMarks;
+          if (r.twMarks   !== '') priorMerged.TW   = r.twMarks;
+          if (r.oralMarks !== '') priorMerged.Oral = r.oralMarks;
+        }
+        for (const [comp, val] of Object.entries(priorMerged)) {
+          if (marksMap[comp] !== undefined) continue; // already has value this session
+          const max    = subj.marks[comp];
+          const parsed = parseMarkValue(val, max);
+          const priorPassed = parsed.valid && !parsed.absent &&
+            (parsed.grace || (max && parsed.value / max >= 0.40));
+          if (priorPassed) marksMap[comp] = val;
+        }
+
+        const dr = computeDisplayResult(subj, marksMap);
       if (!dr.pending && dr.result === 'Pass') {
         cleared          = true;
         clearedInSession = gazette ? gazette.name : prelim.name;
