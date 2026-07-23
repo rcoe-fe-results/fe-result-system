@@ -81,7 +81,7 @@ const Sheets = (() => {
       physicsLabCode:          r[7]  || '',
       chemTheoryCode:          r[8]  || '',
       chemLabCode:             r[9]  || '',
-      entryType:               r[10] || 'Preliminary',
+      entryType:               r[10] || 'Uni_Portal_Gazette',
       linkedPrelimSessionId:   r[11] || '',
       month:                   r[12] || _inferMonthFromName(r[1] || ''),
     })).filter(s => s.id);
@@ -95,7 +95,7 @@ const Sheets = (() => {
       session.physicsLabCode         || '',
       session.chemTheoryCode         || '',
       session.chemLabCode            || '',
-      session.entryType              || 'Preliminary',
+      session.entryType              || 'Uni_Portal_Gazette',
       session.linkedPrelimSessionId  || '',
       session.month                  || '',
     ]]);

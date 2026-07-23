@@ -37,7 +37,7 @@ const ATTEMPT_TYPES = ['Regular', 'Reval', 'KT', 'Grace'];
 // ── Session naming ────────────────────────────────────────────
 const SESSION_YEARS  = Array.from({ length: 10 }, (_, i) => 2024 + i); // 2024–2033
 const SESSION_MONTHS = ['December', 'May'];
-const SESSION_TYPES  = ['Preliminary', 'Final Gazette'];
+const SESSION_TYPES  = ['Uni_Portal_Gazette', 'Revaluation_Gazette'];
 
 // Derive fresh batch year from session year + month
 // December 2025 Sem-I  → fresh batch 2025
@@ -51,7 +51,7 @@ function deriveFreshBatch(year, month) {
 function buildSessionName(year, month, semester, type) {
   const mo  = month === 'December' ? 'Dec' : 'May';
   const sem = semester === 1 ? 'Sem-I' : 'Sem-II';
-  const typ = type === 'Final Gazette' ? 'Final-Gazette' : 'Preliminary';
+  const typ = type === 'Revaluation_Gazette' ? 'Revaluation-Gazette' : 'Uni-Portal-Gazette';
   return `${year}_${mo}_${sem}_${typ}`;
 }
 
@@ -346,8 +346,8 @@ function sortSessions(sessions) {
 
     if (a.semester !== b.semester) return a.semester - b.semester; // Sem I before Sem II
 
-    const typeA = a.entryType === 'Final Gazette' ? 1 : 0;
-    const typeB = b.entryType === 'Final Gazette' ? 1 : 0;
+    const typeA = a.entryType === 'Revaluation_Gazette' ? 1 : 0;
+    const typeB = b.entryType === 'Revaluation_Gazette' ? 1 : 0;
     return typeB - typeA; // Gazette before Preliminary
   });
 }
@@ -368,8 +368,8 @@ function sortSessionsChronological(sessions) {
 
     if (a.semester !== b.semester) return a.semester - b.semester;
 
-    const typeA = a.entryType === 'Final Gazette' ? 1 : 0;
-    const typeB = b.entryType === 'Final Gazette' ? 1 : 0;
+    const typeA = a.entryType === 'Revaluation_Gazette' ? 1 : 0;
+    const typeB = b.entryType === 'Revaluation_Gazette' ? 1 : 0;
     return typeA - typeB; // Preliminary before Gazette
   });
 }

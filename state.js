@@ -34,7 +34,7 @@ const State = (() => {
     const sem2Start = (batchYear + 1) * 12 + 5;
 
     const prelims = sessions
-      .filter(s => s.entryType !== 'Final Gazette')
+      .filter(s => s.entryType !== 'Revaluation_Gazette')
       .sort((a, b) => _score(a) - _score(b));
 
     return {
@@ -126,7 +126,7 @@ const State = (() => {
 
         // Find paired gazette session if any
         const gazette = sessions.find(s =>
-          s.entryType === 'Final Gazette' &&
+          s.entryType === 'Revaluation_Gazette' &&
           s.linkedPrelimSessionId === sess.id
         );
 
@@ -369,12 +369,12 @@ const State = (() => {
         prelimSessionId:  '',
         gazetteSessionId: '',
       };
-      if (s.entryType === 'Final Gazette') map[key].gazetteSessionId = s.id;
+      if (s.entryType === 'Revaluation_Gazette') map[key].gazetteSessionId = s.id;
       else                                  map[key].prelimSessionId  = s.id;
     }
     return Object.values(map).sort((a, b) => b.key.localeCompare(a.key));
   }
-  async function addSession(year, month, semester, electives = {}, entryType = 'Preliminary', linkedPrelimSessionId = '') {
+  async function addSession(year, month, semester, electives = {}, entryType = 'Uni_Portal_Gazette', linkedPrelimSessionId = '') {
     const user      = Auth.getUser();
     const sem       = Number(semester);
     const name      = buildSessionName(year, month, sem, entryType);
@@ -404,7 +404,7 @@ const State = (() => {
       physicsLabCode:        electives.physicsLabCode    || '',
       chemTheoryCode:        electives.chemTheoryCode    || '',
       chemLabCode:           electives.chemLabCode       || '',
-      entryType:             entryType || 'Preliminary',
+      entryType:             entryType || 'Uni_Portal_Gazette',
       linkedPrelimSessionId: linkedPrelimSessionId || '',
     };
     await Sheets.addSession(session);
@@ -598,7 +598,7 @@ const State = (() => {
     // Resolve the target session
     const targetSess = getSession(sessionId);
     if (!targetSess) return null;
-    const isGazette    = targetSess.entryType === 'Final Gazette';
+    const isGazette    = targetSess.entryType === 'Revaluation_Gazette';
     const targetPrelimId = isGazette ? targetSess.linkedPrelimSessionId : sessionId;
     const targetGazId    = isGazette ? sessionId : null;
 
@@ -612,11 +612,11 @@ const State = (() => {
         .sort((a, b) => b.id.localeCompare(a.id));
 
       for (const s of allSessList) {
-        const isPrelim = s.entryType === 'Preliminary';
-        const isGaz    = s.entryType === 'Final Gazette';
+        const isPrelim = s.entryType === 'Uni_Portal_Gazette';
+        const isGaz    = s.entryType === 'Revaluation_Gazette';
         const pId = isPrelim ? s.id : (isGaz ? s.linkedPrelimSessionId : null);
         const gId = isGaz ? s.id : getSessions().find(x =>
-          x.entryType === 'Final Gazette' && x.linkedPrelimSessionId === s.id)?.id || null;
+          x.entryType === 'Revaluation_Gazette' && x.linkedPrelimSessionId === s.id)?.id || null;
         if (!pId) continue;
         const { result } = _resolveSessionResult(pId, gId);
         if (result === 'Pass') {
@@ -636,7 +636,7 @@ const State = (() => {
     const subjectSemester = Number(allRows[0]?.semester);
     const allPrelimSessions = getSessions()
       .filter(s =>
-        s.entryType  === 'Preliminary' &&
+        s.entryType  === 'Uni_Portal_Gazette' &&
         s.semester   === subjectSemester &&
         Number(s.batchYear) >= Number(student.batchYear)
       )
@@ -668,7 +668,7 @@ const State = (() => {
   // Detect reval: for a Final Gazette session, check if ESE differs from linked Preliminary session
   function _detectReval(uin, subjectCode, sessionId) {
     const session = getSession(sessionId);
-    if (!session || session.entryType !== 'Final Gazette' || !session.linkedPrelimSessionId) {
+    if (!session || session.entryType !== 'Revaluation_Gazette' || !session.linkedPrelimSessionId) {
       return false;
     }
     // Get ESE from Final Gazette
@@ -841,7 +841,7 @@ const State = (() => {
     const now        = new Date().toISOString();
     const toAppend   = [];
     const duplicates = [];
-    const isFinal    = session.entryType === 'Final Gazette';
+    const isFinal    = session.entryType === 'Revaluation_Gazette';
 
     for (const entry of entries) {
       const student = getStudent(entry.uin);
@@ -1135,7 +1135,7 @@ const State = (() => {
 
           // For Final Gazette KT sessions: flag components that changed vs prelim
           const revalMap = {};
-          if (sess.entryType === 'Final Gazette' && sess.linkedPrelimSessionId) {
+          if (sess.entryType === 'Revaluation_Gazette' && sess.linkedPrelimSessionId) {
             const prelimKey = sess.linkedPrelimSessionId + '||' + subj.code;
             const prelimRow = latestPerSessionSubject[prelimKey];
             if (prelimRow) {
@@ -1176,7 +1176,7 @@ const State = (() => {
           // For Final Gazette sessions: supplement ESE-only rows with Prelim IAT/TW/Oral
           let marksMap = _marksMapFromRow(r);
           const revalMap = {}; // comp → true if gazette value differs from prelim
-          if (sess.entryType === 'Final Gazette' && sess.linkedPrelimSessionId) {
+          if (sess.entryType === 'Revaluation_Gazette' && sess.linkedPrelimSessionId) {
             const prelimKey = sess.linkedPrelimSessionId + '||' + r.subjectCode;
             const prelimRow = latestPerSessionSubject[prelimKey];
             if (prelimRow) {
@@ -1263,7 +1263,7 @@ const State = (() => {
 
         // For Final Gazette sessions: supplement ESE-only rows with Prelim IAT/TW/Oral
         let marksMap = _marksMapFromRow(r);
-        if (sess.entryType === 'Final Gazette' && sess.linkedPrelimSessionId) {
+        if (sess.entryType === 'Revaluation_Gazette' && sess.linkedPrelimSessionId) {
           const prelimKey = sess.linkedPrelimSessionId + '||' + r.subjectCode;
           const prelimRow = latestPerSessionSubject[prelimKey];
           if (prelimRow) {
@@ -1358,7 +1358,7 @@ const State = (() => {
         if (!r) continue;
         const sess = getSession(r.examSession);
         let marksMap = _marksMapFromRow(r);
-        if (sess?.entryType === 'Final Gazette' && sess.linkedPrelimSessionId) {
+        if (sess?.entryType === 'Revaluation_Gazette' && sess.linkedPrelimSessionId) {
           const prelimKey = sess.linkedPrelimSessionId + '||' + r.subjectCode;
           const prelimRow = latestPerSessionSubject[prelimKey];
           if (prelimRow) {
@@ -1383,7 +1383,7 @@ const State = (() => {
       if (!subj) continue;
       const sess = getSession(r.examSession);
       let marksMap = _marksMapFromRow(r);
-      if (sess?.entryType === 'Final Gazette' && sess.linkedPrelimSessionId) {
+      if (sess?.entryType === 'Revaluation_Gazette' && sess.linkedPrelimSessionId) {
         const prelimKey = sess.linkedPrelimSessionId + '||' + r.subjectCode;
         const prelimRow = latestPerSessionSubject[prelimKey];
         if (prelimRow) {
@@ -1601,7 +1601,7 @@ const State = (() => {
   // Reval is now determined dynamically: compares ESE between Final Gazette and linked Preliminary.
   function reportRevalImpact({ gazetteSessionId, branch, subjectCode } = {}) {
     // Find Final Gazette sessions matching the filter
-    let finalSessions = sessions.filter(s => s.entryType === 'Final Gazette' && s.linkedPrelimSessionId);
+    let finalSessions = sessions.filter(s => s.entryType === 'Revaluation_Gazette' && s.linkedPrelimSessionId);
     if (gazetteSessionId) finalSessions = finalSessions.filter(s => s.id === gazetteSessionId);
 
     const result = [];
@@ -1950,7 +1950,7 @@ const State = (() => {
     // All Preliminary sessions for this subject's semester, chronologically
     const allPrelimSessions = getSessions()
       .filter(s =>
-        s.entryType === 'Preliminary' &&
+        s.entryType === 'Revaluation_Gazette' &&
         s.semester  === subjectSemester &&
         Number(s.batchYear) >= Number(student.batchYear)
       )
@@ -1968,7 +1968,7 @@ const State = (() => {
 
       // Find paired gazette if any
       const gazette = getSessions().find(s =>
-        s.entryType === 'Final Gazette' &&
+        s.entryType === 'Revaluation_Gazette' &&
         s.linkedPrelimSessionId === prelim.id
       );
 

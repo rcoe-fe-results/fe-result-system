@@ -239,7 +239,9 @@ function _meAdhocSelectStudent(uin, matchedSeat) {
 
   // Find eligible active sessions for this student
   const eligibleSessions = sortSessions(State.getSessions().filter(s =>
-    s.status === 'Active' && _isStudentEligibleForSession(student, s)
+    s.status === 'Active' &&
+    _isStudentEligibleForSession(student, s) &&
+    (s.entryType !== 'Revaluation_Gazette' || Auth.isAdmin())
   ));
 
   if (eligibleSessions.length === 0) {
@@ -350,7 +352,7 @@ function _meStudentInfoHtml(student, session) {
   const isKT = session
     ? State.getActiveKTSubjects(student.uin).some(r => Number(r.semester) === session.semester)
     : false;
-  const isFinal = session?.entryType === 'Final Gazette';
+  const isFinal = session?.entryType === 'Revaluation_Gazette';
   return `
     <div class="student-card">
       <div class="sc-name">${UI.esc(student.name)}
@@ -366,8 +368,8 @@ function _meStudentInfoHtml(student, session) {
       </div>
       ${session
         ? isFinal
-          ? '<div style="margin-top:6px;"><span class="session-type-inline final-gazette">📋 Final Gazette — only ESE editable</span></div>'
-          : '<div style="margin-top:6px;"><span class="session-type-inline preliminary">📝 Preliminary</span></div>'
+          ? '<div style="margin-top:6px;"><span class="session-type-inline final-gazette">📋 Revaluation Gazette — only ESE editable</span></div>'
+          : '<div style="margin-top:6px;"><span class="session-type-inline preliminary">📝 Uni Portal Gazette</span></div>'
         : ''}
     </div>`;
 }
@@ -449,7 +451,7 @@ function _meEditableCompHtml(comp, max, code, uin, val) {
 // Builds the full single-grid HTML for a student+session.
 // context = 'adhoc' | 'queue' — used for data-context attr on inputs
 function _meBuildSubjectGrid(student, session, context) {
-  const isFinal  = session.entryType === 'Final Gazette';
+  const isFinal  = session.entryType === 'Revaluation_Gazette';
   const subjects = getSubjectsForSem(session.semester, student.branch, session);
   const isKT     = State.getActiveKTSubjects(student.uin)
     .some(r => Number(r.semester) === session.semester);
@@ -583,7 +585,7 @@ async function _meAdhocSubmit() {
   const { student, session } = meAdhocState;
   if (!student || !session) { UI.toast('Select a student and session.', 'error'); return; }
 
-  const isFinal = session.entryType === 'Final Gazette';
+  const isFinal = session.entryType === 'Revaluation_Gazette';
   const inputs  = [...document.querySelectorAll('#me-adhoc-grid .mark-input-single:not([disabled])')];
   const subjectMap = {};
   for (const input of inputs) {
@@ -618,7 +620,10 @@ let meQueueState = {
 };
 
 function _meInitQueue() {
-  const sessions = sortSessions(State.getSessions().filter(s => s.status === 'Active'));
+  const sessions = sortSessions(State.getSessions().filter(s =>
+    s.status === 'Active' &&
+    (s.entryType !== 'Revaluation_Gazette' || Auth.isAdmin())
+  ));
   UI.buildSelect('me-queue-session', sessions, '— select session —', 'id', 'name');
   UI.buildSelect('me-queue-branch', BRANCHES, '— select branch —');
 
@@ -694,7 +699,7 @@ function _meQueueRenderCard() {
   card.classList.remove('hidden');
 
   const seatNum  = seatLookup[student.uin] || '—';
-  const isFinal  = session.entryType === 'Final Gazette';
+  const isFinal  = session.entryType === 'Revaluation_Gazette';
   const subjects = getSubjectsForSem(session.semester, student.branch, session);
   const isKT     = student.attemptFlag === 'KT';
 
@@ -717,8 +722,8 @@ function _meQueueRenderCard() {
         <div class="sc-meta">UIN: ${UI.esc(student.uin)} · PRN/ERN: ${UI.esc(student.prn || '—')} · Batch ${UI.esc(student.batchYear)}</div>
       </div>
       ${isFinal
-        ? '<span class="session-type-inline final-gazette" style="margin-left:auto;">📋 Final Gazette</span>'
-        : '<span class="session-type-inline preliminary" style="margin-left:auto;">📝 Preliminary</span>'}
+        ? '<span class="session-type-inline final-gazette" style="margin-left:auto;">📋 Revaluation Gazette</span>'
+        : '<span class="session-type-inline preliminary" style="margin-left:auto;">📝 Uni Portal Gazette</span>'}
     </div>`;
 
   document.getElementById('me-queue-grid').innerHTML =
@@ -961,8 +966,8 @@ function _beRenderToolbar() {
   const session = bulkState.session;
   const typeBadge = document.getElementById('be-session-type-badge');
   if (typeBadge) {
-    const isFinal = session && session.entryType === 'Final Gazette';
-    typeBadge.textContent = isFinal ? '📋 Final Gazette' : '📝 Preliminary';
+    const isFinal = session && session.entryType === 'Revaluation_Gazette';
+    typeBadge.textContent = isFinal ? '📋 Revaluation Gazette' : '📝 University Portal Gazette';
     typeBadge.className = 'session-type-badge ' + (isFinal ? 'final-gazette' : 'preliminary');
     typeBadge.style.display = '';
   }
@@ -1015,7 +1020,7 @@ function _beSortStudents() {
 function _beRenderGrid() {
   const { subjects, students, activeComps, session, seatMap } = bulkState;
   const container = document.getElementById('be-grid-area');
-  const isFinal   = session && session.entryType === 'Final Gazette';
+  const isFinal   = session && session.entryType === 'Revaluation_Gazette';
 
   const getVisibleComps = (subj) => {
     const comps = Object.keys(subj.marks);
@@ -1040,8 +1045,8 @@ function _beRenderGrid() {
     : null;
 
   const sessionTypeLabel = isFinal
-    ? `<span class="session-type-inline final-gazette">📋 Final Gazette${prelimSession ? ' · linked to: ' + UI.esc(prelimSession.name) : ' · no preliminary linked'}</span>`
-    : `<span class="session-type-inline preliminary">📝 Preliminary — all components editable</span>`;
+    ? `<span class="session-type-inline final-gazette">📋 Revaluation Gazette${prelimSession ? ' · linked to: ' + UI.esc(prelimSession.name) : ' · no preliminary linked'}</span>`
+    : `<span class="session-type-inline preliminary">📝 Uni Portal Gazette — all components editable</span>`;
 
   let html = `
   <div class="grid-info">
@@ -1238,7 +1243,7 @@ async function _beSubmit() {
     return;
   }
 
-  const isFinal = session && session.entryType === 'Final Gazette';
+  const isFinal = session && session.entryType === 'Revaluation_Gazette';
 
   // For Final Gazette: collect all ESE inputs (including pre-filled ones), skip if empty
   // For Preliminary: collect all inputs with a value
@@ -1415,7 +1420,7 @@ function initProgress() {
       // Find students who have any Final Gazette ESE that differs from their Preliminary ESE
       const revalUINs = new Set();
       for (const sess of State.getSessions()) {
-        if (sess.entryType !== 'Final Gazette' || !sess.linkedPrelimSessionId) continue;
+        if (sess.entryType !== 'Revaluation_Gazette' || !sess.linkedPrelimSessionId) continue;
         const finalRows = State.ledger.filter(r => r.examSession === sess.id);
         for (const fr of finalRows) {
           const pr = State.ledger
@@ -1543,7 +1548,7 @@ function _pvShowStudent(uin) {
   // Default to latest Preliminary; Gazette remains selectable but not the default
   function _latestPrelim(list) {
     if (!list.length) return null;
-    const prelims = list.filter(s => s.entryType !== 'Final Gazette');
+    const prelims = list.filter(s => s.entryType !== 'Revaluation_Gazette');
     return prelims.length
       ? prelims[prelims.length - 1].id
       : list[list.length - 1].id;
@@ -1551,7 +1556,7 @@ function _pvShowStudent(uin) {
   // Default to Final Gazette if present (merged/final marks); else latest Prelim/KT
   function _defaultSession(list) {
     if (!list.length) return null;
-    const gazette = [...list].reverse().find(s => s.entryType === 'Final Gazette');
+    const gazette = [...list].reverse().find(s => s.entryType === 'Revaluation_Gazette');
     return gazette ? gazette.id : list[list.length - 1].id;
   }
   const selectedSessId = {
@@ -1566,7 +1571,7 @@ function _pvShowStudent(uin) {
     const sess      = sessId ? sessionMap[sessId] : null;
     const acadSess  = academics?.sessionResults.find(sr => sr.session.id === sessId);
     // For Final Gazette: also get the linked Prelim acadSess for full subject list
-    const prelimAcadSess = (sess?.entryType === 'Final Gazette' && sess.linkedPrelimSessionId)
+    const prelimAcadSess = (sess?.entryType === 'Revaluation_Gazette' && sess.linkedPrelimSessionId)
       ? academics?.sessionResults.find(sr => sr.session.id === sess.linkedPrelimSessionId)
       : null;
 
@@ -1602,7 +1607,7 @@ function _pvShowStudent(uin) {
     const pendingNote = acadSess?.pendingCount > 0
       ? `<span class="pv-pending-note">${acadSess.pendingCount} subject${acadSess.pendingCount > 1 ? 's' : ''} pending</span>`
       : '';
-    const isFinal = sess?.entryType === 'Final Gazette';
+    const isFinal = sess?.entryType === 'Revaluation_Gazette';
 
     // Subject rows
     let rowsHtml = '';
@@ -1714,7 +1719,7 @@ function _pvShowStudent(uin) {
       <div class="pv-sem-block" id="pv-sem-block-${sem}">
         <div class="session-header">
           <span class="session-name">Semester ${sem}</span>
-          ${isFinal ? '<span class="session-type-inline final-gazette">Final Gazette</span>' : ''}
+          ${isFinal ? '<span class="session-type-inline final-gazette">Revaluation Gazette</span>' : ''}
           ${sessionBadge}
           ${pendingNote}
           <span class="credit-pill">${creditsEarned} / ${creditsMax} cr</span>
@@ -2418,8 +2423,8 @@ function _rptGetSharedExamGroup() {
   const mo     = month === 'December' ? 'Dec' : 'May';
   const sem    = semester === '1' ? 'Sem-I' : 'Sem-II';
   const prefix = `${year}_${mo}_${sem}_`;
-  const prelim  = allSessions.find(s => s.name === prefix + 'Preliminary');
-  const gazette = allSessions.find(s => s.name === prefix + 'Final-Gazette');
+  const prelim  = allSessions.find(s => s.name === prefix + 'Uni-Portal-Gazette');
+  const gazette = allSessions.find(s => s.name === prefix + 'Revaluation-Gazette');
   if (!prelim) return null;
   return {
     prelimSessionId:  prelim.id,
@@ -2536,8 +2541,8 @@ function _rptLiveResultSummary() {
     const sem = semester === '1' ? 'Sem-I' : 'Sem-II';
     const prefix = `${year}_${mo}_${sem}_`;
 
-    const prelim  = allSessions.find(s => s.name === prefix + 'Preliminary');
-    const gazette = allSessions.find(s => s.name === prefix + 'Final-Gazette');
+    const prelim  = allSessions.find(s => s.name === prefix + 'Uni-Portal-Gazette');
+    const gazette = allSessions.find(s => s.name === prefix + 'Revaluation-Gazette');
 
     if (!prelim && !gazette) {
       bannerMode = 'no-data';
@@ -2555,9 +2560,9 @@ function _rptLiveResultSummary() {
   const bannerStyles = {
     'no-filter':  null,
     'no-data':    { bg: 'var(--fail-bg)',   color: 'var(--fail)',  text: 'No sessions found for this combination.' },
-    'prelim-only':{ bg: 'var(--grace-bg)',  color: 'var(--grace)', text: '⏳ Reval results awaited — showing Preliminary results only.' },
-    'unlinked':   { bg: 'var(--grace-bg)',  color: 'var(--grace)', text: '⏳ A Final Gazette exists but is not linked to this Preliminary — showing Preliminary results only.' },
-    'merged':     { bg: 'var(--pass-bg)',   color: 'var(--pass)',  text: '✓ Reval results included — table reflects Final Gazette outcomes.' },
+    'prelim-only':{ bg: 'var(--grace-bg)',  color: 'var(--grace)', text: '⏳ Revaluation_Gazette results awaited — showing Uni-Portal-Gazette results only.' },
+    'unlinked':   { bg: 'var(--grace-bg)',  color: 'var(--grace)', text: '⏳ A Revaluation_Gazette exists but is not linked to this Uni-Portal-Gazette — showing Uni-Portal-Gazette results only.' },
+    'merged':     { bg: 'var(--pass-bg)',   color: 'var(--pass)',  text: '✓ Revaluation_Gazette results included — table reflects Final Gazette outcomes.' },
   };
   const bs = bannerStyles[bannerMode];
   if (bs) {
@@ -2652,8 +2657,8 @@ function _rptExportResultSummary() {
     const sem    = semester === '1' ? 'Sem-I' : 'Sem-II';
     const prefix = `${year}_${mo}_${sem}_`;
     const all    = State.getSessions();
-    const prelim  = all.find(s => s.name === prefix + 'Preliminary');
-    const gazette = all.find(s => s.name === prefix + 'Final-Gazette');
+    const prelim  = all.find(s => s.name === prefix + 'Uni-Portal-Gazette');
+    const gazette = all.find(s => s.name === prefix + 'Revaluation-Gazette');
     if (prelim) prelimSessionId = prelim.id;
     if (prelim && gazette && gazette.linkedPrelimSessionId === prelim.id) gazetteSessionId = gazette.id;
   }
@@ -3233,7 +3238,7 @@ function _aktdRun() {
     for (const sid of attemptSessionIds) {
       const sess = State.getSession(sid);
       if (!sess) continue;
-      if (sess.entryType === 'Final Gazette' && sess.linkedPrelimSessionId &&
+      if (sess.entryType === 'Revaluation_Gazette' && sess.linkedPrelimSessionId &&
           attemptSessionIds.includes(sess.linkedPrelimSessionId)) {
         // Paired Gazette — same attempt as its Prelim; check if still failing → Unsuccessful Reval
         const gazetteRow = mergedPerSessionSubject[sid];
@@ -3267,7 +3272,7 @@ function _aktdRun() {
       const sess = State.getSession(row.examSession);
       if (!sess) continue;
 
-      if (sess.entryType === 'Final Gazette') {
+      if (sess.entryType === 'Revaluation_Gazette') {
         const candidate = { ...row, _sess: sess };
         if (sess.linkedPrelimSessionId) {
           const pr = mergedPerSessionSubject[sess.linkedPrelimSessionId];
@@ -3499,6 +3504,7 @@ function initAdmin() {
 
   // Populate link dropdowns
   _adminPopulateLinkDropdowns();
+  initGazetteExport();
 
   _adminRenderSessionList();
   _adminRenderAudit();
@@ -3507,7 +3513,7 @@ function initAdmin() {
 function _adminToggleLinkedPrelim() {
   const entryType = document.getElementById('admin-session-entry-type')?.value;
   const section   = document.getElementById('admin-linked-prelim-section');
-  if (section) section.classList.toggle('hidden', entryType !== 'Final Gazette');
+  if (section) section.classList.toggle('hidden', entryType !== 'Revaluation_Gazette');
   _adminPopulateLinkedPrelimSelect();
 }
 
@@ -3522,7 +3528,7 @@ function _adminPopulateLinkedPrelimSelect() {
   const batch = (year && month) ? String(deriveFreshBatch(Number(year), month)) : '';
 
   const prelims = sortSessions(State.getSessions().filter(s =>
-    s.entryType !== 'Final Gazette' &&
+    s.entryType !== 'Revaluation_Gazette' &&
     (sem === 0   || s.semester  === sem) &&
     (batch === '' || s.batchYear === batch)
   ));
@@ -3532,17 +3538,17 @@ function _adminPopulateLinkedPrelimSelect() {
 
 function _adminPopulateLinkDropdowns() {
   // For the "update link" section
-  const finalSessions = sortSessions(State.getSessions().filter(s => s.entryType === 'Final Gazette'));
+  const finalSessions = sortSessions(State.getSessions().filter(s => s.entryType === 'Revaluation_Gazette'));
   const finalSelEl    = document.getElementById('admin-link-final-select');
   if (finalSelEl) {
-    finalSelEl.innerHTML = '<option value="">— select Final Gazette session —</option>' +
+    finalSelEl.innerHTML = '<option value="">— select Revaluation Gazette session —</option>' +
       finalSessions.map(s => `<option value="${UI.esc(s.id)}">${UI.esc(s.name)} (Sem ${s.semester}, ${s.batchYear})</option>`).join('');
     finalSelEl.onchange = () => {
       const sess = State.getSession(finalSelEl.value);
       const prelimSelEl = document.getElementById('admin-link-prelim-select');
       if (!prelimSelEl || !sess) return;
       const prelims = sortSessions(State.getSessions().filter(s =>
-        s.entryType !== 'Final Gazette' &&
+        s.entryType !== 'Revaluation_Gazette' &&
         s.semester === sess.semester &&
         s.batchYear === sess.batchYear
       ));
@@ -3564,7 +3570,7 @@ function _adminUpdateSessionPreview() {
   const year  = document.getElementById('admin-session-year')?.value  || '';
   const month = document.getElementById('admin-session-month')?.value || '';
   const sem   = document.getElementById('admin-session-sem')?.value   || '';
-  const type  = document.getElementById('admin-session-entry-type')?.value || 'Preliminary';
+  const type  = document.getElementById('admin-session-entry-type')?.value || 'Uni_Portal_Gazette';
   const previewEl = document.getElementById('admin-session-preview');
   const batchEl   = document.getElementById('admin-session-batch-derived');
   if (!previewEl) return;
@@ -3623,8 +3629,8 @@ async function _adminAddSession() {
   const year      = document.getElementById('admin-session-year')?.value || '';
   const month     = document.getElementById('admin-session-month')?.value || '';
   const semester  = document.getElementById('admin-session-sem').value;
-  const entryType = document.getElementById('admin-session-entry-type')?.value || 'Preliminary';
-  const linkedPrelimSessionId = entryType === 'Final Gazette'
+  const entryType = document.getElementById('admin-session-entry-type')?.value || 'Uni_Portal_Gazette';
+  const linkedPrelimSessionId = entryType === 'Revaluation_Gazette'
     ? (document.getElementById('admin-linked-prelim-select')?.value || '')
     : '';
 
@@ -3686,7 +3692,7 @@ async function _adminAddSession() {
           const el = document.getElementById(id);
           if (el) el.value = '';
         });
-        document.getElementById('admin-session-entry-type').value = 'Preliminary';
+        document.getElementById('admin-session-entry-type').value = 'Uni_Portal_Gazette';
         document.getElementById('admin-session-preview').textContent = '—';
         document.getElementById('admin-session-batch-derived').textContent = '—';
         _adminToggleElectives();
@@ -3718,11 +3724,11 @@ function _adminRenderSessionList() {
         ? '<span class="elective-missing">⚠ No electives set</span>'
         : '<span class="muted">—</span>';
 
-    const typeCls   = s.entryType === 'Final Gazette' ? 'badge-reval' : 'badge-regular';
-    const typeLabel = s.entryType || 'Preliminary';
+    const typeCls   = s.entryType === 'Revaluation_Gazette' ? 'badge-reval' : 'badge-regular';
+const typeLabel = s.entryType ? s.entryType.replace(/_/g, ' ') : 'Uni Portal Gazette';
 
     let linkedInfo = '—';
-    if (s.entryType === 'Final Gazette') {
+    if (s.entryType === 'Revaluation_Gazette') {
       if (s.linkedPrelimSessionId) {
         const prelim = State.getSession(s.linkedPrelimSessionId);
         linkedInfo = prelim ? UI.esc(prelim.name) : `<span class="muted">${UI.esc(s.linkedPrelimSessionId)}</span>`;
@@ -3739,11 +3745,6 @@ function _adminRenderSessionList() {
       <td>${linkedInfo}</td>
       <td>${electiveInfo}</td>
       <td><span class="badge ${s.status === 'Active' ? 'badge-pass' : 'badge-pending'}">${UI.esc(s.status)}</span></td>
-      <td>
-        ${s.status === 'Locked'
-          ? `<button class="btn btn-secondary btn-sm" onclick="exportGazette('${UI.esc(s.id)}')">⬇ Gazette</button>`
-          : ''}
-      </td>
       <td class="muted" style="font-size:11px;">${UI.esc(s.createdBy)}</td>
     </tr>`;
   }).join('');
@@ -3767,8 +3768,6 @@ async function _adminLockSession() {
           await State.lockSession(id);
           UI.hideSpinner();
           UI.toast(`Session "${session.name}" locked.`, 'success');
-          // Small delay so toast is visible before file download dialog
-          setTimeout(() => exportGazette(id), 400);
           initAdmin();
         } catch(e) {
           UI.hideSpinner();
@@ -3990,7 +3989,7 @@ function _adminResetManualSeat() {
 async function _adminUpdateSessionLink() {
   const finalId  = document.getElementById('admin-link-final-select')?.value;
   const prelimId = document.getElementById('admin-link-prelim-select')?.value || '';
-  if (!finalId) { UI.toast('Select a Final Gazette session.', 'error'); return; }
+  if (!finalId) { UI.toast('Select a Revaluation Gazette session.', 'error'); return; }
   const finalSess  = State.getSession(finalId);
   const prelimSess = prelimId ? State.getSession(prelimId) : null;
   const desc = prelimSess
@@ -4038,79 +4037,240 @@ function _adminRenderAudit() {
 // ═══════════════════════════════════════════════════════════════
 // GAZETTE EXPORT
 // ═══════════════════════════════════════════════════════════════
-function exportGazette(sessionId) {
-  const session = State.getSession(sessionId);
-  if (!session) { UI.toast('Session not found.', 'error'); return; }
+
+function initGazetteExport() {
+  const yearEl    = document.getElementById('gaz-year');
+  const monthEl   = document.getElementById('gaz-month');
+  const semEl     = document.getElementById('gaz-semester');
+  const modeEl    = document.getElementById('gaz-mode');
+  const infoEl    = document.getElementById('gaz-session-info');
+  const previewBtn = document.getElementById('gaz-preview-btn');
+  if (!yearEl) return;
+
+  // Populate year dropdown
+  const years = [...new Set(State.getSessions().map(s => s.name.slice(0,4)))].sort().reverse();
+  yearEl.innerHTML = '<option value="">—</option>' +
+    years.map(y => `<option value="${y}">${y}</option>`).join('');
+
+  function _resolve() {
+    const year  = yearEl.value;
+    const month = monthEl.value;
+    const sem   = semEl.value;
+    if (!year || !month || !sem) {
+      infoEl.textContent = '';
+      previewBtn.disabled = true;
+      return;
+    }
+    const mo     = month === 'December' ? 'Dec' : 'May';
+    const semStr = sem === '1' ? 'Sem-I' : 'Sem-II';
+    const prefix = `${year}_${mo}_${semStr}_`;
+    const all    = State.getSessions();
+    const upg    = all.find(s => s.name === prefix + 'Uni-Portal-Gazette');
+    const reval  = all.find(s => s.name === prefix + 'Revaluation-Gazette');
+
+    if (!upg) {
+      infoEl.innerHTML = `<span style="color:var(--fail);">No Uni Portal Gazette session found for this period.</span>`;
+      previewBtn.disabled = true;
+      return;
+    }
+
+    const revalLinked = reval && reval.linkedPrelimSessionId === upg.id;
+    let info = `<span style="color:var(--pass);">✓ ${upg.name}</span>`;
+    if (revalLinked) {
+      info += ` &nbsp;+&nbsp; <span style="color:var(--reval);">✓ ${reval.name}</span>`;
+    } else {
+      info += ` &nbsp;·&nbsp; <span style="color:var(--ink-4);">No linked Revaluation Gazette</span>`;
+      // Disable reval/merged modes if no gazette
+      if (modeEl.value === 'reval' || modeEl.value === 'merged') modeEl.value = 'upg';
+    }
+    infoEl.innerHTML = info;
+    previewBtn.disabled = false;
+    previewBtn._upg   = upg;
+    previewBtn._reval = revalLinked ? reval : null;
+  }
+
+  [yearEl, monthEl, semEl, modeEl].forEach(el => el.addEventListener('change', _resolve));
+  previewBtn.onclick = _gazettePreview;
+}
+
+function _gazettePreview() {
+  const previewBtn = document.getElementById('gaz-preview-btn');
+  const upg        = previewBtn._upg;
+  const reval      = previewBtn._reval;
+  const mode       = document.getElementById('gaz-mode').value;
+  const format     = document.getElementById('gaz-format').value;
+  if (!upg) return;
+
+  // Branch-wise stats
+  let tableRows = '';
+  let grandTotal = 0, grandPass = 0, grandFail = 0, grandAB = 0, grandReval = 0;
+
+  for (const branch of BRANCHES) {
+    const students = State.getEligibleStudents(upg, branch);
+    if (!students.length) continue;
+
+    let pass = 0, fail = 0, ab = 0, revalCount = 0;
+
+    for (const student of students) {
+      const acad    = State.computeStudentAcademics(student.uin);
+      const sessId  = mode === 'reval' && reval ? reval.id : upg.id;
+      const sessRes = acad?.sessionResults.find(sr => sr.session.id === sessId);
+      if (!sessRes) continue;
+
+      const anyAB   = sessRes.subjects.some(s => !s.pending && s.dr?.result === 'AB');
+      const anyFail = sessRes.subjects.some(s => !s.pending && s.dr?.result === 'Fail');
+      if (anyAB)        ab++;
+      else if (anyFail) fail++;
+      else              pass++;
+
+      // Reval count — students whose ESE changed
+      if (reval && mode !== 'upg') {
+        const changed = State.ledger.some(r =>
+          r.uin === student.uin &&
+          r.examSession === reval.id &&
+          (() => {
+            const pr = State.ledger.filter(p =>
+              p.uin === student.uin &&
+              p.examSession === upg.id
+            ).sort((a,b) => b.entryDateTime.localeCompare(a.entryDateTime))[0];
+            return pr && String(r.eseMarks).trim() !== String(pr.eseMarks).trim();
+          })()
+        );
+        if (changed) revalCount++;
+      }
+    }
+
+    const total = pass + fail + ab;
+    grandTotal += total; grandPass += pass; grandFail += fail; grandAB += ab; grandReval += revalCount;
+    const pct = total ? Math.round(pass / total * 100) : 0;
+
+    tableRows += `<tr>
+      <td>${UI.esc(branch)}</td>
+      <td>${total}</td>
+      <td style="color:var(--pass);font-weight:600;">${pass}</td>
+      <td style="color:var(--fail);font-weight:600;">${fail}</td>
+      <td style="color:var(--ab);font-weight:600;">${ab}</td>
+      <td><span class="badge ${pct >= 60 ? 'badge-pass' : 'badge-fail'}">${pct}%</span></td>
+      ${reval && mode !== 'upg' ? `<td style="color:var(--reval);font-weight:600;">${revalCount}</td>` : ''}
+    </tr>`;
+  }
+
+  const revalCol = reval && mode !== 'upg' ? '<th>Reval</th>' : '';
+  const grandPct = grandTotal ? Math.round(grandPass / grandTotal * 100) : 0;
+
+  const body = `
+    <p style="font-size:12px;color:var(--ink-3);margin-bottom:12px;">
+      <strong>${upg.name}</strong>${reval && mode !== 'upg' ? ` + ${reval.name}` : ''}<br>
+      Mode: <strong>${mode === 'upg' ? 'Uni Portal Gazette' : mode === 'reval' ? 'Revaluation Gazette' : 'Merged Semester Gazette'}</strong>
+      &nbsp;·&nbsp; Format: <strong>${format === 'uni' ? 'Uni Format' : 'Single Row'}</strong>
+    </p>
+    <div style="overflow-x:auto;">
+    <table class="report-table">
+      <thead><tr><th>Branch</th><th>Total</th><th>Pass</th><th>Fail</th><th>AB</th><th>Pass%</th>${revalCol}</tr></thead>
+      <tbody>
+        ${tableRows}
+        <tr style="font-weight:700;background:var(--surface-2);">
+          <td>All Branches</td>
+          <td>${grandTotal}</td>
+          <td style="color:var(--pass);">${grandPass}</td>
+          <td style="color:var(--fail);">${grandFail}</td>
+          <td style="color:var(--ab);">${grandAB}</td>
+          <td><span class="badge ${grandPct >= 60 ? 'badge-pass' : 'badge-fail'}">${grandPct}%</span></td>
+          ${reval && mode !== 'upg' ? `<td style="color:var(--reval);">${grandReval}</td>` : ''}
+        </tr>
+      </tbody>
+    </table></div>`;
+
+  UI.showModal(
+    'Gazette Preview',
+    body,
+    {
+      confirmLabel: '⬇ Export Excel',
+      onConfirm: () => _gazetteExport(upg, reval, mode, format),
+    }
+  );
+}
+
+function _gazetteExport(upg, reval, mode, format) {
+  if (format === 'uni') {
+    _exportUniFormat(upg, reval, mode);
+  } else {
+    _exportSingleRow(upg, reval, mode);
+  }
+}
+
+function _exportSingleRow(upg, reval, mode) {
+  // Resolve which session drives the export
+  const session = mode === 'reval' && reval ? reval
+                : mode === 'merged' && reval ? reval
+                : upg;
+  const linkedPrelimId = mode === 'merged' && reval
+    ? upg.id
+    : session.linkedPrelimSessionId || null;
+  const isFinal = mode !== 'upg' && !!reval;
 
   const wb = XLSX.utils.book_new();
 
   for (const branch of BRANCHES) {
-    const students = State.getEligibleStudents(session, branch);
-    if (students.length === 0) continue;
+    let students = State.getEligibleStudents(upg, branch);
+
+    // For reval mode — only students whose ESE changed
+    if (mode === 'reval' && reval) {
+      students = students.filter(s =>
+        State.ledger.some(r =>
+          r.uin === s.uin && r.examSession === reval.id && (() => {
+            const pr = State.ledger
+              .filter(p => p.uin === s.uin && p.examSession === upg.id)
+              .sort((a,b) => b.entryDateTime.localeCompare(a.entryDateTime))[0];
+            return pr && String(r.eseMarks).trim() !== String(pr.eseMarks).trim();
+          })()
+        )
+      );
+    }
+
+    if (!students.length) continue;
 
     // Seat lookup
-    const seatEntries = State.getSeatsForSessionWithFallback(sessionId);
+    const seatEntries = State.getSeatsForSessionWithFallback(upg.id);
     const seatLookup  = {};
-    if (session.linkedPrelimSessionId) {
-      for (const s of State.getSeatsForSession(session.linkedPrelimSessionId))
-        seatLookup[s.uin] = s.seatNumber;
-    }
-    for (const s of seatEntries) seatLookup[s.uin] = s.seatNumber; // own seats win
+    for (const s of seatEntries) seatLookup[s.uin] = s.seatNumber;
 
-    // Sort by seat number
+    // Sort by seat
     students.sort((a, b) => {
-      const sa = seatLookup[a.uin] || '';
-      const sb = seatLookup[b.uin] || '';
+      const sa = seatLookup[a.uin] || '', sb = seatLookup[b.uin] || '';
       const na = Number(sa), nb = Number(sb);
       if (!isNaN(na) && !isNaN(nb)) return na - nb;
       return sa.localeCompare(sb);
     });
 
-    const subjects = getSubjectsForSem(session.semester, branch, session);
-
-    // ── Build header rows ──────────────────────────────────
-    // Row 1: session info
-    // Row 2: fixed cols + subject code spanning (Seat, UIN, PRN, Name, Status)
-    // Row 3: component headers per subject + summary headers
-    // Row 4: max marks per component
-
-    const FIXED_COLS  = ['Seat No', 'UIN', 'PRN/ERN', 'Name', 'Batch', 'Status'];
+    const subjects = getSubjectsForSem(upg.semester, branch, upg);
+    const FIXED_COLS  = ['Seat No', 'UIN', 'Batch', 'Status'];
     const FIXED_COUNT = FIXED_COLS.length;
 
-    // Per-subject component columns
-    const subjCols = []; // [{ subj, comp, max }]
+    const subjCols = [];
     for (const subj of subjects) {
       for (const [comp, max] of Object.entries(subj.marks)) {
         subjCols.push({ subj, comp, max });
       }
-      // Total per subject
-      subjCols.push({ subj, comp: 'Total', max: Object.values(subj.marks).reduce((a, b) => a + b, 0), isTotal: true });
+      subjCols.push({ subj, comp: 'Total', max: null, isTotal: true });
       subjCols.push({ subj, comp: 'Grade', max: null, isGrade: true });
     }
+    const SUMMARY_COLS = ['Total Marks', 'ΣC', 'ΣCG', 'SGPA', 'Result'];
 
-    const SUMMARY_COLS = ['Total Marks', 'Credits Earned', 'SGPA', 'Result'];
+    const titleRow = [`${upg.name}${reval && mode !== 'upg' ? ' + ' + reval.name : ''} — ${branch} — ${mode === 'upg' ? 'Uni Portal Gazette' : mode === 'reval' ? 'Revaluation Gazette' : 'Merged'}`, ...Array(FIXED_COUNT - 1 + subjCols.length + SUMMARY_COLS.length - 1).fill('')];
 
-    // Row 1 — title
-    const titleRow = [
-      `${session.name} — ${branch}`,
-      ...Array(FIXED_COUNT - 1 + subjCols.length + SUMMARY_COLS.length - 1).fill(''),
-    ];
-
-    // Row 2 — fixed col names + subject codes (merged header)
     const subjectHeaderRow = [...FIXED_COLS];
     for (const subj of subjects) {
-      const compCount = Object.keys(subj.marks).length + 2; // comps + Total + Grade
+      const compCount = Object.keys(subj.marks).length + 2;
       subjectHeaderRow.push(subj.code);
       for (let i = 1; i < compCount; i++) subjectHeaderRow.push('');
     }
     subjectHeaderRow.push(...SUMMARY_COLS);
 
-    // Row 3 — component headers
     const compHeaderRow = [...Array(FIXED_COUNT).fill('')];
     for (const { comp } of subjCols) compHeaderRow.push(comp);
     compHeaderRow.push(...Array(SUMMARY_COLS.length).fill(''));
 
-    // Row 4 — max marks
     const maxRow = [...Array(FIXED_COUNT).fill('')];
     for (const { max, isGrade } of subjCols) {
       maxRow.push(isGrade ? '' : (max !== null ? `/${max}` : ''));
@@ -4119,37 +4279,19 @@ function exportGazette(sessionId) {
 
     const wsData = [titleRow, subjectHeaderRow, compHeaderRow, maxRow];
 
-    // ── Build student rows ─────────────────────────────────
-    let branchPass = 0, branchFail = 0, branchAB = 0, branchTopper = null;
-
     for (const student of students) {
       const seatNum = seatLookup[student.uin] || '—';
       const acad    = State.computeStudentAcademics(student.uin);
+      const sessResult = acad?.sessionResults.find(sr => sr.session.id === session.id);
 
-      // Find this session's result in academics
-      const sessResult = acad?.sessionResults.find(sr => sr.session.id === sessionId);
+      const row = [seatNum, student.uin, student.batchYear, student.attemptFlag || 'Regular'];
 
-      const row = [
-        seatNum,
-        student.uin,
-        student.prn || '—',
-        student.name,
-        student.batchYear,
-        student.attemptFlag || 'Regular',
-      ];
-
-      let studentTotalMarks  = 0;
-      let studentCredits     = 0;
-      let studentAllPass     = true;
-      let studentAnyAB       = false;
+      let studentTotalMarks = 0, studentCredits = 0, studentAllPass = true, studentAnyAB = false;
 
       for (const subj of subjects) {
         const dr = sessResult?.subjects.find(s => s.r.subjectCode === subj.code)?.dr;
+        const latestEntry = State.getLatestEntryForSubject(student.uin, subj.code, session.id);
 
-        // Fill component marks from ledger
-        const latestEntry = State.getLatestEntryForSubject(student.uin, subj.code, sessionId);
-
-        // For Final Gazette — supplement with prelim
         let iatVal = '', eseVal = '', twVal = '', oralVal = '';
         if (latestEntry) {
           iatVal  = latestEntry.iatMarks  || '';
@@ -4157,22 +4299,17 @@ function exportGazette(sessionId) {
           twVal   = latestEntry.twMarks   || '';
           oralVal = latestEntry.oralMarks || '';
         }
-        if (session.entryType === 'Final Gazette' && session.linkedPrelimSessionId) {
-          const prelim = State.getLatestEntryForSubject(student.uin, subj.code, session.linkedPrelimSessionId);
+        if (isFinal && upg.id) {
+          const prelim = State.getLatestEntryForSubject(student.uin, subj.code, upg.id);
           if (prelim) {
             if (!iatVal)  iatVal  = prelim.iatMarks  || '';
             if (!twVal)   twVal   = prelim.twMarks   || '';
             if (!oralVal) oralVal = prelim.oralMarks || '';
           }
         }
-
         const compValMap = { IAT: iatVal, ESE: eseVal, TW: twVal, Oral: oralVal };
+        for (const comp of Object.keys(subj.marks)) row.push(compValMap[comp] || '—');
 
-        for (const comp of Object.keys(subj.marks)) {
-          row.push(compValMap[comp] || '—');
-        }
-
-        // Total + Grade per subject
         if (dr && !dr.pending) {
           row.push(dr.total);
           row.push(dr.grade);
@@ -4181,121 +4318,334 @@ function exportGazette(sessionId) {
           if (dr.result === 'Fail') studentAllPass = false;
           if (dr.result === 'AB')   { studentAllPass = false; studentAnyAB = true; }
         } else {
-          row.push('—');
-          row.push('—');
+          row.push('—'); row.push('—');
           studentAllPass = false;
         }
       }
 
-      // Summary columns
-      const sessAcad  = acad?.sessionResults.find(sr => sr.session.id === sessionId);
+      const sessAcad  = acad?.sessionResults.find(sr => sr.session.id === session.id);
       const sgpaStr   = sessAcad?.sgpa != null ? sessAcad.sgpa.toFixed(2) : '—';
       const resultStr = studentAnyAB ? 'AB' : studentAllPass ? 'Pass' : 'Fail';
+      const sumGxC    = sessAcad?.subjects.reduce((s, sub) => s + (sub.dr?.GxC || 0), 0) ?? 0;
 
       row.push(studentTotalMarks || '—');
       row.push(studentCredits    || '—');
+      row.push(sumGxC ? sumGxC.toFixed(1) : '—');
       row.push(sgpaStr);
       row.push(resultStr);
 
       wsData.push(row);
-
-      // Branch stats
-      if (resultStr === 'Pass') branchPass++;
-      else if (resultStr === 'AB') branchAB++;
-      else branchFail++;
-
-      if (resultStr === 'Pass') {
-        if (!branchTopper || studentTotalMarks > branchTopper.totalMarks) {
-          branchTopper = { name: student.name, uin: student.uin, totalMarks: studentTotalMarks };
-        }
-      }
     }
 
-    // ── Summary footer rows ────────────────────────────────
-    wsData.push(Array(FIXED_COUNT + subjCols.length + SUMMARY_COLS.length).fill(''));
-
-    const total = students.length;
-    wsData.push([
-      'Summary', '', '', '', '', '',
-      ...Array(subjCols.length).fill(''),
-      `Total: ${total}`,
-      `Pass: ${branchPass} (${total ? Math.round(branchPass/total*100) : 0}%)`,
-      `Fail: ${branchFail}`,
-      `AB: ${branchAB}`,
-    ]);
-
-    if (branchTopper) {
-      wsData.push([
-        'Topper', '', '', branchTopper.name, '', branchTopper.uin,
-        ...Array(subjCols.length).fill(''),
-        branchTopper.totalMarks, '', '', '',
-      ]);
-    }
-
-    // ── Create worksheet ───────────────────────────────────
     const ws = XLSX.utils.aoa_to_sheet(wsData);
-
-    // Column widths
-    const colWidths = [
-      { wch: 8 },  // Seat
-      { wch: 12 }, // UIN
-      { wch: 12 }, // PRN
-      { wch: 28 }, // Name
-      { wch: 8 },  // Batch
-      { wch: 9 },  // Status
-      ...subjCols.map(({ comp }) =>
-        comp === 'Grade' ? { wch: 6 } : comp === 'Total' ? { wch: 7 } : { wch: 6 }
-      ),
-      { wch: 12 }, // Total Marks
-      { wch: 10 }, // Credits
-      { wch: 8 },  // SGPA
-      { wch: 8 },  // Result
+    ws['!cols'] = [
+      { wch: 8 }, { wch: 14 }, { wch: 8 }, { wch: 9 },
+      ...subjCols.map(({ comp }) => comp === 'Grade' ? { wch: 6 } : comp === 'Total' ? { wch: 7 } : { wch: 6 }),
+      { wch: 12 }, { wch: 6 }, { wch: 8 }, { wch: 8 }, { wch: 8 },
     ];
-    ws['!cols'] = colWidths;
 
-    // Merge subject header cells (row 2, index 1)
     const merges = [];
     let colIdx = FIXED_COUNT;
     for (const subj of subjects) {
-      const span = Object.keys(subj.marks).length + 2; // comps + Total + Grade
-      if (span > 1) {
-        merges.push({
-          s: { r: 1, c: colIdx },
-          e: { r: 1, c: colIdx + span - 1 },
-        });
-      }
+      const span = Object.keys(subj.marks).length + 2;
+      if (span > 1) merges.push({ s: { r: 1, c: colIdx }, e: { r: 1, c: colIdx + span - 1 } });
       colIdx += span;
     }
     ws['!merges'] = merges;
-
     XLSX.utils.book_append_sheet(wb, ws, branch.slice(0, 31));
   }
 
-  // ── Summary sheet ──────────────────────────────────────
-  const summaryData = [
-    [`Gazette Summary — ${session.name}`],
-    ['Branch', 'Total Students', 'Pass', 'Fail', 'AB', 'Pass %', 'Topper', 'Topper Marks'],
-  ];
+  _appendGazetteSummarySheet(wb, upg, reval, mode);
+  const filename = `${upg.name}${mode !== 'upg' ? '_' + mode : ''}_SingleRow.xlsx`;
+  XLSX.writeFile(wb, filename);
+  UI.toast(`✓ Exported: ${filename}`, 'success');
+}
+
+function _exportUniFormat(upg, reval, mode) {
+  const wb = XLSX.utils.book_new();
 
   for (const branch of BRANCHES) {
-    const students = State.getEligibleStudents(session, branch);
-    if (students.length === 0) continue;
+    let students = State.getEligibleStudents(upg, branch);
 
-    const seatEntries = State.getSeatsForSessionWithFallback(sessionId);
+    // Reval mode — only students whose ESE changed
+    if (mode === 'reval' && reval) {
+      students = students.filter(s =>
+        State.ledger.some(r =>
+          r.uin === s.uin && r.examSession === reval.id && (() => {
+            const pr = State.ledger
+              .filter(p => p.uin === s.uin && p.examSession === upg.id)
+              .sort((a,b) => b.entryDateTime.localeCompare(a.entryDateTime))[0];
+            return pr && String(r.eseMarks).trim() !== String(pr.eseMarks).trim();
+          })()
+        )
+      );
+    }
+
+    if (!students.length) continue;
+
+    // Seat lookup
+    const seatEntries = State.getSeatsForSessionWithFallback(upg.id);
     const seatLookup  = {};
     for (const s of seatEntries) seatLookup[s.uin] = s.seatNumber;
 
+    students.sort((a, b) => {
+      const sa = seatLookup[a.uin] || '', sb = seatLookup[b.uin] || '';
+      const na = Number(sa), nb = Number(sb);
+      if (!isNaN(na) && !isNaN(nb)) return na - nb;
+      return sa.localeCompare(sb);
+    });
+
+    const subjects  = getSubjectsForSem(upg.semester, branch, upg);
+    const isMerged  = mode !== 'upg' && !!reval;
+    const sessId    = isMerged ? reval.id : upg.id;
+
+    // ── Fixed columns ─────────────────────────────────────
+    // Seat, Name, UIN, Batch, Status — merged across 5 rows per student
+    const FIXED = ['Seat', 'Name', 'UIN', 'Batch', 'Status'];
+    const FC    = FIXED.length;
+
+    // ── Subject columns ───────────────────────────────────
+    // Each subject expands to its components + one TOT col
+    // subjColMap[subjCode] = [comp, comp, ..., 'TOT']
+    const subjCols = []; // { subj, comp } — one entry per Excel column
+    for (const subj of subjects) {
+      for (const comp of Object.keys(subj.marks)) {
+        subjCols.push({ subj, comp, isTot: false });
+      }
+      subjCols.push({ subj, comp: 'TOT', isTot: true });
+    }
+
+    // ── Summary columns ───────────────────────────────────
+    const SUMM = ['Total', 'ΣC', 'ΣCG', 'SGPA', 'Result'];
+
+    // ── Header rows ───────────────────────────────────────
+    // Row 0: title
+    const titleRow = [
+      `${upg.name}${reval && mode !== 'upg' ? ' + ' + reval.name : ''} — ${branch} — ${mode === 'upg' ? 'Uni Portal Gazette' : mode === 'reval' ? 'Revaluation Gazette' : 'Merged'} — Uni Format`,
+      ...Array(FC - 1 + subjCols.length + SUMM.length - 1).fill(''),
+    ];
+
+    // Row 1: fixed col names + subject codes (spanning)
+    const subjectHeaderRow = [...FIXED];
+    for (const subj of subjects) {
+      const span = Object.keys(subj.marks).length + 1; // comps + TOT
+      subjectHeaderRow.push(`${subj.code} — ${subj.name} (${subj.credits}cr)`);
+      for (let i = 1; i < span; i++) subjectHeaderRow.push('');
+    }
+    subjectHeaderRow.push(...SUMM);
+
+    // Row 2: component headers + max marks
+    const compHeaderRow = [...Array(FC).fill('')];
+    for (const { comp, subj, isTot } of subjCols) {
+      if (isTot) {
+        compHeaderRow.push('TOT · G · GP · C · G×C');
+      } else {
+        const max = subj.marks[comp];
+        compHeaderRow.push(`${comp} (/${max})`);
+      }
+    }
+    compHeaderRow.push(...Array(SUMM.length).fill(''));
+
+    const wsData = [titleRow, subjectHeaderRow, compHeaderRow];
+
+    // ── Student rows ──────────────────────────────────────
+    // 4 component rows + 1 TOT row = 5 rows per student
+    const COMP_ROWS = ['TW', 'Oral', 'ESE', 'IAT'];
+
+    for (const student of students) {
+      const seatNum = seatLookup[student.uin] || '—';
+      const acad    = State.computeStudentAcademics(student.uin);
+      const sessRes = acad?.sessionResults.find(sr => sr.session.id === sessId);
+      // For merged: also get UPG session result for carried mark detection
+      const upgRes  = isMerged
+        ? acad?.sessionResults.find(sr => sr.session.id === upg.id)
+        : sessRes;
+
+      // Build marks map per subject: { subjCode: { TW, Oral, ESE, IAT, carried:{comp:bool} } }
+      const marksPerSubj = {};
+      for (const subj of subjects) {
+        const revalEntry = isMerged && reval
+          ? State.getLatestEntryForSubject(student.uin, subj.code, reval.id)
+          : null;
+        const upgEntry   = State.getLatestEntryForSubject(student.uin, subj.code, upg.id);
+
+        const marks   = {};
+        const carried = {};
+
+        for (const comp of Object.keys(subj.marks)) {
+          const field = comp.toLowerCase() + 'Marks';
+          // For ESE in merged/reval mode: prefer reval entry
+          if (isMerged && comp === 'ESE' && revalEntry?.eseMarks) {
+            marks[comp]   = revalEntry.eseMarks;
+            carried[comp] = false;
+          } else if (upgEntry?.[field]) {
+            marks[comp]   = upgEntry[field];
+            carried[comp] = false;
+          } else {
+            // Check prior sessions for carried mark
+            const prior = State.ledger
+              .filter(r =>
+                r.uin === student.uin &&
+                r.subjectCode === subj.code &&
+                r.examSession !== upg.id &&
+                (!reval || r.examSession !== reval.id)
+              )
+              .sort((a,b) => b.entryDateTime.localeCompare(a.entryDateTime))[0];
+            if (prior?.[field]) {
+              const max    = subj.marks[comp];
+              const parsed = parseMarkValue(prior[field], max);
+              const passed = parsed.valid && !parsed.absent &&
+                (parsed.grace || (max && parsed.value / max >= 0.40));
+              if (passed) {
+                marks[comp]   = prior[field] + '+';
+                carried[comp] = true;
+              }
+            }
+          }
+        }
+        marksPerSubj[subj.code] = { marks, carried };
+      }
+
+      // Build 4 component rows
+      const compRows = COMP_ROWS.map(compName => {
+        const row = ['', '', '', '', '']; // fixed cols blank except merged later
+        for (const { subj, comp, isTot } of subjCols) {
+          if (isTot) {
+            row.push(''); // TOT col blank in component rows
+          } else if (comp === compName) {
+            row.push(marksPerSubj[subj.code]?.marks[comp] ?? '—');
+          } else {
+            row.push('');
+          }
+        }
+        row.push(...Array(SUMM.length).fill(''));
+        return row;
+      });
+
+      // Build TOT row
+      const totRow = ['', '', '', '', ''];
+      let studentTotal = 0, studentSumC = 0, studentSumCG = 0;
+      let anyFail = false, anyAB = false;
+
+      for (const { subj, comp, isTot } of subjCols) {
+        if (!isTot) { totRow.push(''); continue; }
+        // Compute display result for this subject
+        const subjEntry = sessRes?.subjects.find(s => s.r.subjectCode === subj.code);
+        const dr = subjEntry?.dr;
+        if (dr && !dr.pending) {
+          totRow.push(`${dr.total} · ${dr.grade} · ${dr.gradePoint} · ${dr.creditsEarned} · ${dr.GxC.toFixed(1)}`);
+          studentTotal  += dr.total;
+          studentSumC   += dr.creditsEarned;
+          studentSumCG  += dr.GxC;
+          if (dr.result === 'Fail') anyFail = true;
+          if (dr.result === 'AB')   anyAB   = true;
+        } else {
+          totRow.push('—');
+        }
+      }
+
+      const sgpa      = sessRes?.sgpa != null ? sessRes.sgpa.toFixed(2) : '—';
+      const resultStr = anyAB ? 'AB' : anyFail ? 'Fail' : 'Pass';
+
+      totRow.push(studentTotal || '—');
+      totRow.push(studentSumC  || '—');
+      totRow.push(studentSumCG ? studentSumCG.toFixed(1) : '—');
+      totRow.push(sgpa);
+      totRow.push(resultStr);
+
+      // Set fixed info in first component row (TW row)
+      compRows[0][0] = seatNum;
+      compRows[0][1] = student.name;
+      compRows[0][2] = student.uin;
+      compRows[0][3] = student.batchYear;
+      compRows[0][4] = student.attemptFlag || 'Regular';
+
+      wsData.push(...compRows, totRow);
+    }
+
+    // ── Create worksheet ──────────────────────────────────
+    const ws = XLSX.utils.aoa_to_sheet(wsData);
+
+    // Column widths
+    ws['!cols'] = [
+      { wch: 8 },  // Seat
+      { wch: 26 }, // Name
+      { wch: 14 }, // UIN
+      { wch: 8 },  // Batch
+      { wch: 9 },  // Status
+      ...subjCols.map(({ isTot }) => isTot ? { wch: 28 } : { wch: 8 }),
+      { wch: 8 }, { wch: 6 }, { wch: 8 }, { wch: 8 }, { wch: 8 },
+    ];
+
+    // Merges: subject header row (row index 1) — span per subject
+    const merges = [];
+    let colIdx = FC;
+    for (const subj of subjects) {
+      const span = Object.keys(subj.marks).length + 1;
+      if (span > 1) merges.push({ s: { r: 1, c: colIdx }, e: { r: 1, c: colIdx + span - 1 } });
+      colIdx += span;
+    }
+
+    // Merges: fixed info cells per student (5 rows merged per student)
+    const HEADER_ROWS = 3;
+    const ROWS_PER_STUDENT = 5; // 4 comp rows + 1 TOT row
+    for (let i = 0; i < students.length; i++) {
+      const startRow = HEADER_ROWS + i * ROWS_PER_STUDENT;
+      const endRow   = startRow + ROWS_PER_STUDENT - 1;
+      for (let c = 0; c < FC; c++) {
+        merges.push({ s: { r: startRow, c }, e: { r: endRow, c } });
+      }
+      // Also merge summary cols across all 5 rows per student
+      for (let c = FC + subjCols.length; c < FC + subjCols.length + SUMM.length; c++) {
+        merges.push({ s: { r: startRow, c }, e: { r: endRow, c } });
+      }
+    }
+
+    ws['!merges'] = merges;
+    XLSX.utils.book_append_sheet(wb, ws, branch.slice(0, 31));
+  }
+
+  _appendGazetteSummarySheet(wb, upg, reval, mode);
+  const filename = `${upg.name}${mode !== 'upg' ? '_' + mode : ''}_UniFormat.xlsx`;
+  XLSX.writeFile(wb, filename);
+  UI.toast(`✓ Exported: ${filename}`, 'success');
+}
+
+function _appendGazetteSummarySheet(wb, upg, reval, mode) {
+  const sessId = (mode !== 'upg' && reval) ? reval.id : upg.id;
+
+  const summaryData = [
+    [`Gazette Summary — ${upg.name}${reval && mode !== 'upg' ? ' + ' + reval.name : ''} — ${mode}`],
+    ['Branch', 'Total', 'Pass', 'Fail', 'AB', 'Pass %', 'Topper', 'Topper Marks'],
+  ];
+
+  for (const branch of BRANCHES) {
+    let students = State.getEligibleStudents(upg, branch);
+    if (!students.length) continue;
+
+    if (mode === 'reval' && reval) {
+      students = students.filter(s =>
+        State.ledger.some(r =>
+          r.uin === s.uin && r.examSession === reval.id && (() => {
+            const pr = State.ledger
+              .filter(p => p.uin === s.uin && p.examSession === upg.id)
+              .sort((a,b) => b.entryDateTime.localeCompare(a.entryDateTime))[0];
+            return pr && String(r.eseMarks).trim() !== String(pr.eseMarks).trim();
+          })()
+        )
+      );
+    }
+
     let pass = 0, fail = 0, ab = 0, topper = null;
     for (const student of students) {
-      const acad     = State.computeStudentAcademics(student.uin);
-      const sessAcad = acad?.sessionResults.find(sr => sr.session.id === sessionId);
-      if (!sessAcad) continue;
+      const acad    = State.computeStudentAcademics(student.uin);
+      const sessRes = acad?.sessionResults.find(sr => sr.session.id === sessId);
+      if (!sessRes) continue;
 
-      const allSubjs  = sessAcad.subjects;
-      const anyAB     = allSubjs.some(s => s.dr?.result === 'AB');
-      const anyFail   = allSubjs.some(s => s.dr?.result === 'Fail' || s.dr?.pending);
-      const result    = anyAB ? 'AB' : anyFail ? 'Fail' : 'Pass';
-      const total     = allSubjs.reduce((s, sub) => s + (sub.dr?.total || 0), 0);
+      const anyAB   = sessRes.subjects.some(s => !s.pending && s.dr?.result === 'AB');
+      const anyFail = sessRes.subjects.some(s => !s.pending && (s.dr?.result === 'Fail' || s.pending));
+      const total   = sessRes.subjects.reduce((s, sub) => s + (sub.dr?.total || 0), 0);
+      const result  = anyAB ? 'AB' : anyFail ? 'Fail' : 'Pass';
 
       if (result === 'Pass') { pass++; if (!topper || total > topper.marks) topper = { name: student.name, marks: total }; }
       else if (result === 'AB') ab++;
@@ -4305,58 +4655,18 @@ function exportGazette(sessionId) {
     const t = students.length;
     summaryData.push([
       branch, t, pass, fail, ab,
-      t ? Math.round(pass/t*100) + '%' : '—',
+      t ? Math.round(pass / t * 100) + '%' : '—',
       topper?.name || '—',
       topper?.marks ?? '—',
     ]);
   }
 
-  // KT sheet — students with remaining active KTs after this session
-  const ktData = [
-    [`Active KTs after — ${session.name}`],
-    ['UIN', 'PRN/ERN', 'Name', 'Branch', 'Batch', 'Subject Code', 'Subject Name', 'Component', 'Last Mark'],
-  ];
-
-  for (const branch of BRANCHES) {
-    const students = State.getEligibleStudents(session, branch);
-    for (const student of students) {
-      const activeKTs = State.getActiveKTSubjects(student.uin)
-        .filter(r => Number(r.semester) === session.semester);
-      for (const kt of activeKTs) {
-        // List which components are still failing
-        const compStatus = _meGetCompPassStatus(student.uin, kt.subjectCode, session.semester);
-        for (const comp of ['IAT', 'ESE', 'TW', 'Oral']) {
-          if (compStatus[comp] && compStatus[comp] !== 'pass') {
-            ktData.push([
-              student.uin, student.prn || '—', student.name,
-              student.branch, student.batchYear,
-              kt.subjectCode, kt.subjectName,
-              comp, compStatus[comp + '_val'] || '—',
-            ]);
-          }
-        }
-      }
-    }
-  }
-
-  const summaryWs = XLSX.utils.aoa_to_sheet(summaryData);
-  summaryWs['!cols'] = [
-    { wch: 12 }, { wch: 10 }, { wch: 8 }, { wch: 8 }, { wch: 6 },
+  const ws = XLSX.utils.aoa_to_sheet(summaryData);
+  ws['!cols'] = [
+    { wch: 12 }, { wch: 8 }, { wch: 8 }, { wch: 8 }, { wch: 6 },
     { wch: 8 }, { wch: 28 }, { wch: 14 },
   ];
-  XLSX.utils.book_append_sheet(wb, summaryWs, 'Summary');
-
-  const ktWs = XLSX.utils.aoa_to_sheet(ktData);
-  ktWs['!cols'] = [
-    { wch: 12 }, { wch: 12 }, { wch: 28 }, { wch: 12 },
-    { wch: 8 }, { wch: 12 }, { wch: 32 }, { wch: 8 }, { wch: 10 },
-  ];
-  XLSX.utils.book_append_sheet(wb, ktWs, 'Active KTs');
-
-  // ── Write file ─────────────────────────────────────────
-  const filename = `${session.name}_Gazette.xlsx`;
-  XLSX.writeFile(wb, filename);
-  UI.toast(`✓ Gazette exported: ${filename}`, 'success');
+  XLSX.utils.book_append_sheet(wb, ws, 'Summary');
 }
 
 // ═══════════════════════════════════════════════════════════════
