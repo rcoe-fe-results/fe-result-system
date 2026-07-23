@@ -241,7 +241,12 @@ const State = (() => {
             prelim.eseMarks  || '',
             gaz?.eseMarks    || '',
           );
-          if (tag) subjectTags[subj.code] = tag;
+          if (tag) {
+            if (!subjectTags[subj.code]) subjectTags[subj.code] = {};
+            subjectTags[subj.code][sess.id] = tag;
+            // Also store under gazette id if paired, so lookup works either way
+            if (gazette) subjectTags[subj.code][gazette.id] = tag;
+          }
         }
       }
 
@@ -259,7 +264,7 @@ const State = (() => {
             ktCount:        0,
             pendingCount:   0,
             effectiveResult: 'Successful',
-            attemptTag:     subjectTags[c.subjectCode] || null,
+            attemptTags:    subjectTags[c.subjectCode] || {},
           };
         }
         const s = subjectMap[c.subjectCode];

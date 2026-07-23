@@ -1443,11 +1443,27 @@ function initProgress() {
 
 // ── Computed attempt tag HTML (for progress view) ─────────────
 function _pvAttemptTag(uin, subjectCode, sessionId) {
-  // Read attempt tag from unified KT cache via subject code
   const data = State.getKTData(uin);
   const subj = data?.subjects.find(s => s.subjectCode === subjectCode);
-  const tag  = subj?.attemptTag || State.computeAttemptTag(uin, subjectCode, sessionId);
+
+  // Resolve the preliminary session id for this sessionId
+  // (if sessionId is a gazette, its tag is stored under both gazette+prelim ids)
+  let tag = subj?.attemptTags?.[sessionId] || null;
+
+  // Fallback: if not found in cache (e.g. older session before cache),
+  // try linked preliminary session id
+  if (!tag) {
+    const sess = State.getSession(sessionId);
+    if (sess?.linkedPrelimSessionId) {
+      tag = subj?.attemptTags?.[sess.linkedPrelimSessionId] || null;
+    }
+  }
+
+  // Final fallback to old computeAttemptTag
+  if (!tag) tag = State.computeAttemptTag(uin, subjectCode, sessionId);
+
   if (!tag) return '<span class="badge badge-pending">—</span>';
+
   const cls = tag.startsWith('Unsuccessful') ? 'badge-fail'
             : tag.includes('after Reval')    ? 'badge-reval'
             : tag.includes('Marks Reval')    ? 'badge-reval'
