@@ -3122,7 +3122,7 @@ function _aktdPopulateBatchYears() {
 function _aktdClearOutput() {
   document.getElementById('rpt-aktd-output').innerHTML = '';
   document.getElementById('rpt-aktd-summary').textContent = '';
-  document.getElementById('rpt-aktd-csv').style.display = 'none';
+  _eligSetCsvEnabled('rpt-aktd-csv', false);
 }
 
 // Stores last result for CSV export
