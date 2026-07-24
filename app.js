@@ -1901,11 +1901,8 @@ function _dashBranchPassRates() {
         if (!appeared.length) continue;
 
         passed = appeared.filter(student => {
-          const acad    = State.computeStudentAcademics(student.uin);
-          const sessRes = acad?.sessionResults.find(sr => sr.session.id === sessId);
-          return sessRes && !sessRes.subjects.some(s =>
-            !s.pending && (s.dr.result === 'Fail' || s.dr.result === 'AB')
-          );
+          const data = State.getKTData(student.uin);
+          return data && data.activeKTCount === 0;
         }).length;
       } else {
         // Overall: denominator = appeared in any session
