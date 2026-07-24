@@ -1883,35 +1883,86 @@ const State = (() => {
     if (!prelimSess) return [];
     const sem = prelimSess.semester;
 
-    // Collect students who appeared in this prelim session
     const appearedUINs = new Set(
       ledger
         .filter(r => r.examSession === prelimSessionId)
         .map(r => r.uin)
     );
 
+    const gazetteIndex = {};
+    if (gazetteSessionId) {
+      const gazRows = ledger
+        .filter(r => r.examSession === gazetteSessionId)
+        .sort((a, b) => a.entryDateTime.localeCompare(b.entryDateTime));
+      for (const r of gazRows) {
+        const key = r.uin + '||' + r.subjectCode;
+        if (!gazetteIndex[key]) {
+          gazetteIndex[key] = { ...r };
+        } else {
+          const m = gazetteIndex[key];
+          if (r.eseMarks  !== '') m.eseMarks  = r.eseMarks;
+          if (r.iatMarks  !== '') m.iatMarks  = r.iatMarks;
+          if (r.twMarks   !== '') m.twMarks   = r.twMarks;
+          if (r.oralMarks !== '') m.oralMarks = r.oralMarks;
+        }
+      }
+    }
+
+    const prelimIndex = {};
+    const prelimRows = ledger
+      .filter(r => r.examSession === prelimSessionId)
+      .sort((a, b) => a.entryDateTime.localeCompare(b.entryDateTime));
+    for (const r of prelimRows) {
+      const key = r.uin + '||' + r.subjectCode;
+      if (!prelimIndex[key]) {
+        prelimIndex[key] = { ...r };
+      } else {
+        const m = prelimIndex[key];
+        if (r.iatMarks  !== '') m.iatMarks  = r.iatMarks;
+        if (r.eseMarks  !== '') m.eseMarks  = r.eseMarks;
+        if (r.twMarks   !== '') m.twMarks   = r.twMarks;
+        if (r.oralMarks !== '') m.oralMarks = r.oralMarks;
+      }
+    }
+
     const buckets = {};
 
     for (const student of students) {
-      if (!appearedUINs.has(student.uin))          continue;
-      if (branch    && student.branch    !== branch)    continue;
+      if (!appearedUINs.has(student.uin))              continue;
+      if (branch    && student.branch    !== branch)   continue;
       if (batchYear && student.batchYear !== batchYear) continue;
-      if (gender    && student.gender    !== gender)    continue;
+      if (gender    && student.gender    !== gender)   continue;
 
-      const data = _ktCache[student.uin];
-      if (!data) continue;
+      const subjectList = getSubjectsForSem(sem, student.branch, prelimSess);
 
-      // Count active KT subjects for this semester only
-      const semActiveSubjects = data.subjects.filter(s =>
-        s.semester === sem &&
-        (s.effectiveResult === 'Unsuccessful' || s.effectiveResult === 'Absent')
-      );
+      const ktSubjects = [];
+      for (const subj of subjectList) {
+        const pk = student.uin + '||' + subj.code;
+        const prelimRow = prelimIndex[pk] || null;
+        if (!prelimRow) continue;
 
-      const ktSubjects = semActiveSubjects.map(s => ({
-        subjectCode: s.subjectCode,
-        subjectName: s.subjectName,
-        result:      s.effectiveResult === 'Absent' ? 'AB' : 'Fail',
-      }));
+        const marksMap = {};
+        if (prelimRow.iatMarks  !== '') marksMap.IAT  = prelimRow.iatMarks;
+        if (prelimRow.eseMarks  !== '') marksMap.ESE  = prelimRow.eseMarks;
+        if (prelimRow.twMarks   !== '') marksMap.TW   = prelimRow.twMarks;
+        if (prelimRow.oralMarks !== '') marksMap.Oral = prelimRow.oralMarks;
+
+        const gazRow = gazetteIndex[pk] || null;
+        if (gazRow) {
+          if (gazRow.eseMarks  !== '') marksMap.ESE  = gazRow.eseMarks;
+          if (gazRow.twMarks   !== '') marksMap.TW   = gazRow.twMarks;
+          if (gazRow.oralMarks !== '') marksMap.Oral = gazRow.oralMarks;
+        }
+
+        const dr = computeDisplayResult(subj, marksMap);
+        if (!dr.pending && (dr.result === 'Fail' || dr.result === 'AB')) {
+          ktSubjects.push({
+            subjectCode: subj.code,
+            subjectName: subj.name,
+            result:      dr.result === 'AB' ? 'AB' : 'Fail',
+          });
+        }
+      }
 
       const ktCount = ktSubjects.length;
       if (!buckets[ktCount]) buckets[ktCount] = [];
