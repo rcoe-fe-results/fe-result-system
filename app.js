@@ -1993,6 +1993,7 @@ function _dashRenderHeatmap() {
     passRates.map(({ subj, pct, pass, total }) => `
       <div class="dash-heatmap-cell" style="background:${_heatColor(pct)}; color:${_heatTextColor(pct)}">
         <span class="dash-heatmap-subj">${UI.esc(subj.code)}</span>
+<span style="font-size:10px; color:inherit; opacity:0.75;">${UI.esc(subj.name)}</span>
         <span class="dash-heatmap-pct">${pct != null ? pct + '%' : '—'}</span>
         <span style="font-size:10px;">${pass}/${total} passed</span>
       </div>`
@@ -2484,7 +2485,7 @@ function _rptRenderKTStrip(distribution, { prelimSessionId, gazetteSessionId, br
         <td>${UI.esc(s.name)}</td>
         <td>${UI.esc(s.branch)}</td>
         <td>${ktCount === 0 ? '—' : s.ktSubjects.map(k =>
-          `<span class="subj-code-small">${UI.esc(k.subjectCode)}</span>`).join(' ')}</td>
+  `<span class="subj-code-small">${UI.esc(k.subjectCode)}</span> ${UI.esc(k.subjectName)}`).join('<br>')}</td>
       </tr>`).join('');
       detail = `<div class="kt-detail-wrap">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
@@ -3050,7 +3051,7 @@ function _rptKTFilterRun() {
   for (const d of raw) {
     if (!byStudent[d.uin]) byStudent[d.uin] = { prn: d.prn, uin: d.uin, name: d.name, branch: d.branch, gender: d.gender || '', ktSubjects: [] };
     if (branch && d.branch !== branch) continue;
-    byStudent[d.uin].ktSubjects.push(`${d.subjectCode} — ${d.subjectName} (${d.result})`);
+    byStudent[d.uin].ktSubjects.push(`${d.subjectCode} — ${d.subjectName}${d.result === 'AB' ? ' (AB)' : ''}`);
   }
   const rows = Object.values(byStudent).filter(r => (!branch || r.branch === branch) && r.ktSubjects.length > 0);
 
