@@ -1932,50 +1932,87 @@ function _dashRenderHeatmap() {
   const el        = document.getElementById('dash-heatmap');
   const students  = State.getStudents({ batchYear: batchYear || undefined });
 
-  const subjects = [...SEM1_SUBJECTS];
-
-  const passRates = subjects.map(subj => {
-    let pass = 0, total = 0;
-    for (const student of students) {
-      const rows = State.ledger.filter(r =>
-        r.uin === student.uin &&
-        r.subjectCode === subj.code
-      );
-      if (!rows.length) continue;
-      const latest = rows.sort((a, b) => b.entryDateTime.localeCompare(a.entryDateTime))[0];
-      total++;
-      if (latest.result === 'Pass') pass++;
-    }
-    const pct = total > 0 ? Math.round(pass / total * 100) : null;
-    return { subj, pass, total, pct };
-  }).filter(d => d.total > 0)
-    .sort((a, b) => (a.pct ?? 101) - (b.pct ?? 101));
-
   function _heatColor(pct) {
-    if (pct == null)  return 'var(--surface-2)';
-    if (pct >= 90)    return '#D1FAE5';
-    if (pct >= 75)    return '#FEF9C3';
-    if (pct >= 60)    return '#FED7AA';
+    if (pct == null) return 'var(--surface-2)';
+    if (pct >= 90)   return '#D1FAE5';
+    if (pct >= 75)   return '#FEF9C3';
+    if (pct >= 60)   return '#FED7AA';
     return '#FEE2E2';
   }
   function _heatTextColor(pct) {
-    if (pct == null)  return 'var(--ink-4)';
-    if (pct >= 75)    return '#065F46';
-    if (pct >= 60)    return '#92400E';
+    if (pct == null) return 'var(--ink-4)';
+    if (pct >= 75)   return '#065F46';
+    if (pct >= 60)   return '#92400E';
     return '#991B1B';
   }
 
-  el.innerHTML = `<div class="dash-heatmap-grid">` +
-    passRates.map(({ subj, pct, pass, total }) => `
-      <div class="dash-heatmap-cell" style="background:${_heatColor(pct)}; color:${_heatTextColor(pct)}">
-        <span class="dash-heatmap-subj">${UI.esc(subj.code)}</span>
-        <span class="dash-heatmap-pct">${pct != null ? pct + '%' : '—'}</span>
-        <span style="font-size:10px;">${pass}/${total} passed</span>
-      </div>`
-    ).join('') +
-  `</div>`;
+  function _computePassRates(subjects, sem) {
+    return subjects.map(subj => {
+      let pass = 0, total = 0;
+      for (const student of students) {
+        const rows = State.ledger.filter(r =>
+          r.uin === student.uin &&
+          r.subjectCode === subj.code &&
+          String(r.semester) === String(sem)
+        );
+        if (!rows.length) continue;
+        const latest = rows.sort((a, b) => b.entryDateTime.localeCompare(a.entryDateTime))[0];
+        total++;
+        if (latest.result === 'Pass') pass++;
+      }
+      const pct = total > 0 ? Math.round(pass / total * 100) : null;
+      return { subj, pass, total, pct };
+    }).filter(d => d.total > 0)
+      .sort((a, b) => (a.pct ?? 101) - (b.pct ?? 101));
+  }
 
-  if (!passRates.length) el.innerHTML = '<div class="muted">No data for selected batch year.</div>';
+  function _renderGrid(passRates) {
+    if (!passRates.length) return '<div class="muted" style="font-size:12px;">No data.</div>';
+    return `<div class="dash-heatmap-grid">` +
+      passRates.map(({ subj, pct, pass, total }) => `
+        <div class="dash-heatmap-cell" style="background:${_heatColor(pct)}; color:${_heatTextColor(pct)}">
+          <span class="dash-heatmap-subj">${UI.esc(subj.code)}</span>
+          <span class="dash-heatmap-pct">${pct != null ? pct + '%' : '—'}</span>
+          <span style="font-size:10px;">${pass}/${total} passed</span>
+        </div>`
+      ).join('') +
+    `</div>`;
+  }
+
+  // Sem I — canonical subject list
+  const sem1Rates = _computePassRates(SEM1_SUBJECTS, 1);
+
+  // Sem II — derive unique subjects from ledger
+  const sem2SubjectMap = {};
+  for (const r of State.ledger) {
+    if (String(r.semester) !== '2') continue;
+    if (!sem2SubjectMap[r.subjectCode]) {
+      sem2SubjectMap[r.subjectCode] = { code: r.subjectCode, name: r.subjectName };
+    }
+  }
+  const sem2Subjects = Object.values(sem2SubjectMap);
+  const sem2Rates    = _computePassRates(sem2Subjects, 2);
+
+  const semHeader = (label) => `
+    <div style="grid-column:1/-1; font-size:11px; font-weight:700; color:var(--ink-3);
+                text-transform:uppercase; letter-spacing:.04em; padding:10px 0 4px;">
+      ${label}
+    </div>`;
+
+  el.innerHTML = `
+    <div class="dash-heatmap-grid">
+      ${semHeader('Semester I')}
+    </div>
+    ${_renderGrid(sem1Rates)}
+    <div class="dash-heatmap-grid" style="margin-top:8px;">
+      ${semHeader('Semester II')}
+    </div>
+    ${_renderGrid(sem2Rates)}
+  `;
+
+  if (!sem1Rates.length && !sem2Rates.length) {
+    el.innerHTML = '<div class="muted">No data for selected batch year.</div>';
+  }
 }
 
 function _dashRenderHeatmap() {
