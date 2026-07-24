@@ -1912,10 +1912,8 @@ function _dashBranchPassRates() {
         if (!appeared.length) continue;
 
         passed = appeared.filter(student => {
-          const acad = State.computeStudentAcademics(student.uin);
-          return !acad?.sessionResults.some(sr =>
-            sr.subjects.some(s => !s.pending && (s.dr.result === 'Fail' || s.dr.result === 'AB'))
-          );
+          const data = State.getKTData(student.uin);
+          return data && data.activeKTCount === 0;
         }).length;
       }
 
