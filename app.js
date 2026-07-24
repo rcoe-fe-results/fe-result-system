@@ -1972,6 +1972,7 @@ function _dashRenderHeatmap() {
       passRates.map(({ subj, pct, pass, total }) => `
         <div class="dash-heatmap-cell" style="background:${_heatColor(pct)}; color:${_heatTextColor(pct)}">
           <span class="dash-heatmap-subj">${UI.esc(subj.code)}</span>
+          <span style="font-size:10px; color:inherit; opacity:0.75;">${UI.esc(subj.name)}</span>
           <span class="dash-heatmap-pct">${pct != null ? pct + '%' : '—'}</span>
           <span style="font-size:10px;">${pass}/${total} passed</span>
         </div>`
