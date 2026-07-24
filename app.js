@@ -1919,12 +1919,63 @@ function _dashBranchPassRates() {
 }
 
 function _dashInitHeatmap() {
-  const sel = document.getElementById('dash-heatmap-session');
-  const sessions = sortSessions(State.getSessions());
-  sel.innerHTML = '<option value="">— all sessions —</option>' +
-    sessions.map(s => `<option value="${UI.esc(s.id)}">${UI.esc(s.name)}</option>`).join('');
+  const sel   = document.getElementById('dash-heatmap-session');
+  const years = State.getBatchYears();
+  sel.innerHTML = '<option value="">— all batches —</option>' +
+    years.map(y => `<option value="${UI.esc(y)}">${UI.esc(y)}</option>`).join('');
   sel.addEventListener('change', _dashRenderHeatmap);
   _dashRenderHeatmap();
+}
+
+function _dashRenderHeatmap() {
+  const batchYear = document.getElementById('dash-heatmap-session').value;
+  const el        = document.getElementById('dash-heatmap');
+  const students  = State.getStudents({ batchYear: batchYear || undefined });
+
+  const subjects = [...SEM1_SUBJECTS];
+
+  const passRates = subjects.map(subj => {
+    let pass = 0, total = 0;
+    for (const student of students) {
+      const rows = State.ledger.filter(r =>
+        r.uin === student.uin &&
+        r.subjectCode === subj.code
+      );
+      if (!rows.length) continue;
+      const latest = rows.sort((a, b) => b.entryDateTime.localeCompare(a.entryDateTime))[0];
+      total++;
+      if (latest.result === 'Pass') pass++;
+    }
+    const pct = total > 0 ? Math.round(pass / total * 100) : null;
+    return { subj, pass, total, pct };
+  }).filter(d => d.total > 0)
+    .sort((a, b) => (a.pct ?? 101) - (b.pct ?? 101));
+
+  function _heatColor(pct) {
+    if (pct == null)  return 'var(--surface-2)';
+    if (pct >= 90)    return '#D1FAE5';
+    if (pct >= 75)    return '#FEF9C3';
+    if (pct >= 60)    return '#FED7AA';
+    return '#FEE2E2';
+  }
+  function _heatTextColor(pct) {
+    if (pct == null)  return 'var(--ink-4)';
+    if (pct >= 75)    return '#065F46';
+    if (pct >= 60)    return '#92400E';
+    return '#991B1B';
+  }
+
+  el.innerHTML = `<div class="dash-heatmap-grid">` +
+    passRates.map(({ subj, pct, pass, total }) => `
+      <div class="dash-heatmap-cell" style="background:${_heatColor(pct)}; color:${_heatTextColor(pct)}">
+        <span class="dash-heatmap-subj">${UI.esc(subj.code)}</span>
+        <span class="dash-heatmap-pct">${pct != null ? pct + '%' : '—'}</span>
+        <span style="font-size:10px;">${pass}/${total} passed</span>
+      </div>`
+    ).join('') +
+  `</div>`;
+
+  if (!passRates.length) el.innerHTML = '<div class="muted">No data for selected batch year.</div>';
 }
 
 function _dashRenderHeatmap() {
