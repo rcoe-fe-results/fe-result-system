@@ -1871,51 +1871,37 @@ function _dashActiveKTs() {
 function _dashBranchPassRates() {
   const el       = document.getElementById('dash-branch-pass');
   const students = State.getStudents();
+  const years    = State.getBatchYears();
 
-  // Build session dropdown
-  const sessions = sortSessions(State.getSessions());
-  const selHtml  = `
+  const selHtml = `
     <select id="dash-branch-session" class="dash-filter-select" style="margin-bottom:12px;">
       <option value="">— Overall —</option>
-      ${sessions.map(s => `<option value="${UI.esc(s.id)}">${UI.esc(s.name)}</option>`).join('')}
+      ${years.map(y => `<option value="${UI.esc(y)}">${UI.esc(y)}</option>`).join('')}
     </select>`;
 
   el.innerHTML = selHtml + `<div id="dash-branch-rows"></div>`;
 
   function _render() {
-    const sessId   = document.getElementById('dash-branch-session').value;
-    const rowsEl   = document.getElementById('dash-branch-rows');
-    let   html     = '';
+    const batchYear = document.getElementById('dash-branch-session').value;
+    const rowsEl    = document.getElementById('dash-branch-rows');
+    let   html      = '';
 
     for (const branch of BRANCHES) {
-      const branchStudents = students.filter(s => s.branch === branch);
+      const branchStudents = students.filter(s =>
+        s.branch === branch &&
+        (!batchYear || s.batchYear === batchYear)
+      );
       if (!branchStudents.length) continue;
 
-      let appeared, passed;
+      const appeared = branchStudents.filter(s =>
+        State.ledger.some(r => r.uin === s.uin)
+      );
+      if (!appeared.length) continue;
 
-      if (sessId) {
-        // Per-session: denominator = appeared in this session
-        appeared = branchStudents.filter(s =>
-          State.ledger.some(r => r.uin === s.uin && r.examSession === sessId)
-        );
-        if (!appeared.length) continue;
-
-        passed = appeared.filter(student => {
-          const data = State.getKTData(student.uin);
-          return data && data.activeKTCount === 0;
-        }).length;
-      } else {
-        // Overall: denominator = appeared in any session
-        appeared = branchStudents.filter(s =>
-          State.ledger.some(r => r.uin === s.uin)
-        );
-        if (!appeared.length) continue;
-
-        passed = appeared.filter(student => {
-          const data = State.getKTData(student.uin);
-          return data && data.activeKTCount === 0;
-        }).length;
-      }
+      const passed = appeared.filter(student => {
+        const data = State.getKTData(student.uin);
+        return data && data.activeKTCount === 0;
+      }).length;
 
       const pct   = Math.round(passed / appeared.length * 100);
       const color = pct >= 80 ? 'var(--pass)' : pct >= 60 ? 'var(--kt)' : 'var(--fail)';
@@ -1925,7 +1911,7 @@ function _dashBranchPassRates() {
           <span class="dash-pass-pct" style="color:${color}">${pct}% <small>(${passed}/${appeared.length})</small></span>
         </div>`;
     }
-    rowsEl.innerHTML = html || '<div class="muted">No data for selected session.</div>';
+    rowsEl.innerHTML = html || '<div class="muted">No data for selected batch year.</div>';
   }
 
   _render();
