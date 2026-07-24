@@ -1010,11 +1010,30 @@ const State = (() => {
 // ── Latest merged row per subject across ALL sessions ──────
     // Used for CGPA and consolidated semester SGPA.
     // KT entry for a subject supersedes Regular (latest entryDateTime wins).
+    // Session chronological score — year × 12 + month, Gazette beats Prelim within same month
+    function _sessScore(sessionId) {
+      const sess = getSession(sessionId);
+      if (!sess) return 0;
+      const year  = Number((sess.name || '').slice(0, 4));
+      const month = (sess.name || '').includes('May') ? 5 : 12;
+      const typeBonus = sess.entryType === 'Revaluation_Gazette' ? 1 : 0;
+      return (year * 12 + month) * 2 + typeBonus;
+    }
+
     const latestPerSubject = {};
     for (const r of Object.values(latestPerSessionSubject)) {
       const code = r.subjectCode;
-      if (!latestPerSubject[code] || r.entryDateTime > latestPerSubject[code].entryDateTime) {
+      if (!latestPerSubject[code]) {
         latestPerSubject[code] = r;
+      } else {
+        const existingScore = _sessScore(latestPerSubject[code].examSession);
+        const candidateScore = _sessScore(r.examSession);
+        if (
+          candidateScore > existingScore ||
+          (candidateScore === existingScore && r.entryDateTime > latestPerSubject[code].entryDateTime)
+        ) {
+          latestPerSubject[code] = r;
+        }
       }
     }
 
@@ -1259,7 +1278,7 @@ const State = (() => {
         if (!subj) continue;
 
         // Only count if this IS the latest result for this subject overall
-        if (latestPerSubject[r.subjectCode]?.entryDateTime !== r.entryDateTime) continue;
+        if (latestPerSubject[r.subjectCode]?.examSession !== r.examSession) continue;
 
         // For Final Gazette sessions: supplement ESE-only rows with Prelim IAT/TW/Oral
         let marksMap = _marksMapFromRow(r);
@@ -1950,7 +1969,7 @@ const State = (() => {
     // All Preliminary sessions for this subject's semester, chronologically
     const allPrelimSessions = getSessions()
       .filter(s =>
-        s.entryType === 'Revaluation_Gazette' &&
+        s.entryType === 'Uni_Portal_Gazette' &&
         s.semester  === subjectSemester &&
         Number(s.batchYear) >= Number(student.batchYear)
       )

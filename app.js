@@ -2983,7 +2983,7 @@ function _rptRenderCreditFilterTable(rows, sem) {
   }
   out.innerHTML = `
     <div style="margin-bottom:8px; font-size:12px; color:var(--ink-3);">${rows.length} students with incomplete Sem ${sem} credits</div>
-    <div style="overflow-x:auto;">
+    <div style="overflow-x:auto; max-height:400px; overflow-y:auto;">
     <table class="audit-table">
       <thead><tr>
         <th>Name</th><th>UIN</th><th>Branch</th><th>Batch</th><th>Gender</th>
