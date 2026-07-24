@@ -1890,6 +1890,24 @@ const State = (() => {
         .map(r => r.uin)
     );
 
+    // Collect gazette rows indexed by uin+subjectCode (if gazette linked)
+    const gazetteIndex = {}; // uin+'||'+subjectCode → merged gazette row
+    if (gazetteSessionId) {
+      const gazRows = ledger.filter(r => r.examSession === gazetteSessionId);
+      for (const r of [...gazRows].sort((a, b) => a.entryDateTime.localeCompare(b.entryDateTime))) {
+        const key = r.uin + '||' + r.subjectCode;
+        if (!gazetteIndex[key]) {
+          gazetteIndex[key] = { ...r };
+        } else {
+          const m = gazetteIndex[key];
+          if (r.eseMarks  !== '') m.eseMarks  = r.eseMarks;
+          if (r.iatMarks  !== '') m.iatMarks  = r.iatMarks;
+          if (r.twMarks   !== '') m.twMarks   = r.twMarks;
+          if (r.oralMarks !== '') m.oralMarks = r.oralMarks;
+        }
+      }
+    }
+
     const buckets = {};
 
     for (const student of students) {
@@ -1898,20 +1916,84 @@ const State = (() => {
       if (batchYear && student.batchYear !== batchYear) continue;
       if (gender    && student.gender    !== gender)    continue;
 
-      const data = _ktCache[student.uin];
-      if (!data) continue;
+      // Get all ledger rows for this student in this semester, sorted chronologically
+      const allSemRows = ledger
+        .filter(r => r.uin === student.uin && Number(r.semester) === sem)
+        .sort((a, b) => a.entryDateTime.localeCompare(b.entryDateTime));
 
-      // Use _ktCache which correctly handles partial entries and carried marks
-      const semActiveSubjects = data.subjects.filter(s =>
-        s.semester === sem &&
-        (s.effectiveResult === 'Unsuccessful' || s.effectiveResult === 'Absent')
-      );
+      // Merge rows for the selected prelim session only (latest component wins)
+      const prelimRowsBySubject = {};
+      for (const r of allSemRows.filter(r => r.examSession === prelimSessionId)) {
+        const code = r.subjectCode;
+        if (!prelimRowsBySubject[code]) {
+          prelimRowsBySubject[code] = { ...r };
+        } else {
+          const m = prelimRowsBySubject[code];
+          if (r.iatMarks  !== '') m.iatMarks  = r.iatMarks;
+          if (r.eseMarks  !== '') m.eseMarks  = r.eseMarks;
+          if (r.twMarks   !== '') m.twMarks   = r.twMarks;
+          if (r.oralMarks !== '') m.oralMarks = r.oralMarks;
+        }
+      }
 
-      const ktSubjects = semActiveSubjects.map(s => ({
-        subjectCode: s.subjectCode,
-        subjectName: s.subjectName,
-        result:      s.effectiveResult === 'Absent' ? 'AB' : 'Fail',
-      }));
+      // Get subject list for this student+session
+      const subjectList = getSubjectsForSem(sem, student.branch, prelimSess);
+
+      const ktSubjects = [];
+
+      for (const subj of subjectList) {
+        const prelimRow = prelimRowsBySubject[subj.code];
+        if (!prelimRow) continue; // student didn't attempt this subject in this session
+
+        // Build marks map starting from prelim row
+        const marksMap = {};
+        if (prelimRow.iatMarks  !== '') marksMap.IAT  = prelimRow.iatMarks;
+        if (prelimRow.eseMarks  !== '') marksMap.ESE  = prelimRow.eseMarks;
+        if (prelimRow.twMarks   !== '') marksMap.TW   = prelimRow.twMarks;
+        if (prelimRow.oralMarks !== '') marksMap.Oral = prelimRow.oralMarks;
+
+        // Apply gazette ESE override if available
+        const gazKey = student.uin + '||' + subj.code;
+        const gazRow = gazetteIndex[gazKey] || null;
+        if (gazRow) {
+          if (gazRow.eseMarks  !== '') marksMap.ESE  = gazRow.eseMarks;
+          if (gazRow.iatMarks  !== '') marksMap.IAT  = gazRow.iatMarks;
+          if (gazRow.twMarks   !== '') marksMap.TW   = gazRow.twMarks;
+          if (gazRow.oralMarks !== '') marksMap.Oral = gazRow.oralMarks;
+        }
+
+        // Carry forward passing components from PRIOR sessions only
+        // (sessions that occurred before this prelim session, same semester)
+        const priorRows = allSemRows.filter(r =>
+          r.examSession !== prelimSessionId &&
+          (!gazetteSessionId || r.examSession !== gazetteSessionId) &&
+          r.entryDateTime < prelimRow.entryDateTime
+        );
+        const priorMerged = {};
+        for (const r of priorRows) {
+          if (r.iatMarks  !== '') priorMerged.IAT  = r.iatMarks;
+          if (r.eseMarks  !== '') priorMerged.ESE  = r.eseMarks;
+          if (r.twMarks   !== '') priorMerged.TW   = r.twMarks;
+          if (r.oralMarks !== '') priorMerged.Oral = r.oralMarks;
+        }
+        for (const [comp, val] of Object.entries(priorMerged)) {
+          if (marksMap[comp] !== undefined) continue; // already has value this session
+          const max    = subj.marks[comp];
+          const parsed = parseMarkValue(val, max);
+          const priorPassed = parsed.valid && !parsed.absent &&
+            (parsed.grace || (max && parsed.value / max >= 0.40));
+          if (priorPassed) marksMap[comp] = val;
+        }
+
+        const dr = computeDisplayResult(subj, marksMap);
+        if (!dr.pending && (dr.result === 'Fail' || dr.result === 'AB')) {
+          ktSubjects.push({
+            subjectCode: subj.code,
+            subjectName: subj.name,
+            result:      dr.result === 'AB' ? 'AB' : 'Fail',
+          });
+        }
+      }
 
       const ktCount = ktSubjects.length;
       if (!buckets[ktCount]) buckets[ktCount] = [];
