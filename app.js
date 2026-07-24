@@ -3050,7 +3050,7 @@ function _rptKTFilterRun() {
   for (const d of raw) {
     if (!byStudent[d.uin]) byStudent[d.uin] = { prn: d.prn, uin: d.uin, name: d.name, branch: d.branch, gender: d.gender || '', ktSubjects: [] };
     if (branch && d.branch !== branch) continue;
-    byStudent[d.uin].ktSubjects.push(`${d.subjectCode} (${d.result})`);
+    byStudent[d.uin].ktSubjects.push(`${d.subjectCode} — ${d.subjectName} (${d.result})`);
   }
   const rows = Object.values(byStudent).filter(r => (!branch || r.branch === branch) && r.ktSubjects.length > 0);
 
