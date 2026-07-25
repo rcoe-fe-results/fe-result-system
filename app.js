@@ -219,13 +219,17 @@ function _isStudentEligibleForSession(student, session) {
   }
 
   // Different batch year — only if active KT in this semester
-  // AND session is not before the student's own batch year
-  const sessionYear = Number(session.name.slice(0, 4));
-  const studentBatchYear = Number(student.batchYear);
-  if (sessionYear < studentBatchYear) return false;
+      // AND session is not before the student's academics started.
+      const studentBatchYear = Number(student.batchYear);
+      const sem1Start = studentBatchYear * 12 + 12;
+      const sem2Start = (studentBatchYear + 1) * 12 + 5;
+      const sessionScore = Number(session.name.slice(0, 4)) * 12 +
+        (session.name.includes('May') ? 5 : 12);
+      const semStart = session.semester === 1 ? sem1Start : sem2Start;
+      if (sessionScore < semStart) return false;
 
-  const activeKTs = State.getActiveKTSubjects(student.uin);
-  return activeKTs.some(r => Number(r.semester) === session.semester);
+      const activeKTs = State.getActiveKTSubjects(student.uin);
+      return activeKTs.some(r => Number(r.semester) === session.semester);
 }
 
 let meAdhocState = { student: null, session: null };
@@ -285,62 +289,141 @@ function _meAdhocShowAutoSession(session, seatNum) {
     </div>`;
 }
 
+function _meGetNextSession(student, sem) {
+  const allSessions = sortSessions(State.getSessions()).reverse(); // chronological ascending
+  const semSessions = allSessions.filter(s =>
+    s.semester === sem &&
+    (s.entryType !== 'Revaluation_Gazette' || Auth.isAdmin())
+  );
+
+  // Sessions this student has a record in
+  const recordSessionIds = new Set(
+    State.ledger.filter(r => r.uin === student.uin).map(r => r.examSession)
+  );
+
+  // Find last session student has a record in, for this semester
+  const attended = semSessions.filter(s => recordSessionIds.has(s.id));
+  if (attended.length === 0) {
+    // Fresh for this semester — find canonical first active session
+    const studentBatchYear = Number(student.batchYear);
+    const sem1Start = studentBatchYear * 12 + 12;
+    const sem2Start = (studentBatchYear + 1) * 12 + 5;
+    const semStart  = sem === 1 ? sem1Start : sem2Start;
+    return semSessions.find(s => {
+      const score = Number(s.name.slice(0, 4)) * 12 + (s.name.includes('May') ? 5 : 12);
+      return score >= semStart && s.status === 'Active' && s.entryType !== 'Revaluation_Gazette';
+    }) || null;
+  }
+
+  // Last attended session chronologically
+  const lastAttended = attended[attended.length - 1];
+
+  // If last was a Uni-Portal → check if linked Reval exists and is Active
+  if (lastAttended.entryType !== 'Revaluation_Gazette') {
+    const linkedReval = semSessions.find(s =>
+      s.entryType === 'Revaluation_Gazette' &&
+      s.linkedPrelimSessionId === lastAttended.id &&
+      s.status === 'Active'
+    );
+    if (linkedReval) return linkedReval;
+  }
+
+  // Last was Reval, or Reval doesn't exist/locked → find next Uni-Portal after last attended
+  const lastScore = Number(lastAttended.name.slice(0, 4)) * 12 +
+    (lastAttended.name.includes('May') ? 5 : 12);
+
+  return semSessions.find(s => {
+    if (s.entryType === 'Revaluation_Gazette') return false;
+    if (s.status !== 'Active') return false;
+    const score = Number(s.name.slice(0, 4)) * 12 + (s.name.includes('May') ? 5 : 12);
+    return score > lastScore;
+  }) || null;
+}
+
 function _meAdhocShowSessionPicker(sessions) {
   const student = meAdhocState.student;
   const picker  = document.getElementById('me-adhoc-session-picker');
 
-  // Tag is based on THIS SESSION's entries for this student — not overall KT status
   function _sessionStatus(session) {
     const acad = State.computeStudentAcademics(student.uin);
     const sessResult = acad?.sessionResults.find(sr => sr.session.id === session.id);
-
     if (!sessResult) return 'pending';
-
     const total = sessResult.subjects.length;
     if (total === 0) return 'pending';
-
     if (sessResult.pendingCount === total) return 'pending';
-
     const hasFailOrAB = sessResult.subjects.some(s =>
       !s.pending && (s.dr.result === 'Fail' || s.dr.result === 'AB')
     );
     if (hasFailOrAB) return 'unsuccessful';
-
     if (sessResult.pendingCount > 0) return 'pending';
-
     return 'cleared';
   }
 
   function _sessionTag(status) {
-    if (status === 'cleared') {
-      return `<span class="session-status-tag tag-cleared">✓ Successful</span>`;
-    }
-    if (status === 'unsuccessful') {
-      return `<span class="session-status-tag tag-unsuccessful">✗ Unsuccessful</span>`;
-    }
+    if (status === 'cleared')      return `<span class="session-status-tag tag-cleared">✓ Successful</span>`;
+    if (status === 'unsuccessful') return `<span class="session-status-tag tag-unsuccessful">✗ Unsuccessful</span>`;
     return `<span class="session-status-tag tag-pending">Marks entry pending</span>`;
+  }
+
+  // All sessions student has a record in, per semester
+  const recordSessionIds = new Set(
+    State.ledger.filter(r => r.uin === student.uin).map(r => r.examSession)
+  );
+
+  // Next clickable session per semester
+  const nextSem1 = _meGetNextSession(student, 1);
+  const nextSem2 = _meGetNextSession(student, 2);
+
+  function _renderSem(sem) {
+    const nextSession = sem === 1 ? nextSem1 : nextSem2;
+
+    // Sessions with records for this semester
+    const attended = sortSessionsChronological(
+      State.getSessions().filter(s =>
+        s.semester === sem && recordSessionIds.has(s.id)
+      )
+    );
+
+    // Don't render semester block at all if nothing to show
+    if (attended.length === 0 && !nextSession) return '';
+
+    let html = `<div class="pv-sem-separator">Semester ${sem}</div>`;
+
+    // Greyed out past sessions
+    for (const s of attended) {
+      const status = _sessionStatus(s);
+      html += `
+        <div class="session-option session-option-cleared">
+          <span class="session-option-name">${UI.esc(s.name)}</span>
+          <span class="session-option-meta">Sem ${s.semester} · ${UI.esc(s.batchYear)} · ${UI.esc(s.entryType)}</span>
+          ${_sessionTag(status)}
+        </div>`;
+    }
+
+    // Next active session
+    if (nextSession) {
+      html += `
+        <div class="session-option" data-session-id="${UI.esc(nextSession.id)}">
+          <span class="session-option-name">${UI.esc(nextSession.name)}</span>
+          <span class="session-option-meta">Sem ${nextSession.semester} · ${UI.esc(nextSession.batchYear)} · ${UI.esc(nextSession.entryType)}</span>
+          <span class="session-status-tag tag-pending">Next →</span>
+        </div>`;
+    }
+
+    return html;
   }
 
   picker.innerHTML = `
     <div class="session-picker">
       <div class="session-picker-label">Select session</div>
-      ${sessions.map(s => {
-        const status   = _sessionStatus(s);
-        const readOnly = status === 'cleared' || status === 'unsuccessful';
-        return `
-        <div class="session-option${readOnly ? ' session-option-cleared' : ''}"
-             ${readOnly ? '' : `data-session-id="${UI.esc(s.id)}"`}>
-          <span class="session-option-name">${UI.esc(s.name)}</span>
-          <span class="session-option-meta">Sem ${s.semester} · ${UI.esc(s.batchYear)} · ${UI.esc(s.entryType)}</span>
-          ${_sessionTag(status)}
-        </div>`;
-      }).join('')}
+      ${_renderSem(1)}
+      ${_renderSem(2)}
     </div>`;
 
   picker.querySelectorAll('.session-option[data-session-id]').forEach(el => {
     el.onclick = () => {
       meAdhocState.session = State.getSession(el.dataset.sessionId);
-      picker.querySelectorAll('.session-option').forEach(o =>
+      picker.querySelectorAll('.session-option[data-session-id]').forEach(o =>
         o.style.borderColor = o === el ? 'var(--brand)' : ''
       );
       _meAdhocRenderGrid();
@@ -426,7 +509,7 @@ function _meGetCompPassStatus(uin, subjectCode, semester) {
 function _meLockedCompHtml(comp, max, val) {
   return `
     <label class="comp-label locked">
-      <span>${comp}<small>/${max}</small></span>
+      <span>${comp}<small>/${max}</small> <span class="lock-icon">🔒</span></span>
       <input type="text" class="mark-input-single" data-comp="${comp}"
         data-max="${max}" value="${UI.esc(val)}" disabled autocomplete="off">
     </label>`;
@@ -581,9 +664,28 @@ function _meLiveSummary(triggerInput, containerId) {
   `;
 }
 
+function _meValidateGrid(containerId) {
+  const inputs = [...document.querySelectorAll(`#${containerId} .mark-input-single:not([disabled])`)];
+  const overMax = inputs.filter(input => {
+    const raw = input.value.trim();
+    if (!raw || raw.toUpperCase() === 'AB') return false;
+    if (raw.endsWith('*')) return false;
+    const val = Number(raw);
+    const max = Number(input.dataset.max);
+    return !isNaN(val) && max > 0 && val > max;
+  });
+  if (overMax.length > 0) {
+    overMax[0].focus();
+    UI.toast(`${overMax.length} mark(s) exceed the maximum allowed. Please correct before saving.`, 'error', 5000);
+    return false;
+  }
+  return true;
+}
+
 async function _meAdhocSubmit() {
   const { student, session } = meAdhocState;
   if (!student || !session) { UI.toast('Select a student and session.', 'error'); return; }
+  if (!_meValidateGrid('me-adhoc-grid')) return;
 
   const isFinal = session.entryType === 'Revaluation_Gazette';
   const inputs  = [...document.querySelectorAll('#me-adhoc-grid .mark-input-single:not([disabled])')];
@@ -750,6 +852,7 @@ async function _meQueueSaveAndNext() {
   const { session, students, currentIdx } = meQueueState;
   const student = students[currentIdx];
   if (!student) return;
+  if (!_meValidateGrid('me-queue-grid')) return;
 
   const inputs = [...document.querySelectorAll('#me-queue-grid .mark-input-single:not([disabled])')];
   const subjectMap = {};

@@ -269,6 +269,12 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
 .comp-label span { font-size:11px; font-weight:500; color:var(--ink-3); }
 .comp-label small { font-size:10px; color:var(--ink-4); }
 .comp-label.locked span { color:var(--ink-4); }
+.lock-icon {
+  font-size: 9px;
+  opacity: 0.45;
+  vertical-align: middle;
+  margin-left: 2px;
+}
 .mark-input-single { width:72px; }
 
 /* ─── Search ────────────────────────────────────────────── */
@@ -698,6 +704,13 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
 .tag-unsuccessful {
   background: var(--fail-bg); color: var(--fail); border: 1px solid #FCA5A5;
 }
+.pv-sem-separator {
+  font-size:11px; font-weight:700; color:var(--ink-3);
+  text-transform:uppercase; letter-spacing:.04em;
+  padding:8px 4px 4px; margin-top:6px;
+  border-top:1px solid var(--border);
+}
+.pv-sem-separator:first-child { border-top:none; margin-top:0; }
 /* ─── Dashboard ─────────────────────────────────────────── */
 .dash-grid {
   display: grid;

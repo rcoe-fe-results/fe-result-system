@@ -2281,7 +2281,18 @@ const State = (() => {
 
     for (const s of branchStudents) {
       const isFresh = s.batchYear === freshBatch;
-      const hasKT   = !!ktSubjectsByStudent[s.uin];
+
+      // Only include KT students whose academics could have started by this session.
+      // A 2025 batch student's Sem-I starts Dec 2025; they must not appear in 2024_Dec.
+      const studentBatchYear = Number(s.batchYear);
+      const sem1Start = studentBatchYear * 12 + 12; // December of batch year
+      const sem2Start = (studentBatchYear + 1) * 12 + 5; // May of following year
+      const sessionScore = Number(session.name.slice(0, 4)) * 12 +
+        (session.name.includes('May') ? 5 : 12);
+      const semStart = session.semester === 1 ? sem1Start : sem2Start;
+      const sessionIsReachable = sessionScore >= semStart;
+
+      const hasKT = !!ktSubjectsByStudent[s.uin] && sessionIsReachable;
 
       if (!isFresh && !hasKT) continue;
 
