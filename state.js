@@ -856,6 +856,19 @@ const State = (() => {
       const hasAnyMark = Object.values(entry.marks).some(m => m && m.value !== null);
       if (!hasAnyMark) continue;
 
+      // Backstop: reject any component mark exceeding its maximum
+      const overMax = Object.entries(entry.marks).filter(([comp, m]) => {
+        if (!m || m.value === null || m.absent || m.grace) return false;
+        const max = subject.marks[comp];
+        return max && m.value > max;
+      });
+      if (overMax.length > 0) {
+        const details = overMax.map(([comp, m]) => `${comp}: ${m.value} > ${subject.marks[comp]}`).join(', ');
+        console.warn(`[submitEntries] Over-max blocked for ${subject.code} — ${details}`);
+        UI.toast(`Blocked: ${subject.code} has mark(s) exceeding maximum (${details}).`, 'error', 6000);
+        continue;
+      }
+
       let marksToStore = { ...entry.marks };
 
       if (isFinal) {
