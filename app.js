@@ -450,7 +450,7 @@ function _meAdhocShowSessionPicker(sessions) {
         </div>`;
     }
 
-    // Next active session — only show if decision is Yes or Unknown for Reval
+    // Next active session
     if (nextSession) {
       const decision = nextSession.entryType === 'Revaluation_Gazette'
         ? (revalOverrides[nextSession.id] !== undefined
@@ -458,10 +458,35 @@ function _meAdhocShowSessionPicker(sessions) {
             : State.getRevalDecision(student.uin, nextSession.id))
         : null;
 
-      // Hide Reval session card if toggled No or SkipForNow
-      if (nextSession.entryType === 'Revaluation_Gazette' && (decision === 'No' || decision === 'SkipForNow')) {
-        // Show next Uni-Portal instead (recompute without this Reval)
-        const skipOverride = { ...revalOverrides, [nextSession.id]: decision };
+      if (nextSession.entryType === 'Revaluation_Gazette' && decision === 'No') {
+        // Greyed out, non-clickable
+        html += `
+          <div class="session-option session-option-cleared">
+            <span class="session-option-name">${UI.esc(nextSession.name)}</span>
+            <span class="session-option-meta">Sem ${nextSession.semester} · ${UI.esc(nextSession.batchYear)} · ${UI.esc(nextSession.entryType)}</span>
+            <span class="session-status-tag tag-unsuccessful">✗ Opted out of Reval</span>
+          </div>`;
+        // Also show next Uni-Portal
+        const skipOverride = { ...revalOverrides, [nextSession.id]: 'No' };
+        const altNext = _meGetNextSession(student, sem, skipOverride);
+        if (altNext) {
+          html += `
+            <div class="session-option" data-session-id="${UI.esc(altNext.id)}">
+              <span class="session-option-name">${UI.esc(altNext.name)}</span>
+              <span class="session-option-meta">Sem ${altNext.semester} · ${UI.esc(altNext.batchYear)} · ${UI.esc(altNext.entryType)}</span>
+              <span class="session-status-tag tag-pending">Next →</span>
+            </div>`;
+        }
+      } else if (nextSession.entryType === 'Revaluation_Gazette' && decision === 'SkipForNow') {
+        // Clickable reval card with pending tag
+        html += `
+          <div class="session-option" data-session-id="${UI.esc(nextSession.id)}">
+            <span class="session-option-name">${UI.esc(nextSession.name)}</span>
+            <span class="session-option-meta">Sem ${nextSession.semester} · ${UI.esc(nextSession.batchYear)} · ${UI.esc(nextSession.entryType)}</span>
+            <span class="session-status-tag tag-pending">⏳ Decision pending</span>
+          </div>`;
+        // Also show next Uni-Portal
+        const skipOverride = { ...revalOverrides, [nextSession.id]: 'SkipForNow' };
         const altNext = _meGetNextSession(student, sem, skipOverride);
         if (altNext) {
           html += `
@@ -472,6 +497,7 @@ function _meAdhocShowSessionPicker(sessions) {
             </div>`;
         }
       } else {
+        // Yes / Unknown / non-Reval session
         html += `
           <div class="session-option" data-session-id="${UI.esc(nextSession.id)}">
             <span class="session-option-name">${UI.esc(nextSession.name)}</span>
