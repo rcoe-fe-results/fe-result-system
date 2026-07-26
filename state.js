@@ -3,12 +3,13 @@
 // ============================================================
 
 const State = (() => {
-  let students  = [];
-  let sessions  = [];
-  let ledger    = [];
-  let seats     = [];   // [{ uin, sessionId, seatNumber }]
-  let _ktCache  = {};   // built by _buildKTCache(), keyed by uin
-  let _loaded   = false;
+  let students   = [];
+  let sessions   = [];
+  let ledger     = [];
+  let seats      = [];   // [{ uin, sessionId, seatNumber }]
+  let revalSkips = [];   // [{ uin, revalSessionId, decision, markedBy, markedAt }]
+  let _ktCache   = {};   // built by _buildKTCache(), keyed by uin
+  let _loaded    = false;
 
   // ── Applicable sessions per student per semester ──────────
   // Returns { sem1: [...], sem2: [...] } of Preliminary sessions
@@ -312,11 +313,12 @@ const State = (() => {
 
   // ── Load all data ─────────────────────────────────────────
   async function loadAll() {
-    [students, sessions, ledger, seats] = await Promise.all([
+    [students, sessions, ledger, seats, revalSkips] = await Promise.all([
       Sheets.getStudents(),
       Sheets.getSessions(),
       Sheets.getLedger(),
       Sheets.getSeats(),
+      Sheets.getRevalSkips(),
     ]);
     _buildKTCache();
     _loaded = true;
@@ -456,6 +458,66 @@ const State = (() => {
     await Sheets.uploadSeats(seatList);
     seats.push(...seatList);
   }
+
+// ── Reval Skip ────────────────────────────────────────────
+  function getRevalSkip(uin, revalSessionId) {
+    return revalSkips.find(r => r.uin === uin && r.revalSessionId === revalSessionId) || null;
+  }
+
+  async function setRevalSkip(uin, revalSessionId, decision) {
+    const user     = Auth.getUser();
+    const existing = getRevalSkip(uin, revalSessionId);
+    if (existing) {
+      await Sheets.updateRevalSkip(uin, revalSessionId, decision, user.email);
+      existing.decision  = decision;
+      existing.markedBy  = user.email;
+      existing.markedAt  = new Date().toISOString();
+    } else {
+      await Sheets.appendRevalSkip(uin, revalSessionId, decision, user.email);
+      revalSkips.push({
+        uin,
+        revalSessionId,
+        decision,
+        markedBy: user.email,
+        markedAt: new Date().toISOString(),
+      });
+    }
+  }
+
+  // Returns: 'Yes' | 'No' | 'Unknown'
+  function getRevalDecision(uin, revalSessionId) {
+    // If marks already entered → they applied, no need to check skip
+    const hasMarks = ledger.some(r =>
+      r.uin === uin && r.examSession === revalSessionId
+    );
+    if (hasMarks) return 'Yes';
+
+    const skip = getRevalSkip(uin, revalSessionId);
+    if (!skip) return 'Unknown';
+    return skip.decision || 'Unknown';
+  }
+
+  // Returns all students with unresolved reval status for a given reval session
+  // Used at lock time: students with no marks AND no explicit decision
+  function getUnresolvedRevalStudents(revalSessionId) {
+    const revalSess = getSession(revalSessionId);
+    if (!revalSess || !revalSess.linkedPrelimSessionId) return [];
+
+    // Students who appeared in the linked Prelim session
+    const prelimUINs = new Set(
+      ledger
+        .filter(r => r.examSession === revalSess.linkedPrelimSessionId)
+        .map(r => r.uin)
+    );
+
+    return [...prelimUINs].map(uin => {
+      const decision = getRevalDecision(uin, revalSessionId);
+      const student  = getStudent(uin);
+      return { uin, name: student?.name || '', branch: student?.branch || '', decision };
+    }).filter(r => r.decision === 'Unknown' || r.decision === 'Yes' && !ledger.some(l =>
+      l.uin === r.uin && l.examSession === revalSessionId
+    ));
+  }  
 
   async function updateSeatNumber(uin, sessionId, seatNumber) {
     await Sheets.updateSeatNumber(uin, sessionId, seatNumber);
@@ -2347,15 +2409,16 @@ const State = (() => {
     getLatestEntryForSubject, getLedgerForStudent,
     getSessionStatus, getExpectedSubjectCount,
     submitEntries,
-    getSeatNumber, getSeatsForSession, uploadSeats, updateSeatNumber,getSeatsForSessionWithFallback,
+    getSeatNumber, getSeatsForSession, uploadSeats, updateSeatNumber, getSeatsForSessionWithFallback,
     computeAttemptTag,
+    getRevalDecision, setRevalSkip, getUnresolvedRevalStudents,
     getKTData:           (uin) => _ktCache[uin] || null,
     getKTCount:          (uin) => _ktCache[uin]?.activeKTCount    ?? 0,
     getHistoricalKTData: (uin) => _ktCache[uin]?.historicalKTComponents ?? [],
     reportResultSummary, reportRevalImpact, reportToppers, reportCreditFilter, reportKTFilter, getMyEntries,
     reportKTDistribution,
     getExamGroups,
-    getDivisions, getBatchYears, getAllSubjects,reportClearedInAttempts,
+    getDivisions, getBatchYears, getAllSubjects, reportClearedInAttempts,
     get ledger() { return ledger; },
   };
 })();

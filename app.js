@@ -289,7 +289,10 @@ function _meAdhocShowAutoSession(session, seatNum) {
     </div>`;
 }
 
-function _meGetNextSession(student, sem) {
+function _meGetNextSession(student, sem, revalOverrides = {}) {
+  // revalOverrides: { [revalSessionId]: 'Yes' | 'No' | 'Unknown' }
+  // Allows UI toggle to override persisted decision without saving yet
+
   const allSessions = sortSessions(State.getSessions()).reverse(); // chronological ascending
   const semSessions = allSessions.filter(s =>
     s.semester === sem &&
@@ -301,16 +304,19 @@ function _meGetNextSession(student, sem) {
     State.ledger.filter(r => r.uin === student.uin).map(r => r.examSession)
   );
 
+  // Chronological score helper
+  const _score = s => Number(s.name.slice(0, 4)) * 12 + (s.name.includes('May') ? 5 : 12);
+
   // Find last session student has a record in, for this semester
   const attended = semSessions.filter(s => recordSessionIds.has(s.id));
   if (attended.length === 0) {
-    // Fresh for this semester — find canonical first active session
+    // Fresh for this semester — find canonical first active Uni-Portal
     const studentBatchYear = Number(student.batchYear);
     const sem1Start = studentBatchYear * 12 + 12;
     const sem2Start = (studentBatchYear + 1) * 12 + 5;
     const semStart  = sem === 1 ? sem1Start : sem2Start;
     return semSessions.find(s => {
-      const score = Number(s.name.slice(0, 4)) * 12 + (s.name.includes('May') ? 5 : 12);
+      const score = _score(s);
       return score >= semStart && s.status === 'Active' && s.entryType !== 'Revaluation_Gazette';
     }) || null;
   }
@@ -325,24 +331,36 @@ function _meGetNextSession(student, sem) {
       s.linkedPrelimSessionId === lastAttended.id &&
       s.status === 'Active'
     );
-    if (linkedReval) return linkedReval;
+
+    if (linkedReval) {
+      // Check decision: UI override takes priority, then persisted
+      const decision = revalOverrides[linkedReval.id] !== undefined
+        ? revalOverrides[linkedReval.id]
+        : State.getRevalDecision(student.uin, linkedReval.id);
+
+      // 'Yes' or 'Unknown' → show Reval as next
+      // 'No' → skip Reval, fall through to next Uni-Portal
+      if (decision !== 'No' && decision !== 'SkipForNow') return linkedReval;
+    }
   }
 
-  // Last was Reval, or Reval doesn't exist/locked → find next Uni-Portal after last attended
-  const lastScore = Number(lastAttended.name.slice(0, 4)) * 12 +
-    (lastAttended.name.includes('May') ? 5 : 12);
+  // Last was Reval, or Reval skipped/locked/missing → find next Uni-Portal
+  const lastScore = _score(lastAttended);
 
   return semSessions.find(s => {
     if (s.entryType === 'Revaluation_Gazette') return false;
     if (s.status !== 'Active') return false;
-    const score = Number(s.name.slice(0, 4)) * 12 + (s.name.includes('May') ? 5 : 12);
-    return score > lastScore;
+    return _score(s) > lastScore;
   }) || null;
 }
 
 function _meAdhocShowSessionPicker(sessions) {
   const student = meAdhocState.student;
   const picker  = document.getElementById('me-adhoc-session-picker');
+
+  // Per-render override map: revalSessionId → 'Yes'|'No'|'Unknown'
+  // Tracks UI toggle state before persisting
+  const revalOverrides = {};
 
   function _sessionStatus(session) {
     const acad = State.computeStudentAcademics(student.uin);
@@ -365,26 +383,21 @@ function _meAdhocShowSessionPicker(sessions) {
     return `<span class="session-status-tag tag-pending">Marks entry pending</span>`;
   }
 
-  // All sessions student has a record in, per semester
+  // All sessions student has a record in
   const recordSessionIds = new Set(
     State.ledger.filter(r => r.uin === student.uin).map(r => r.examSession)
   );
 
-  // Next clickable session per semester
-  const nextSem1 = _meGetNextSession(student, 1);
-  const nextSem2 = _meGetNextSession(student, 2);
-
   function _renderSem(sem) {
-    const nextSession = sem === 1 ? nextSem1 : nextSem2;
+    const nextSession = _meGetNextSession(student, sem, revalOverrides);
 
-    // Sessions with records for this semester
+    // Sessions with records for this semester, chronological
     const attended = sortSessionsChronological(
       State.getSessions().filter(s =>
         s.semester === sem && recordSessionIds.has(s.id)
       )
     );
 
-    // Don't render semester block at all if nothing to show
     if (attended.length === 0 && !nextSession) return '';
 
     let html = `<div class="pv-sem-separator">Semester ${sem}</div>`;
@@ -400,35 +413,114 @@ function _meAdhocShowSessionPicker(sessions) {
         </div>`;
     }
 
-    // Next active session
-    if (nextSession) {
+    // Reval toggle — only if next session is a Reval with no marks yet
+    if (nextSession && nextSession.entryType === 'Revaluation_Gazette') {
+      const persistedDecision = State.getRevalDecision(student.uin, nextSession.id);
+      const currentDecision   = revalOverrides[nextSession.id] !== undefined
+        ? revalOverrides[nextSession.id]
+        : persistedDecision;
+
+      // Only show toggle if session is still Active (not locked)
+      const isLocked = nextSession.status !== 'Active';
+
       html += `
-        <div class="session-option" data-session-id="${UI.esc(nextSession.id)}">
-          <span class="session-option-name">${UI.esc(nextSession.name)}</span>
-          <span class="session-option-meta">Sem ${nextSession.semester} · ${UI.esc(nextSession.batchYear)} · ${UI.esc(nextSession.entryType)}</span>
-          <span class="session-status-tag tag-pending">Next →</span>
+        <div class="reval-toggle-wrap" id="reval-toggle-${sem}">
+          <span class="reval-toggle-label">Applied for Reval?</span>
+          <div class="seg-control reval-toggle" data-sem="${sem}" data-reval-id="${UI.esc(nextSession.id)}">
+            <button class="reval-tog-btn${currentDecision === 'Yes'         ? ' active' : ''}"
+              data-val="Yes"         ${isLocked ? 'disabled' : ''}>Yes</button>
+            <button class="reval-tog-btn${currentDecision === 'No'          ? ' active' : ''}"
+              data-val="No"          ${isLocked ? 'disabled' : ''}>No</button>
+            <button class="reval-tog-btn${currentDecision === 'Unknown'     ? ' active' : ''}"
+              data-val="Unknown"     ${isLocked ? 'disabled' : ''}>Unknown</button>
+            <button class="reval-tog-btn${currentDecision === 'SkipForNow' ? ' active' : ''}"
+              data-val="SkipForNow"  ${isLocked ? 'disabled' : ''}>Skip for now</button>
+          </div>
+          ${isLocked ? '<span class="reval-locked-note">Session locked</span>' : ''}
         </div>`;
+    }
+
+    // Next active session — only show if decision is Yes or Unknown for Reval
+    if (nextSession) {
+      const decision = nextSession.entryType === 'Revaluation_Gazette'
+        ? (revalOverrides[nextSession.id] !== undefined
+            ? revalOverrides[nextSession.id]
+            : State.getRevalDecision(student.uin, nextSession.id))
+        : null;
+
+      // Hide Reval session card if toggled No or SkipForNow
+      if (nextSession.entryType === 'Revaluation_Gazette' && (decision === 'No' || decision === 'SkipForNow')) {
+        // Show next Uni-Portal instead (recompute without this Reval)
+        const skipOverride = { ...revalOverrides, [nextSession.id]: decision };
+        const altNext = _meGetNextSession(student, sem, skipOverride);
+        if (altNext) {
+          html += `
+            <div class="session-option" data-session-id="${UI.esc(altNext.id)}">
+              <span class="session-option-name">${UI.esc(altNext.name)}</span>
+              <span class="session-option-meta">Sem ${altNext.semester} · ${UI.esc(altNext.batchYear)} · ${UI.esc(altNext.entryType)}</span>
+              <span class="session-status-tag tag-pending">Next →</span>
+            </div>`;
+        }
+      } else {
+        html += `
+          <div class="session-option" data-session-id="${UI.esc(nextSession.id)}">
+            <span class="session-option-name">${UI.esc(nextSession.name)}</span>
+            <span class="session-option-meta">Sem ${nextSession.semester} · ${UI.esc(nextSession.batchYear)} · ${UI.esc(nextSession.entryType)}</span>
+            <span class="session-status-tag tag-pending">Next →</span>
+          </div>`;
+      }
     }
 
     return html;
   }
 
-  picker.innerHTML = `
-    <div class="session-picker">
-      <div class="session-picker-label">Select session</div>
-      ${_renderSem(1)}
-      ${_renderSem(2)}
-    </div>`;
+  function _rebuild() {
+    picker.innerHTML = `
+      <div class="session-picker">
+        <div class="session-picker-label">Select session</div>
+        ${_renderSem(1)}
+        ${_renderSem(2)}
+      </div>`;
+    _wireToggle();
+    _wireSessions();
+  }
 
-  picker.querySelectorAll('.session-option[data-session-id]').forEach(el => {
-    el.onclick = () => {
-      meAdhocState.session = State.getSession(el.dataset.sessionId);
-      picker.querySelectorAll('.session-option[data-session-id]').forEach(o =>
-        o.style.borderColor = o === el ? 'var(--brand)' : ''
-      );
-      _meAdhocRenderGrid();
-    };
-  });
+  function _wireToggle() {
+    picker.querySelectorAll('.reval-toggle').forEach(toggleEl => {
+      const revalId = toggleEl.dataset.revalId;
+
+      toggleEl.querySelectorAll('.reval-tog-btn').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const val = btn.dataset.val;
+          revalOverrides[revalId] = val;
+
+          // 'SkipForNow' is never persisted — UI only
+          if (val !== 'SkipForNow') {
+            State.setRevalSkip(student.uin, revalId, val).catch(err => {
+              UI.toast('Could not save reval decision: ' + err.message, 'error', 5000);
+            });
+          }
+
+          // Rebuild picker to reflect new decision
+          _rebuild();
+        });
+      });
+    });
+  }
+
+  function _wireSessions() {
+    picker.querySelectorAll('.session-option[data-session-id]').forEach(el => {
+      el.onclick = () => {
+        meAdhocState.session = State.getSession(el.dataset.sessionId);
+        picker.querySelectorAll('.session-option[data-session-id]').forEach(o =>
+          o.style.borderColor = o === el ? 'var(--brand)' : ''
+        );
+        _meAdhocRenderGrid();
+      };
+    });
+  }
+
+  _rebuild();
 }
 
 function _meStudentInfoHtml(student, session) {

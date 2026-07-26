@@ -221,6 +221,50 @@ const Sheets = (() => {
     return appendRows(CONFIG.TABS.SEAT, [[uin, sessionId, seatNumber]]);
   }
 
+// ── REVAL_SKIP ───────────────────────────────────────────
+  // Columns: A=UIN, B=Reval Session ID, C=Decision (Yes/No), D=Marked By, E=Marked At
+  async function getRevalSkips() {
+    try {
+      const rows = await getRange(CONFIG.TABS.REVAL_SKIP, 'A2:E');
+      return rows.map(r => ({
+        uin:            r[0] || '',
+        revalSessionId: r[1] || '',
+        decision:       r[2] || '',  // 'Yes' | 'No' | ''
+        markedBy:       r[3] || '',
+        markedAt:       r[4] || '',
+      })).filter(r => r.uin && r.revalSessionId);
+    } catch(e) {
+      console.warn('REVAL_SKIP tab not found or empty:', e.message);
+      return [];
+    }
+  }
+
+  async function appendRevalSkip(uin, revalSessionId, decision, markedBy) {
+    const markedAt = new Date().toISOString();
+    return appendRows(CONFIG.TABS.REVAL_SKIP, [[
+      uin, revalSessionId, decision, markedBy, markedAt
+    ]]);
+  }
+
+  async function updateRevalSkip(uin, revalSessionId, decision, markedBy) {
+    const rows = await getRange(CONFIG.TABS.REVAL_SKIP, 'A:E');
+    for (let i = 1; i < rows.length; i++) {
+      if ((rows[i][0] || '') === uin && (rows[i][1] || '') === revalSessionId) {
+        const rowNum = i + 1;
+        const markedAt = new Date().toISOString();
+        const url = `${BASE}/${CONFIG.SHEET_ID}/values/${encodeURIComponent(
+          CONFIG.TABS.REVAL_SKIP + '!C' + rowNum + ':E' + rowNum
+        )}?valueInputOption=USER_ENTERED`;
+        const body = { values: [[decision, markedBy, markedAt]] };
+        const r = await fetch(url, { method: 'PUT', headers: await _headers(), body: JSON.stringify(body) });
+        if (!r.ok) throw new Error(`Reval skip update failed: ${r.status}`);
+        return r.json();
+      }
+    }
+    // Row not found — append instead
+    return appendRevalSkip(uin, revalSessionId, decision, markedBy);
+  }
+
   // ── Infer month from legacy session names ─────────────────
   // Fallback for sessions created before the Month column was added.
   // Parses 'Dec' or 'May' from the auto-generated session name.
@@ -241,6 +285,7 @@ const Sheets = (() => {
     getLedger, appendLedgerRows,
     getSubjectMaster,
     getSeats, uploadSeats, updateSeatNumber,
+    getRevalSkips, appendRevalSkip, updateRevalSkip,
     newEntryId,
   };
 })();

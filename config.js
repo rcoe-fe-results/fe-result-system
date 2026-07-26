@@ -18,6 +18,7 @@ const CONFIG = {
     EXAM:     'EXAM_MASTER',
     LEDGER:   'MASTER_LEDGER',
     SEAT:     'SEAT_MASTER',
+    REVAL_SKIP: 'REVAL_SKIP',
   },
 
   // ── Admin emails (hardcoded) ──────────────────────────────
