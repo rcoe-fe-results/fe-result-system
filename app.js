@@ -3729,7 +3729,7 @@ function _aktdRun() {
       <td>${UI.esc(r.division)}</td>
       <td>${UI.esc(r.batchYear)}</td>
       <td>${UI.esc(r.gender)}</td>
-      <td>${r.lastSessionId ? _pvAttemptTag(r.uin, _aktdLastMeta.subjectCode, r.lastSessionId) : '—'}</td>
+      <td>${r.lastSessionId ? (() => { const t = State.computeAttemptTag(r.uin, _aktdLastMeta.subjectCode, r.lastSessionId); return t ? `<span class="badge ${t.startsWith('Unsuccessful') ? 'badge-fail' : t.includes('after Reval') || t.includes('Marks Reval') ? 'badge-reval' : 'badge-pass'}" title="${UI.esc(t)}">${UI.esc(t)}</span>` : '—'; })() : '—'}</td>
       <td class="muted" style="font-size:11px;">${UI.esc(r.lastSession)}</td>
       ${markCells}
       <td><span class="badge ${r.result === 'AB' ? 'badge-warning' : 'badge-kt'}">${UI.esc(r.result)}</span></td>
