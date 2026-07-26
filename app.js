@@ -3214,17 +3214,19 @@ function _rptCreditFilterRun() {
     if (sc.earned >= sc.max) continue;
 
     rows.push({
-      uin:        s.uin,
-      prn:        s.prn,
-      name:       s.name,
-      branch:     s.branch,
-      division:   s.division,
-      batchYear:  s.batchYear,
-      gender:     s.gender || '',
-      semEarned:  sc.earned,
-      semMax:     sc.max,
-      semPending: sc.max - sc.earned,
-      cgpa:       acad.cgpa != null ? acad.cgpa.toFixed(2) : '—',
+        uin:           student.uin,
+        prn:           student.prn,
+        name:          student.name,
+        branch:        student.branch,
+        division:      student.division,
+        batchYear:     student.batchYear,
+        gender:        student.gender || '',
+        attemptCount,
+        hasUnsuccessfulReval,
+        lastSession,
+        lastSessionId: effectiveRow._sess?.id || null,
+        compMarks,
+        result:        dr.result,
     });
   }
 
@@ -3719,13 +3721,6 @@ function _aktdRun() {
 
   rows.forEach((r, i) => {
     const markCells = fields.map(f => `<td>${UI.esc(r.compMarks[f])}</td>`).join('');
-    const _ordinal = n => n === 1 ? '1st' : n === 2 ? '2nd' : n === 3 ? '3rd' : `${n}th`;
-    const _revalSuffix = r.hasUnsuccessfulReval ? ' · Unsuccessful Reval' : '';
-    const _badgeCls = r.attemptCount >= 3 || r.hasUnsuccessfulReval ? 'badge-kt'
-                    : r.attemptCount === 2 ? 'badge-warning'
-                    : 'badge-pending';
-    const attemptBadge = `<span class="badge ${_badgeCls}">${_ordinal(r.attemptCount)} attempt${_revalSuffix}</span>`;
-
     html += `<tr>
       <td class="muted">${i + 1}</td>
       <td><strong>${UI.esc(r.name)}</strong></td>
@@ -3734,7 +3729,7 @@ function _aktdRun() {
       <td>${UI.esc(r.division)}</td>
       <td>${UI.esc(r.batchYear)}</td>
       <td>${UI.esc(r.gender)}</td>
-      <td>${attemptBadge}</td>
+      <td>${r.lastSessionId ? _pvAttemptTag(r.uin, _aktdLastMeta.subjectCode, r.lastSessionId) : '—'}</td>
       <td class="muted" style="font-size:11px;">${UI.esc(r.lastSession)}</td>
       ${markCells}
       <td><span class="badge ${r.result === 'AB' ? 'badge-warning' : 'badge-kt'}">${UI.esc(r.result)}</span></td>
