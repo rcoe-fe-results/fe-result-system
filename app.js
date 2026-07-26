@@ -711,9 +711,41 @@ function _meBuildSubjectGrid(student, session, context) {
           }
           html += _meLockedCompHtml(comp, subj.marks[comp], prelimVal || '—', subj.code);
         } else {
+          // ESE: determine if editable (failed/AB in linked prelim) or locked (passed or no entry)
           const existingFinal = prevEntry ? (prevEntry.eseMarks || '') : '';
           const prelimESE     = prelimEntry ? (prelimEntry.eseMarks || '') : '';
-          html += _meEditableCompHtml(comp, subj.marks[comp], subj.code, student.uin, existingFinal || prelimESE);
+          const eseMax        = subj.marks[comp];
+
+          if (prelimEntry && prelimESE) {
+            // Student sat this subject in linked prelim — check component-level pass
+            const parsed = parseMarkValue(prelimESE, eseMax);
+            const esePassed = parsed.valid && !parsed.absent &&
+              (parsed.grace || (parsed.value / eseMax >= 0.40));
+            if (esePassed) {
+              // Passed ESE in linked prelim — lock it
+              html += _meLockedCompHtml(comp, eseMax, existingFinal || prelimESE, subj.code);
+            } else {
+              // Failed/AB ESE in linked prelim — editable
+              html += _meEditableCompHtml(comp, eseMax, subj.code, student.uin, existingFinal || prelimESE);
+            }
+          } else {
+            // No entry in linked prelim — carry from earlier sessions, lock it
+            let carriedESE = existingFinal;
+            if (!carriedESE) {
+              const allPriorRows = State.ledger
+                .filter(r =>
+                  r.uin === student.uin &&
+                  r.subjectCode === subj.code &&
+                  Number(r.semester) === session.semester &&
+                  r.examSession !== session.id
+                )
+                .sort((a, b) => a.entryDateTime.localeCompare(b.entryDateTime));
+              for (const pr of allPriorRows) {
+                if (pr.eseMarks && pr.eseMarks !== '') { carriedESE = pr.eseMarks; }
+              }
+            }
+            html += _meLockedCompHtml(comp, eseMax, carriedESE || '—', subj.code);
+          }
         }
       } else if (isKT && passedBefore) {
         html += _meLockedCompHtml(comp, subj.marks[comp], prevVal, subj.code);
@@ -1374,24 +1406,54 @@ function _beRenderGrid() {
               }
               html += `<td class="cell-locked"><span class="locked-val">${UI.esc(prelimVal || '—')}</span></td>`;
           } else {
-            // ESE: editable, pre-filled with preliminary ESE as default
-            const prelimESE = prelimEntry ? (prelimEntry.eseMarks || '') : '';
+            // ESE: determine if editable (failed/AB in linked prelim) or locked (passed or no entry)
             const existingFinalESE = prevEntry ? (prevEntry.eseMarks || '') : '';
-            // Use existing Final Gazette value if already entered, else prelim ESE
-            const defaultVal = existingFinalESE || prelimESE;
-            html += `<td>
-              <input type="text"
-                class="mark-input${defaultVal ? ' cell-prefilled' : ''}"
-                id="cell-${UI.esc(student.uin)}-${UI.esc(subj.code)}-${comp}"
-                data-uin="${UI.esc(student.uin)}"
-                data-code="${UI.esc(subj.code)}"
-                data-comp="${comp}"
-                data-max="${subj.marks[comp]}"
-                data-prelim-ese="${UI.esc(prelimESE)}"
-                value="${UI.esc(defaultVal)}"
-                autocomplete="off" spellcheck="false"
-              >
-            </td>`;
+            const prelimESE        = prelimEntry ? (prelimEntry.eseMarks || '') : '';
+            const eseMax           = subj.marks[comp];
+
+            if (prelimEntry && prelimESE) {
+              // Student sat this subject in linked prelim — check component-level pass
+              const parsed = parseMarkValue(prelimESE, eseMax);
+              const esePassed = parsed.valid && !parsed.absent &&
+                (parsed.grace || (parsed.value / eseMax >= 0.40));
+              if (esePassed) {
+                // Passed ESE in linked prelim — lock it
+                html += `<td class="cell-locked"><span class="locked-val">${UI.esc(existingFinalESE || prelimESE)}</span></td>`;
+              } else {
+                // Failed/AB ESE in linked prelim — editable
+                const defaultVal = existingFinalESE || prelimESE;
+                html += `<td>
+                  <input type="text"
+                    class="mark-input${defaultVal ? ' cell-prefilled' : ''}"
+                    id="cell-${UI.esc(student.uin)}-${UI.esc(subj.code)}-${comp}"
+                    data-uin="${UI.esc(student.uin)}"
+                    data-code="${UI.esc(subj.code)}"
+                    data-comp="${comp}"
+                    data-max="${eseMax}"
+                    data-prelim-ese="${UI.esc(prelimESE)}"
+                    value="${UI.esc(defaultVal)}"
+                    autocomplete="off" spellcheck="false"
+                  >
+                </td>`;
+              }
+            } else {
+              // No entry in linked prelim — carry from earlier sessions, lock it
+              let carriedESE = existingFinalESE;
+              if (!carriedESE) {
+                const allPriorRows = State.ledger
+                  .filter(r =>
+                    r.uin === student.uin &&
+                    r.subjectCode === subj.code &&
+                    Number(r.semester) === session.semester &&
+                    r.examSession !== session.id
+                  )
+                  .sort((a, b) => a.entryDateTime.localeCompare(b.entryDateTime));
+                for (const pr of allPriorRows) {
+                  if (pr.eseMarks && pr.eseMarks !== '') { carriedESE = pr.eseMarks; }
+                }
+              }
+              html += `<td class="cell-locked"><span class="locked-val">${UI.esc(carriedESE || '—')}</span></td>`;
+            }
           }
         } else {
           // Preliminary mode: all editable, pre-fill existing values (not greyed)
