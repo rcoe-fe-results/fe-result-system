@@ -692,9 +692,24 @@ function _meBuildSubjectGrid(student, session, context) {
 
       if (isFinal) {
         if (comp !== 'ESE') {
-          const prelimVal = prelimEntry
-            ? (prelimEntry[comp.toLowerCase() + 'Marks'] || '—') : '—';
-          html += _meLockedCompHtml(comp, subj.marks[comp], prelimVal, subj.code);
+          // Try linked prelim first, then fall back to earlier sessions (same semester)
+          let prelimVal = prelimEntry ? (prelimEntry[comp.toLowerCase() + 'Marks'] || '') : '';
+          if (!prelimVal) {
+            // Fall back to latest non-empty value from any earlier session, same semester
+            const allPriorRows = State.ledger
+              .filter(r =>
+                r.uin === student.uin &&
+                r.subjectCode === subj.code &&
+                Number(r.semester) === session.semester &&
+                r.examSession !== session.id
+              )
+              .sort((a, b) => a.entryDateTime.localeCompare(b.entryDateTime));
+            for (const pr of allPriorRows) {
+              const v = pr[comp.toLowerCase() + 'Marks'];
+              if (v && v !== '') { prelimVal = v; }
+            }
+          }
+          html += _meLockedCompHtml(comp, subj.marks[comp], prelimVal || '—', subj.code);
         } else {
           const existingFinal = prevEntry ? (prevEntry.eseMarks || '') : '';
           const prelimESE     = prelimEntry ? (prelimEntry.eseMarks || '') : '';
@@ -1339,11 +1354,25 @@ function _beRenderGrid() {
 
       for (const comp of visComps) {
         if (isFinal) {
-          // Final Gazette mode
-          if (comp !== 'ESE') {
-            // Non-ESE: show pre-filled from preliminary (greyed, read-only)
-            const prelimVal = prelimEntry ? prelimEntry[comp.toLowerCase() + 'Marks'] : '';
-            html += `<td class="cell-locked"><span class="locked-val">${UI.esc(prelimVal || '—')}</span></td>`;
+            // Final Gazette mode
+            if (comp !== 'ESE') {
+              // Try linked prelim first, then fall back to earlier sessions (same semester)
+              let prelimVal = prelimEntry ? (prelimEntry[comp.toLowerCase() + 'Marks'] || '') : '';
+              if (!prelimVal) {
+                const allPriorRows = State.ledger
+                  .filter(r =>
+                    r.uin === student.uin &&
+                    r.subjectCode === subj.code &&
+                    Number(r.semester) === session.semester &&
+                    r.examSession !== session.id
+                  )
+                  .sort((a, b) => a.entryDateTime.localeCompare(b.entryDateTime));
+                for (const pr of allPriorRows) {
+                  const v = pr[comp.toLowerCase() + 'Marks'];
+                  if (v && v !== '') { prelimVal = v; }
+                }
+              }
+              html += `<td class="cell-locked"><span class="locked-val">${UI.esc(prelimVal || '—')}</span></td>`;
           } else {
             // ESE: editable, pre-filled with preliminary ESE as default
             const prelimESE = prelimEntry ? (prelimEntry.eseMarks || '') : '';
