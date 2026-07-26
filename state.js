@@ -2061,7 +2061,7 @@ const State = (() => {
           _sessionScore(r.examSession) < prelimScore
         );
         const priorMerged = {};
-        for (const r of priorRows) {
+        for (const r of priorRows.filter(r => r.subjectCode === subj.code)) {
           if (r.iatMarks  !== '') priorMerged.IAT  = r.iatMarks;
           if (r.eseMarks  !== '') priorMerged.ESE  = r.eseMarks;
           if (r.twMarks   !== '') priorMerged.TW   = r.twMarks;
