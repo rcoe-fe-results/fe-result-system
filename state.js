@@ -702,7 +702,14 @@ const State = (() => {
         s.semester   === subjectSemester &&
         Number(s.batchYear) >= Number(student.batchYear)
       )
-      .sort((a, b) => a.id.localeCompare(b.id));
+      .sort((a, b) => {
+        const _score = s => {
+          const year  = Number((s.name || '').slice(0, 4));
+          const month = (s.name || '').includes('May') ? 5 : 12;
+          return year * 12 + month;
+        };
+        return _score(a) - _score(b);
+      });
 
     let attemptNumber = 0;
     for (const s of allPrelimSessions) {
