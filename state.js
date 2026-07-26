@@ -2046,10 +2046,19 @@ const State = (() => {
 
         // Carry forward passing components from PRIOR sessions only
         // (sessions that occurred before this prelim session, same semester)
+        // Use session chronological score — not entryDateTime — to determine "prior"
+        const _sessionScore = (sessionId) => {
+          const sess = getSession(sessionId);
+          if (!sess) return 0;
+          const year  = Number((sess.name || '').slice(0, 4));
+          const month = (sess.name || '').includes('May') ? 5 : 12;
+          return year * 12 + month;
+        };
+        const prelimScore = _sessionScore(prelimSessionId);
         const priorRows = allSemRows.filter(r =>
           r.examSession !== prelimSessionId &&
           (!gazetteSessionId || r.examSession !== gazetteSessionId) &&
-          r.entryDateTime < prelimRow.entryDateTime
+          _sessionScore(r.examSession) < prelimScore
         );
         const priorMerged = {};
         for (const r of priorRows) {
