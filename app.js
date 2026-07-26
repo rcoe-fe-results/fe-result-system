@@ -423,88 +423,68 @@ function _meAdhocShowSessionPicker(sessions) {
         </div>`;
     }
 
-    // Reval toggle — only if next session is a Reval with no marks yet
-    if (nextSession && nextSession.entryType === 'Revaluation_Gazette') {
-      const persistedDecision = State.getRevalDecision(student.uin, nextSession.id);
-      const currentDecision   = revalOverrides[nextSession.id] !== undefined
-        ? revalOverrides[nextSession.id]
+    // Find the pending reval for this semester independently of nextSession
+    const lastAttended = attended.length > 0 ? attended[attended.length - 1] : null;
+    const pendingReval = lastAttended && lastAttended.entryType !== 'Revaluation_Gazette'
+      ? State.getSessions().find(s =>
+          s.entryType === 'Revaluation_Gazette' &&
+          s.linkedPrelimSessionId === lastAttended.id &&
+          s.status === 'Active'
+        )
+      : null;
+
+    // Reval toggle — always show if there is a pending reval for this semester
+    if (pendingReval) {
+      const persistedDecision = State.getRevalDecision(student.uin, pendingReval.id);
+      const currentDecision   = revalOverrides[pendingReval.id] !== undefined
+        ? revalOverrides[pendingReval.id]
         : persistedDecision;
 
-      // Only show toggle if session is still Active (not locked)
-      const isLocked = nextSession.status !== 'Active';
+      const isLocked = pendingReval.status !== 'Active';
 
       html += `
         <div class="reval-toggle-wrap" id="reval-toggle-${sem}">
           <span class="reval-toggle-label">Applied for Reval?</span>
-          <div class="seg-control reval-toggle" data-sem="${sem}" data-reval-id="${UI.esc(nextSession.id)}">
-            <button class="reval-tog-btn${currentDecision === 'Yes'         ? ' active' : ''}"
-              data-val="Yes"         ${isLocked ? 'disabled' : ''}>Yes</button>
-            <button class="reval-tog-btn${currentDecision === 'No'          ? ' active' : ''}"
-              data-val="No"          ${isLocked ? 'disabled' : ''}>No</button>
-            <button class="reval-tog-btn${currentDecision === 'Unknown'     ? ' active' : ''}"
-              data-val="Unknown"     ${isLocked ? 'disabled' : ''}>Unknown</button>
+          <div class="seg-control reval-toggle" data-sem="${sem}" data-reval-id="${UI.esc(pendingReval.id)}">
+            <button class="reval-tog-btn${currentDecision === 'Yes'        ? ' active' : ''}"
+              data-val="Yes"        ${isLocked ? 'disabled' : ''}>Yes</button>
+            <button class="reval-tog-btn${currentDecision === 'No'         ? ' active' : ''}"
+              data-val="No"         ${isLocked ? 'disabled' : ''}>No</button>
+            <button class="reval-tog-btn${currentDecision === 'Unknown'    ? ' active' : ''}"
+              data-val="Unknown"    ${isLocked ? 'disabled' : ''}>Unknown</button>
             <button class="reval-tog-btn${currentDecision === 'SkipForNow' ? ' active' : ''}"
-              data-val="SkipForNow"  ${isLocked ? 'disabled' : ''}>Skip for now</button>
+              data-val="SkipForNow" ${isLocked ? 'disabled' : ''}>Skip for now</button>
           </div>
           ${isLocked ? '<span class="reval-locked-note">Session locked</span>' : ''}
         </div>`;
-    }
 
-    // Next active session
-    if (nextSession) {
-      const decision = nextSession.entryType === 'Revaluation_Gazette'
-        ? (revalOverrides[nextSession.id] !== undefined
-            ? revalOverrides[nextSession.id]
-            : State.getRevalDecision(student.uin, nextSession.id))
-        : null;
-
-      if (nextSession.entryType === 'Revaluation_Gazette' && decision === 'No') {
-        // Greyed out, non-clickable
+      // Always render the reval session card with appropriate tag
+      if (currentDecision === 'No') {
         html += `
           <div class="session-option session-option-cleared">
-            <span class="session-option-name">${UI.esc(nextSession.name)}</span>
-            <span class="session-option-meta">Sem ${nextSession.semester} · ${UI.esc(nextSession.batchYear)} · ${UI.esc(nextSession.entryType)}</span>
+            <span class="session-option-name">${UI.esc(pendingReval.name)}</span>
+            <span class="session-option-meta">Sem ${pendingReval.semester} · ${UI.esc(pendingReval.batchYear)} · ${UI.esc(pendingReval.entryType)}</span>
             <span class="session-status-tag tag-unsuccessful">✗ Opted out of Reval</span>
           </div>`;
-        // Also show next Uni-Portal
-        const skipOverride = { ...revalOverrides, [nextSession.id]: 'No' };
-        const altNext = _meGetNextSession(student, sem, skipOverride);
-        if (altNext) {
-          html += `
-            <div class="session-option" data-session-id="${UI.esc(altNext.id)}">
-              <span class="session-option-name">${UI.esc(altNext.name)}</span>
-              <span class="session-option-meta">Sem ${altNext.semester} · ${UI.esc(altNext.batchYear)} · ${UI.esc(altNext.entryType)}</span>
-              <span class="session-status-tag tag-pending">Next →</span>
-            </div>`;
-        }
-      } else if (nextSession.entryType === 'Revaluation_Gazette' && decision === 'SkipForNow') {
-        // Clickable reval card with pending tag
-        html += `
-          <div class="session-option" data-session-id="${UI.esc(nextSession.id)}">
-            <span class="session-option-name">${UI.esc(nextSession.name)}</span>
-            <span class="session-option-meta">Sem ${nextSession.semester} · ${UI.esc(nextSession.batchYear)} · ${UI.esc(nextSession.entryType)}</span>
-            <span class="session-status-tag tag-pending">⏳ Decision pending</span>
-          </div>`;
-        // Also show next Uni-Portal
-        const skipOverride = { ...revalOverrides, [nextSession.id]: 'SkipForNow' };
-        const altNext = _meGetNextSession(student, sem, skipOverride);
-        if (altNext) {
-          html += `
-            <div class="session-option" data-session-id="${UI.esc(altNext.id)}">
-              <span class="session-option-name">${UI.esc(altNext.name)}</span>
-              <span class="session-option-meta">Sem ${altNext.semester} · ${UI.esc(altNext.batchYear)} · ${UI.esc(altNext.entryType)}</span>
-              <span class="session-status-tag tag-pending">Next →</span>
-            </div>`;
-        }
       } else {
-        // Yes / Unknown / non-Reval session
+        // Yes / Unknown / SkipForNow — clickable
         html += `
-          <div class="session-option" data-session-id="${UI.esc(nextSession.id)}">
-            <span class="session-option-name">${UI.esc(nextSession.name)}</span>
-            <span class="session-option-meta">Sem ${nextSession.semester} · ${UI.esc(nextSession.batchYear)} · ${UI.esc(nextSession.entryType)}</span>
-            <span class="session-status-tag tag-pending">Next →</span>
+          <div class="session-option" data-session-id="${UI.esc(pendingReval.id)}">
+            <span class="session-option-name">${UI.esc(pendingReval.name)}</span>
+            <span class="session-option-meta">Sem ${pendingReval.semester} · ${UI.esc(pendingReval.batchYear)} · ${UI.esc(pendingReval.entryType)}</span>
+            <span class="session-status-tag tag-pending">${currentDecision === 'SkipForNow' ? '⏳ Decision pending' : 'Next →'}</span>
           </div>`;
       }
+    }
+
+    // Next Uni-Portal session — show when reval is No, SkipForNow, or no reval exists
+    if (nextSession && nextSession.entryType !== 'Revaluation_Gazette') {
+      html += `
+        <div class="session-option" data-session-id="${UI.esc(nextSession.id)}">
+          <span class="session-option-name">${UI.esc(nextSession.name)}</span>
+          <span class="session-option-meta">Sem ${nextSession.semester} · ${UI.esc(nextSession.batchYear)} · ${UI.esc(nextSession.entryType)}</span>
+          <span class="session-status-tag tag-pending">Next →</span>
+        </div>`;
     }
 
     return html;
@@ -557,7 +537,7 @@ function _meAdhocShowSessionPicker(sessions) {
   }
 
   _rebuild();
-}
+
 
 function _meStudentInfoHtml(student, session) {
   const isKT = session
