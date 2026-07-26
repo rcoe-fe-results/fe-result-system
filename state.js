@@ -1581,6 +1581,13 @@ const State = (() => {
       bySubject[r.subjectCode].rows.push(r);
     }
 
+    const prelimSess = getSession(prelimSessionId);
+    const subjectListForSort = prelimSess
+      ? getSubjectsForSem(Number(prelimSess.semester), branch || 'Computer', prelimSess)
+      : SEM1_SUBJECTS;
+    const subjOrderMap = {};
+    subjectListForSort.forEach((s, i) => { subjOrderMap[s.code] = i; });
+
     return Object.values(bySubject).map(({ code, name, rows }) => {
       // ── Merge Prelim rows per student (latest component wins) ─
       const sorted = [...rows].sort((a, b) => a.entryDateTime.localeCompare(b.entryDateTime));
@@ -1694,7 +1701,7 @@ const State = (() => {
       }
 
       return { code, name, total, pass, fail, ab, revalPass, passRate: total ? pass/total : 0, avgMarks };
-    });
+    }).sort((a, b) => (subjOrderMap[a.code] ?? 999) - (subjOrderMap[b.code] ?? 999));
   }
 
   // Reval Impact — filters: sessionId, branch?, subjectCode?
