@@ -202,6 +202,7 @@ if (satThisSession) return true;
 // Don't show any future session for a semester already fully cleared
 const acad = State.computeStudentAcademics(student.uin);
 const semCredits = acad?.semCredits[session.semester];
+console.log('[eligibility]', student.name, session.name, 'earned:', semCredits?.earned, 'max:', semCredits?.max);
 if (semCredits && semCredits.max > 0 && semCredits.earned >= semCredits.max) return false;
 
 // Show own-batch sessions for semesters not yet sat at all
