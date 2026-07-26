@@ -1858,8 +1858,13 @@ function _pvShowStudent(uin) {
   // Default to Final Gazette if present (merged/final marks); else latest Prelim/KT
   function _defaultSession(list) {
     if (!list.length) return null;
-    const gazette = [...list].reverse().find(s => s.entryType === 'Revaluation_Gazette');
-    return gazette ? gazette.id : list[list.length - 1].id;
+    const _score = s => {
+      const year  = Number((s.name || '').slice(0, 4));
+      const month = (s.name || '').includes('May') ? 5 : 12;
+      const typeBonus = s.entryType === 'Revaluation_Gazette' ? 1 : 0;
+      return (year * 12 + month) * 2 + typeBonus;
+    };
+    return [...list].sort((a, b) => _score(b) - _score(a))[0].id;
   }
   const selectedSessId = {
     1: _defaultSession(semSessions[1]),
