@@ -538,7 +538,7 @@ function _meAdhocShowSessionPicker(sessions) {
 
   _rebuild();
 
-
+}
 function _meStudentInfoHtml(student, session) {
   const isKT = session
     ? State.getActiveKTSubjects(student.uin).some(r => Number(r.semester) === session.semester)
