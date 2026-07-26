@@ -197,9 +197,14 @@ function _isStudentEligibleForSession(student, session) {
 
   // Student has entries — show sessions they actually sat
   const satThisSession = studentLedger.some(r => r.examSession === session.id);
-  if (satThisSession) return true;
+if (satThisSession) return true;
 
-  // Show own-batch sessions for semesters not yet sat at all
+// Don't show any future session for a semester already fully cleared
+const acad = State.computeStudentAcademics(student.uin);
+const semCredits = acad?.semCredits[session.semester];
+if (semCredits && semCredits.max > 0 && semCredits.earned >= semCredits.max) return false;
+
+// Show own-batch sessions for semesters not yet sat at all
   if (session.batchYear === student.batchYear) {
     const satThisSem = studentLedger.some(r => Number(r.semester) === session.semester);
     if (!satThisSem) {
