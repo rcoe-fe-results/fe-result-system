@@ -202,7 +202,6 @@ if (satThisSession) return true;
 // Don't show any future session for a semester already fully cleared
 const acad = State.computeStudentAcademics(student.uin);
 const semCredits = acad?.semCredits[session.semester];
-console.log('[eligibility]', student.name, session.name, 'earned:', semCredits?.earned, 'max:', semCredits?.max);
 if (semCredits && semCredits.max > 0 && semCredits.earned >= semCredits.max) return false;
 
 // Show own-batch sessions for semesters not yet sat at all
@@ -352,6 +351,11 @@ function _meGetNextSession(student, sem, revalOverrides = {}) {
 
   // Last was Reval, or Reval skipped/locked/missing → find next Uni-Portal
   const lastScore = _score(lastAttended);
+
+  // If semester is already fully cleared, no next session needed
+  const acad = State.computeStudentAcademics(student.uin);
+  const semCredits = acad?.semCredits[sem];
+  if (semCredits && semCredits.max > 0 && semCredits.earned >= semCredits.max) return null;
 
   return semSessions.find(s => {
     if (s.entryType === 'Revaluation_Gazette') return false;
