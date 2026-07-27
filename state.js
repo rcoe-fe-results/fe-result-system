@@ -1798,12 +1798,13 @@ const State = (() => {
 
         result.push({
           ...finalRow,
-          prevResult: prelimResult,
-          result:     gazResult,
+          prevResult:  prelimResult,
+          result:      gazResult,
           direction,
           markDelta,
-          prelimEse:  prelimRow.eseMarks || '—',
-          gazEse:     finalRow.eseMarks  || '—',
+          prelimEse:   prelimRow.eseMarks || '—',
+          gazEse:      finalRow.eseMarks  || '—',
+          sessionName: finalSess.name     || '',
         });
       }
     }

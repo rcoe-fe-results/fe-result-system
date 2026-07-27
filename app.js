@@ -3112,44 +3112,192 @@ function _rptGetRevalFilters() {
   };
 }
 
+// ── Reval Impact state ────────────────────────────────────
+let _revalData        = [];   // full result from State
+let _revalSortCol     = 'change';
+let _revalSortDir     = 1;    // 1 = asc, -1 = desc
+let _revalDirFilter   = 'all';
+
 function _rptLiveRevalImpact() {
   const filters = _rptGetRevalFilters();
-  const data    = State.reportRevalImpact(filters);
-  const tbody   = document.getElementById('rpt-reval-tbody');
-  if (!tbody) return;
+  _revalData    = State.reportRevalImpact(filters);
+  _revalDirFilter = 'all';
+  _revalSortCol   = 'change';
+  _revalSortDir   = 1;
+  _revalRender();
+}
 
-  if (data.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--ink-4);padding:12px;">No reval changes for this filter.</td></tr>';
-    return;
+function _revalRender() {
+  const wrap = document.getElementById('rpt-reval-wrap');
+  if (!wrap) return;
+
+  // ── Summary counts ────────────────────────────────────
+  const total     = _revalData.length;
+  const improved  = _revalData.filter(d => d.direction === 'improved').length;
+  const worsened  = _revalData.filter(d => d.direction === 'worsened').length;
+  const unchanged = total - improved - worsened;
+
+  // ── Direction filter ──────────────────────────────────
+  const filterPills = [
+    { key: 'all',          label: `All (${total})` },
+    { key: 'improved',     label: `↑ Improved (${improved})` },
+    { key: 'worsened',     label: `⚠ Worsened (${worsened})` },
+    { key: 'fail-to-fail', label: `Fail → Fail` },
+    { key: 'pass-to-pass', label: `Pass → Pass` },
+  ];
+
+  const pillsHtml = `
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;">
+      ${filterPills.map(p => `
+        <button class="col-pill${_revalDirFilter === p.key ? ' active' : ''}"
+          onclick="_revalSetFilter('${p.key}')">${UI.esc(p.label)}</button>
+      `).join('')}
+    </div>`;
+
+  const summaryHtml = `
+    <div style="font-size:12px;color:var(--ink-3);margin-bottom:8px;">
+      <strong>${total}</strong> students revaluated ·
+      <span style="color:var(--pass);font-weight:600;">${improved} improved</span> ·
+      <span style="color:var(--fail);font-weight:600;">${worsened} worsened</span> ·
+      <span style="color:var(--ink-3);">${unchanged} result unchanged</span>
+    </div>`;
+
+  // ── Filter + sort data ────────────────────────────────
+  let rows = _revalDirFilter === 'all'
+    ? [..._revalData]
+    : _revalData.filter(d => d.direction === _revalDirFilter);
+
+  // Group by branch
+  const branchOrder = [...new Set(rows.map(d => d.branch))].sort();
+
+  rows.sort((a, b) => {
+    let va, vb;
+    const col = _revalSortCol;
+    if (col === 'uin')     { va = a.uin;         vb = b.uin; }
+    else if (col === 'name')    { va = a.name;        vb = b.name; }
+    else if (col === 'subject') { va = a.subjectName; vb = b.subjectName; }
+    else if (col === 'delta')   {
+      // numeric sort by absolute delta
+      return _revalSortDir * (Math.abs(b.markDelta) - Math.abs(a.markDelta));
+    }
+    else if (col === 'session') { va = a.sessionName; vb = b.sessionName; }
+    else {
+      // 'change' — alphabetically by direction label, then by |delta| desc
+      const dirOrder = { improved:1, worsened:2, 'pass-to-pass':3, 'fail-to-fail':4 };
+      const da = dirOrder[a.direction] || 5;
+      const db = dirOrder[b.direction] || 5;
+      if (da !== db) return _revalSortDir * (da - db);
+      return _revalSortDir * (Math.abs(b.markDelta) - Math.abs(a.markDelta));
+    }
+    return _revalSortDir * String(va).localeCompare(String(vb));
+  });
+
+  // ── Build table ───────────────────────────────────────
+  function _sortTh(label, col) {
+    const active = _revalSortCol === col;
+    const arrow  = active ? (_revalSortDir === 1 ? ' ↑' : ' ↓') : ' ↕';
+    return `<th style="cursor:pointer;white-space:nowrap;user-select:none;"
+      onclick="_revalSort('${col}')">${UI.esc(label)}${arrow}</th>`;
   }
 
-  tbody.innerHTML = data.map(d => {
-    const dirBadge = {
-      'improved':     '<span class="badge badge-pass">↑ Unsuccessful → Successful</span>',
-      'worsened':     '<span class="badge badge-fail">⚠ Successful → Unsuccessful</span>',
-      'fail-to-fail': `<span class="badge badge-kt">${d.markDelta >= 0 ? '↑' : '↓'} Unsuccessful → Unsuccessful (ESE ${d.prelimEse} → ${d.gazEse})</span>`,
-      'pass-to-pass': `<span class="badge badge-regular">${d.markDelta >= 0 ? '↑' : '↓'} Successful → Successful (ESE ${d.prelimEse} → ${d.gazEse})</span>`,
-    }[d.direction] || '<span class="badge">Changed</span>';
-    return `
-    <tr class="${d.direction === 'worsened' ? 'reval-worsened' : ''}">
-      <td>${UI.esc(d.name)}</td>
-      <td><span class="subj-code-small">${UI.esc(d.uin)}</span></td>
-      <td>${UI.esc(d.branch)}</td>
-      <td><span class="subj-code-small">${UI.esc(d.subjectCode)}</span></td>
-      <td>${UI.resultBadge(d.prevResult)}</td>
-      <td>${UI.resultBadge(d.result)}</td>
-      <td>${dirBadge}</td>
-      <td style="font-size:11px;color:var(--ink-3);">${UI.esc(d.entryDateTime?.slice(0,10)||'')}</td>
-    </tr>`;
-  }).join('');
+  function _dirBadge(d) {
+    if (d.direction === 'improved')
+      return '<span class="badge badge-pass">↑ Unsuccessful → Successful</span>';
+    if (d.direction === 'worsened')
+      return '<span class="badge badge-fail">⚠ Successful → Unsuccessful</span>';
+    if (d.direction === 'fail-to-fail')
+      return `<span class="badge badge-kt">Unsuccessful → Unsuccessful</span>`;
+    if (d.direction === 'pass-to-pass')
+      return `<span class="badge badge-regular">Successful → Successful</span>`;
+    return '<span class="badge">Changed</span>';
+  }
+
+  function _deltaBadge(d) {
+    if (d.markDelta === 0) return `<span style="color:var(--ink-4);">±0</span>`;
+    const color = d.markDelta > 0 ? 'var(--pass)' : 'var(--fail)';
+    return `<span style="font-weight:700;color:${color};">${d.markDelta > 0 ? '+' : ''}${d.markDelta}</span>`;
+  }
+
+  // Check if single-branch view (branch filter applied from shared filters)
+  const multiBranch = branchOrder.length > 1;
+
+  let tableRows = '';
+  let lastBranch = null;
+
+  for (const row of rows) {
+    if (multiBranch && row.branch !== lastBranch) {
+      tableRows += `
+        <tr>
+          <td colspan="7" style="background:var(--surface-2);font-weight:700;font-size:11px;
+            letter-spacing:.05em;padding:6px 10px;color:var(--ink-2);">
+            ${UI.esc(row.branch)}
+          </td>
+        </tr>`;
+      lastBranch = row.branch;
+    }
+    tableRows += `
+      <tr class="${row.direction === 'worsened' ? 'reval-worsened' : ''}">
+        <td><span class="subj-code-small">${UI.esc(row.uin)}</span></td>
+        <td>${UI.esc(row.name)}</td>
+        <td><span class="subj-code-small">${UI.esc(row.subjectCode)}</span><br>
+            <span style="font-size:11px;color:var(--ink-3);">${UI.esc(row.subjectName)}</span></td>
+        <td>${_dirBadge(row)}</td>
+        <td style="text-align:center;">${_deltaBadge(row)}</td>
+        <td style="font-size:11px;color:var(--ink-3);">${UI.esc(row.sessionName || '')}</td>
+      </tr>`;
+  }
+
+  if (rows.length === 0) {
+    tableRows = `<tr><td colspan="7" style="text-align:center;color:var(--ink-4);padding:12px;">No entries for this filter.</td></tr>`;
+  }
+
+  wrap.innerHTML = summaryHtml + pillsHtml + `
+    <div class="report-table-wrap">
+      <table class="report-table">
+        <thead>
+          <tr>
+            ${_sortTh('UIN', 'uin')}
+            ${_sortTh('Name', 'name')}
+            ${_sortTh('Subject', 'subject')}
+            ${_sortTh('Change', 'change')}
+            ${_sortTh('±ESE', 'delta')}
+            ${_sortTh('Reval Session', 'session')}
+          </tr>
+        </thead>
+        <tbody>${tableRows}</tbody>
+      </table>
+    </div>`;
+}
+
+function _revalSetFilter(key) {
+  _revalDirFilter = key;
+  _revalRender();
+}
+
+function _revalSort(col) {
+  if (_revalSortCol === col) {
+    _revalSortDir *= -1;
+  } else {
+    _revalSortCol = col;
+    _revalSortDir = 1;
+  }
+  _revalRender();
 }
 
 function _rptExportRevalImpact() {
-  const filters = _rptGetRevalFilters();
-  const data    = State.reportRevalImpact(filters);
+  if (!_revalData.length) { UI.toast('No data to export.', 'error'); return; }
+  const rows = _revalDirFilter === 'all'
+    ? [..._revalData]
+    : _revalData.filter(d => d.direction === _revalDirFilter);
   UI.exportCSV('RevalImpact',
-    ['UIN','PRN/ERN','Name','Branch','Subject Code','Subject Name','Prev Result','New Result','Direction','Entry Date'],
-    data.map(d => [d.uin, d.prn, d.name, d.branch, d.subjectCode, d.subjectName, d.prevResult, d.result, d.direction, d.entryDateTime])
+    ['UIN','PRN/ERN','Name','Branch','Subject Code','Subject Name','Change','±ESE','Reval Session'],
+    rows.map(d => [
+      d.uin, d.prn, d.name, d.branch,
+      d.subjectCode, d.subjectName,
+      d.direction,
+      d.markDelta >= 0 ? '+' + d.markDelta : String(d.markDelta),
+      d.sessionName || '',
+    ])
   );
   UI.toast('Reval impact exported.', 'success');
 }
