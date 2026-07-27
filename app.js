@@ -2468,6 +2468,7 @@ function initReports() {
   });
   document.querySelectorAll('.topper-tab-btn').forEach(btn => {
     btn.addEventListener('click', () => {
+      _topperActiveTab = btn.dataset.tab;
       document.querySelectorAll('.topper-tab-btn').forEach(b => {
         b.style.color        = 'var(--ink-3)';
         b.style.fontWeight   = '500';
@@ -3134,6 +3135,8 @@ let _revalData        = [];   // full result from State
 let _revalSortCol     = 'change';
 let _revalSortDir     = 1;    // 1 = asc, -1 = desc
 let _revalDirFilter   = 'all';
+let _revalDirFilter   = 'all';
+let _topperActiveTab  = 'sem1';
 
 function _rptLiveRevalImpact() {
   const filters = _rptGetRevalFilters();
@@ -3336,9 +3339,7 @@ function _rptToggleTopperMode() {
 }
 
 function _rptGetTopperTab() {
-  return document.querySelector('.topper-tab-btn[style*="var(--brand)"]')?.dataset.tab
-      || document.querySelector('.topper-tab-btn.active')?.dataset.tab
-      || 'sem1';
+  return _topperActiveTab || 'sem1';
 }
 
 function _rptLiveToppers() {
