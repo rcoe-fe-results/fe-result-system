@@ -1812,37 +1812,93 @@ const State = (() => {
   }
 
   // Toppers — branch-wise (top N by total marks) or subject-wise (top 3 per branch)
-  function reportToppers({ sessionId, gazetteSessionId, mode = 'branch', branch, subjectCode, topN = 10 } = {}) {
-    // For each student+subject, prefer the Final Gazette row (corrected ESE/total)
-    // over the Preliminary row. Students with no gazette row use their prelim row as-is.
-    const prelimRows  = ledger.filter(r => r.examSession === sessionId);
-    const gazetteRows = gazetteSessionId
-      ? ledger.filter(r => r.examSession === gazetteSessionId)
-      : [];
+  function reportToppers({ tabMode = 'sem1', mode = 'branch', branch, subjectCode, topN = 10, batchYear, gender } = {}) {
+    // Resolve sessions for the requested tab
+    // tabMode: 'sem1' | 'sem2' | 'fy'
+    // For each semester, find the first (regular) preliminary session for the given batchYear
+    function _resolveSession(sem) {
+      const candidates = sessions.filter(s =>
+        s.entryType !== 'Revaluation_Gazette' &&
+        s.semester === sem &&
+        (!batchYear || s.batchYear === batchYear)
+      ).sort((a, b) => a.id.localeCompare(b.id));
+      const prelim = candidates[0] || null;
+      if (!prelim) return { prelim: null, gazette: null };
+      const gazette = sessions.find(s =>
+        s.entryType === 'Revaluation_Gazette' &&
+        s.linkedPrelimSessionId === prelim.id
+      ) || null;
+      return { prelim, gazette };
+    }
 
-    // Build a map of gazette rows keyed by uin+subjectCode for fast lookup
-    const gazetteMap = {};
-    for (const r of gazetteRows) gazetteMap[r.uin + '||' + r.subjectCode] = r;
+    const sem1Sess = (tabMode === 'sem1' || tabMode === 'fy') ? _resolveSession(1) : { prelim: null, gazette: null };
+    const sem2Sess = (tabMode === 'sem2' || tabMode === 'fy') ? _resolveSession(2) : { prelim: null, gazette: null };
 
-    // Merge: for each prelim row, substitute the gazette row if one exists
-    const mergedRows = prelimRows.map(r => {
-      const gz = gazetteMap[r.uin + '||' + r.subjectCode];
-      return gz || r;
-    });
+    // Build per-student academics for all relevant students
+    const allStudents = students.filter(s =>
+      (!branch    || s.branch    === branch) &&
+      (!batchYear || s.batchYear === batchYear) &&
+      (!gender    || s.gender    === gender)
+    );
 
-    const sessionRows = mergedRows.filter(r => r.result === 'Pass');
+    // Helper: get total marks + SGPA for a student in a session pair
+    function _semStats(uin, studentBranch, sess) {
+      if (!sess.prelim) return null;
+      const acad = computeStudentAcademics(uin);
+      if (!acad) return null;
 
-    // Helper: build ranked list for a given gender filter ('Male', 'Female', or null = All)
-    function _rankBranch(rows, genderFilter) {
+      // Use the gazette session result if available, else prelim
+      const sessId = sess.gazette ? sess.gazette.id : sess.prelim.id;
+      const sessRes = acad.sessionResults.find(sr => sr.session.id === sessId)
+                   || acad.sessionResults.find(sr => sr.session.id === sess.prelim.id);
+      if (!sessRes) return null;
+
+      // Exclude students with pending subjects
+      if (sessRes.pendingCount > 0) return null;
+      // Exclude students with any Fail/AB
+      if (sessRes.subjects.some(s => !s.pending && (s.dr?.result === 'Fail' || s.dr?.result === 'AB'))) return null;
+
+      const totalMarks = sessRes.subjects.reduce((sum, s) => sum + (s.dr?.total || 0), 0);
+      const sgpa = sessRes.sgpa;
+      return { totalMarks, sgpa };
+    }
+
+    // Build ranked list for branch-wise mode
+    function _rankBranch(genderFilter) {
       const byStudent = {};
-      for (const r of rows) {
-        if (branch && r.branch !== branch) continue;
-        if (genderFilter && r.gender !== genderFilter) continue;
-        const key = r.uin;
-        if (!byStudent[key]) byStudent[key] = { uin:r.uin, prn:r.prn, name:r.name, branch:r.branch, gender:r.gender||'', totalCredits:0, totalMarks:0 };
-        byStudent[key].totalCredits += Number(r.creditsEarned) || 0;
-        byStudent[key].totalMarks   += Number(r.totalMarks)    || 0;
+
+      for (const student of allStudents) {
+        if (genderFilter && student.gender !== genderFilter) continue;
+
+        const sem1Stats = _semStats(student.uin, student.branch, sem1Sess);
+        const sem2Stats = _semStats(student.uin, student.branch, sem2Sess);
+
+        if (tabMode === 'sem1' && !sem1Stats) continue;
+        if (tabMode === 'sem2' && !sem2Stats) continue;
+        if (tabMode === 'fy'   && (!sem1Stats || !sem2Stats)) continue;
+
+        // CGPA from academics
+        const acad = computeStudentAcademics(student.uin);
+        const cgpa = acad?.cgpa ?? null;
+
+        byStudent[student.uin] = {
+          uin:          student.uin,
+          prn:          student.prn,
+          name:         student.name,
+          branch:       student.branch,
+          gender:       student.gender || '',
+          sem1Total:    sem1Stats?.totalMarks ?? null,
+          sem1Sgpa:     sem1Stats?.sgpa       ?? null,
+          sem2Total:    sem2Stats?.totalMarks ?? null,
+          sem2Sgpa:     sem2Stats?.sgpa       ?? null,
+          cgpa,
+          // Sort key depending on tab
+          _sortKey: tabMode === 'sem1' ? (sem1Stats?.sgpa ?? 0)
+                  : tabMode === 'sem2' ? (sem2Stats?.sgpa ?? 0)
+                  : (cgpa ?? 0),
+        };
       }
+
       const byBranch = {};
       for (const s of Object.values(byStudent)) {
         if (!byBranch[s.branch]) byBranch[s.branch] = [];
@@ -1850,44 +1906,66 @@ const State = (() => {
       }
       const result = [];
       for (const [branchName, list] of Object.entries(byBranch)) {
-        list.sort((a,b) => b.totalMarks - a.totalMarks || b.totalCredits - a.totalCredits);
-        list.slice(0, topN).forEach((s, i) => result.push({ rank: i+1, branchGroup: branchName, ...s }));
+        list.sort((a, b) => b._sortKey - a._sortKey || (b.sem1Total??0) - (a.sem1Total??0) || (b.sem2Total??0) - (a.sem2Total??0));
+        list.slice(0, topN).forEach((s, i) => result.push({ rank: i + 1, branchGroup: branchName, ...s }));
       }
       return result;
     }
 
-    function _rankSubject(rows, genderFilter) {
-      const filtered = rows.filter(r =>
+    // Build ranked list for subject-wise mode (sem1/sem2 only — not fy)
+    function _rankSubject(genderFilter) {
+      const sem = tabMode === 'sem2' ? 2 : 1;
+      const sess = sem === 1 ? sem1Sess : sem2Sess;
+      if (!sess.prelim) return [];
+
+      const sessId = sess.gazette ? sess.gazette.id : sess.prelim.id;
+      const prelimId = sess.prelim.id;
+
+      // Collect ledger rows for this session (gazette overrides prelim per subject)
+      const prelimRows  = ledger.filter(r => r.examSession === prelimId);
+      const gazetteRows = sess.gazette ? ledger.filter(r => r.examSession === sessId) : [];
+      const gazetteMap  = {};
+      for (const r of gazetteRows) gazetteMap[r.uin + '||' + r.subjectCode] = r;
+      const mergedRows  = prelimRows.map(r => gazetteMap[r.uin + '||' + r.subjectCode] || r);
+      const passRows    = mergedRows.filter(r => r.result === 'Pass');
+
+      const filtered = passRows.filter(r =>
         (!subjectCode || r.subjectCode === subjectCode) &&
-        (!branch || r.branch === branch) &&
-        (!genderFilter || r.gender === genderFilter)
+        (!branch      || r.branch      === branch)      &&
+        (!batchYear   || r.batchYear   === batchYear)   &&
+        (!genderFilter || r.gender     === genderFilter)
       );
+
+      // Compute subject max marks
+      const subjectMaxMap = {};
+      const canonicalList = getSubjectsForSem(sem, branch || 'Computer', sess.prelim);
+      for (const s of canonicalList) {
+        subjectMaxMap[s.code] = Object.values(s.marks).reduce((a, b) => a + b, 0);
+      }
+      const subjOrder = {};
+      canonicalList.forEach((s, i) => { subjOrder[s.code] = i; });
+
       const bySubjBranch = {};
       for (const r of filtered) {
         const sk = r.subjectCode;
         const bk = r.branch;
         if (!bySubjBranch[sk]) bySubjBranch[sk] = {};
         if (!bySubjBranch[sk][bk]) bySubjBranch[sk][bk] = [];
-        bySubjBranch[sk][bk].push({ uin:r.uin, prn:r.prn, name:r.name, branch:r.branch, gender:r.gender||'',
-          subjectCode:r.subjectCode, subjectName:r.subjectName,
-          totalMarks: Number(r.totalMarks)||0 });
+        bySubjBranch[sk][bk].push({
+          uin: r.uin, prn: r.prn, name: r.name, branch: r.branch, gender: r.gender || '',
+          subjectCode: r.subjectCode, subjectName: r.subjectName,
+          subjectMax: subjectMaxMap[r.subjectCode] ?? null,
+          totalMarks: Number(r.totalMarks) || 0,
+        });
       }
-      const result = [];
-      // Sort subjects by canonical syllabus order
-      const sess         = sessions.find(s => s.id === sessionId);
-      const canonicalList = sess
-        ? getSubjectsForSem(Number(sess.semester), branch || 'Computer', sess)
-        : SEM1_SUBJECTS;
-      const subjOrder = {};
-      canonicalList.forEach((s, i) => { subjOrder[s.code] = i; });
 
+      const result = [];
       const sortedSubjEntries = Object.entries(bySubjBranch)
         .sort(([a], [b]) => (subjOrder[a] ?? 999) - (subjOrder[b] ?? 999));
-
       for (const [sk, branches] of sortedSubjEntries) {
         for (const [bk, list] of Object.entries(branches)) {
-          list.sort((a,b) => b.totalMarks - a.totalMarks);
-          list.slice(0, 3).forEach((s, i) => result.push({ rank: i+1, subjectGroup: sk, branchGroup: bk, ...s }));
+          list.sort((a, b) => b.totalMarks - a.totalMarks);
+          list.slice(0, 3).forEach((s, i) => result.push({ rank: i + 1, subjectGroup: sk, branchGroup: bk, ...s }));
         }
       }
       return result;
@@ -1895,9 +1973,9 @@ const State = (() => {
 
     const rankFn = mode === 'branch' ? _rankBranch : _rankSubject;
     return {
-      all:    rankFn(sessionRows, null),
-      male:   rankFn(sessionRows, 'Male'),
-      female: rankFn(sessionRows, 'Female'),
+      all:    rankFn(null),
+      male:   rankFn('Male'),
+      female: rankFn('Female'),
     };
   }
 

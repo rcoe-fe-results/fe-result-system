@@ -1217,8 +1217,18 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
       <!-- ── Toppers ── -->
       <div class="report-section">
         <h3>Topper List</h3>
-        <p>Branch-wise: top N by total marks per branch. Subject-wise: top 3 per branch for a given subject.</p>
-        <div class="report-filters">
+        <p>Branch-wise: top N by SGPA/CGPA per branch. Subject-wise: top 3 per branch for a given subject.</p>
+
+        <!-- Topper own filters -->
+        <div class="report-filters" style="margin-bottom:10px;">
+          <div class="filter-group">
+            <label>Batch Year</label>
+            <select id="rpt-topper-batch" style="min-width:110px;"><option value="">— all —</option></select>
+          </div>
+          <div class="filter-group">
+            <label>Branch</label>
+            <select id="rpt-topper-branch" style="min-width:130px;"><option value="">All Branches</option></select>
+          </div>
           <div class="filter-group">
             <label>Mode</label>
             <select id="rpt-topper-mode" style="min-width:130px;">
@@ -1239,8 +1249,28 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
             <button id="rpt-toppers-csv" class="btn btn-secondary btn-sm">⬇ Export CSV</button>
           </div>
         </div>
+
+        <!-- Sem tabs -->
+        <div style="display:flex;gap:0;margin-bottom:14px;border-bottom:2px solid var(--border);">
+          <button class="topper-tab-btn active" data-tab="sem1"
+            style="padding:7px 20px;border:none;background:transparent;font-size:13px;font-weight:600;
+                   color:var(--brand);border-bottom:2px solid var(--brand);margin-bottom:-2px;cursor:pointer;font-family:inherit;">
+            Sem I
+          </button>
+          <button class="topper-tab-btn" data-tab="sem2"
+            style="padding:7px 20px;border:none;background:transparent;font-size:13px;font-weight:500;
+                   color:var(--ink-3);border-bottom:2px solid transparent;margin-bottom:-2px;cursor:pointer;font-family:inherit;">
+            Sem II
+          </button>
+          <button class="topper-tab-btn" data-tab="fy"
+            style="padding:7px 20px;border:none;background:transparent;font-size:13px;font-weight:500;
+                   color:var(--ink-3);border-bottom:2px solid transparent;margin-bottom:-2px;cursor:pointer;font-family:inherit;">
+            First Year
+          </button>
+        </div>
+
         <div id="rpt-toppers-wrap">
-          <div style="text-align:center;color:var(--ink-4);padding:12px;font-size:12px;">Select a session.</div>
+          <div style="text-align:center;color:var(--ink-4);padding:12px;font-size:12px;">Select batch year above.</div>
         </div>
       </div>
 
@@ -1769,7 +1799,7 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
             <table class="audit-table">
               <thead>
                 <tr>
-                  <th>Date/Time</th><th>Entered By</th><th>Student</th>
+                  <th>Date/Time</th><th>Entered By</th><th>UIN</th><th>Student</th>
                   <th>Subject</th><th>Attempt</th><th>Result</th>
                 </tr>
               </thead>

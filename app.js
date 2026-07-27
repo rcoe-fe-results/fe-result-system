@@ -2458,11 +2458,26 @@ function initReports() {
 
   // ── Topper List ───────────────────────────────────────────
   UI.buildSelect('rpt-topper-subject', [{ code:'', name:'All subjects' }, ...subjects], '— all subjects —', 'code', 'name');
+  UI.buildSelect('rpt-topper-batch', State.getBatchYears(), '— all —');
+  UI.buildSelect('rpt-topper-branch', [{ code:'', name:'All Branches' }, ...BRANCHES.map(b => ({ code:b, name:b }))], 'All Branches', 'code', 'name');
   document.getElementById('rpt-topper-mode').onchange = _rptToggleTopperMode;
   _rptToggleTopperMode();
-  ['rpt-topper-mode','rpt-topper-subject','rpt-topper-n'].forEach(id => {
+  ['rpt-topper-mode','rpt-topper-subject','rpt-topper-n','rpt-topper-batch','rpt-topper-branch'].forEach(id => {
     document.getElementById(id)?.addEventListener('change', _rptLiveToppers);
     document.getElementById(id)?.addEventListener('input', _rptLiveToppers);
+  });
+  document.querySelectorAll('.topper-tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.topper-tab-btn').forEach(b => {
+        b.style.color        = 'var(--ink-3)';
+        b.style.fontWeight   = '500';
+        b.style.borderBottom = '2px solid transparent';
+      });
+      btn.style.color        = 'var(--brand)';
+      btn.style.fontWeight   = '600';
+      btn.style.borderBottom = '2px solid var(--brand)';
+      _rptLiveToppers();
+    });
   });
 
   // Populate per-card session selects
@@ -3306,64 +3321,91 @@ function _rptExportRevalImpact() {
 
 // ── Toppers (live) ────────────────────────────────────────────
 function _rptToggleTopperMode() {
-  const mode = document.getElementById('rpt-topper-mode').value;
-  document.getElementById('rpt-topper-subject-row').style.display = mode === 'subject' ? '' : 'none';
-  document.getElementById('rpt-topper-n-row').style.display       = mode === 'branch'  ? '' : 'none';
+  const mode   = document.getElementById('rpt-topper-mode').value;
+  const tabBtn = document.querySelector('.topper-tab-btn.active') ||
+                 document.querySelector('.topper-tab-btn[data-tab="sem1"]');
+  const tabMode = tabBtn?.dataset.tab || 'sem1';
+  // Subject-wise disabled for FY tab
+  const isFY = tabMode === 'fy';
+  document.getElementById('rpt-topper-subject-row').style.display = (mode === 'subject' && !isFY) ? '' : 'none';
+  document.getElementById('rpt-topper-n-row').style.display       = mode === 'branch' ? '' : 'none';
+  if (isFY && mode === 'subject') {
+    document.getElementById('rpt-topper-mode').value = 'branch';
+  }
   _rptLiveToppers();
 }
 
+function _rptGetTopperTab() {
+  return document.querySelector('.topper-tab-btn[style*="var(--brand)"]')?.dataset.tab
+      || document.querySelector('.topper-tab-btn.active')?.dataset.tab
+      || 'sem1';
+}
+
 function _rptLiveToppers() {
-  const group            = _rptGetSharedExamGroup();
-  const sessionId        = group?.prelimSessionId  || null;
-  const gazetteSessionId = group?.gazetteSessionId || null;
-  const toppersWrap      = document.getElementById('rpt-toppers-wrap');
-  if (!group) {
-    if (toppersWrap) toppersWrap.innerHTML = '<div style="text-align:center;color:var(--ink-4);padding:12px;font-size:12px;">Select an exam period above.</div>';
-    return;
-  }
+  const toppersWrap = document.getElementById('rpt-toppers-wrap');
+  const tabMode     = _rptGetTopperTab();
   const mode        = document.getElementById('rpt-topper-mode').value || 'branch';
-  const branch      = document.getElementById('rpt-shared-branch').value || null;
+  const branch      = document.getElementById('rpt-topper-branch').value || null;
+  const batchYear   = document.getElementById('rpt-topper-batch').value  || null;
   const subjectCode = document.getElementById('rpt-topper-subject').value || null;
   const topN        = Number(document.getElementById('rpt-topper-n').value || 10);
   const gender      = document.getElementById('rpt-shared-gender').value || null;
 
-  const data = State.reportToppers({ sessionId, gazetteSessionId, mode, branch, subjectCode, topN, gender });
-  // data = { all: [...], male: [...], female: [...] }
+  // Disable subject-wise for FY
+  const modeEl = document.getElementById('rpt-topper-mode');
+  if (tabMode === 'fy' && modeEl.value === 'subject') {
+    modeEl.value = 'branch';
+  }
+  document.getElementById('rpt-topper-subject-row').style.display =
+    (mode === 'subject' && tabMode !== 'fy') ? '' : 'none';
+  document.getElementById('rpt-topper-n-row').style.display = mode === 'branch' ? '' : 'none';
 
-  // Active panel from segmented control
-  const activePanel = document.querySelector('.topper-seg-btn.active')?.dataset.panel || 'all';
+  const data = State.reportToppers({ tabMode, mode, branch, batchYear, subjectCode, topN, gender });
 
-  function _renderPanel(list) {
+  function _renderBranchTable(list) {
     if (!list || list.length === 0) {
       return '<div style="text-align:center;color:var(--ink-4);padding:16px;font-size:12px;">No data for this selection.</div>';
     }
-    if (mode === 'branch') {
-      let branchRows = '';
-      let lastBranch = null;
-      for (const d of list) {
-        if (d.branchGroup !== lastBranch) {
-          branchRows += `<tr><td colspan="6" style="background:var(--surface-2);font-weight:700;font-size:11px;letter-spacing:.05em;padding:6px 10px;color:var(--ink-2);">${UI.esc(d.branchGroup)}</td></tr>`;
-          lastBranch = d.branchGroup;
-        }
-        branchRows += `<tr>
-          <td style="font-weight:700;color:var(--brand);">#${d.rank}</td>
-          <td>${UI.esc(d.name)}</td>
-          <td><span class="subj-code-small">${UI.esc(d.uin)}</span></td>
-          <td>${UI.esc(d.gender || '—')}</td>
-          <td style="font-weight:600;">${d.totalMarks}</td>
-          <td>${d.totalCredits}</td>
-        </tr>`;
+    let rows = '';
+    let lastBranch = null;
+    for (const d of list) {
+      if (d.branchGroup !== lastBranch) {
+        rows += `<tr><td colspan="9" style="background:var(--brand-light);font-weight:700;font-size:11px;
+          letter-spacing:.05em;padding:6px 10px;color:var(--brand);">${UI.esc(d.branchGroup)}</td></tr>`;
+        lastBranch = d.branchGroup;
       }
-      return `<div class="report-table-wrap"><table class="report-table">
-        <thead><tr><th>Rank</th><th>Name</th><th>UIN</th><th>Gender</th><th>Total Marks</th><th>Credits</th></tr></thead>
-        <tbody>${branchRows}</tbody>
-      </table></div>`;
-    } else {
-      return _renderSubjectTable(list);
+      const sem1Total = d.sem1Total != null ? d.sem1Total : '—';
+      const sem1Sgpa  = d.sem1Sgpa  != null ? d.sem1Sgpa.toFixed(2)  : '—';
+      const sem2Total = d.sem2Total != null ? d.sem2Total : '—';
+      const sem2Sgpa  = d.sem2Sgpa  != null ? d.sem2Sgpa.toFixed(2)  : '—';
+      const cgpa      = d.cgpa      != null ? d.cgpa.toFixed(2)      : '—';
+      rows += `<tr>
+        <td style="font-weight:700;color:var(--brand);">#${d.rank}</td>
+        <td><span class="subj-code-small">${UI.esc(d.uin)}</span></td>
+        <td>${UI.esc(d.name)}</td>
+        <td>${UI.esc(d.gender || '—')}</td>
+        <td style="text-align:center;">${UI.esc(String(sem1Total))}</td>
+        <td style="text-align:center;font-weight:600;color:var(--brand);">${UI.esc(String(sem1Sgpa))}</td>
+        <td style="text-align:center;">${UI.esc(String(sem2Total))}</td>
+        <td style="text-align:center;font-weight:600;color:var(--brand);">${UI.esc(String(sem2Sgpa))}</td>
+        <td style="text-align:center;font-weight:700;color:var(--pass);">${UI.esc(String(cgpa))}</td>
+      </tr>`;
     }
+    return `<div class="report-table-wrap"><table class="report-table">
+      <thead><tr>
+        <th>Rank</th><th>UIN</th><th>Name</th><th>Gender</th>
+        <th>Sem I Total</th><th>Sem I SGPA</th>
+        <th>Sem II Total</th><th>Sem II SGPA</th>
+        <th>CGPA</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>`;
   }
 
   function _renderSubjectTable(list) {
+    if (!list || list.length === 0) {
+      return '<div style="text-align:center;color:var(--ink-4);padding:16px;font-size:12px;">No data for this selection.</div>';
+    }
     const multiSubject = new Set(list.map(d => d.subjectGroup)).size > 1;
     const multiBranch  = new Set(list.map(d => d.branchGroup)).size  > 1;
     let rows = '';
@@ -3371,55 +3413,73 @@ function _rptLiveToppers() {
     let lastBranch = null;
     for (const d of list) {
       if (multiSubject && d.subjectGroup !== lastSubj) {
-        rows += `<tr><td colspan="5" style="background:var(--brand);color:#fff;font-weight:700;font-size:12px;letter-spacing:.04em;padding:7px 10px;">${UI.esc(d.subjectName)} — <span style="opacity:.85;font-size:11px;">${UI.esc(d.subjectCode)}</span></td></tr>`;
+        const maxStr = d.subjectMax != null ? ` / ${d.subjectMax}` : '';
+        rows += `<tr><td colspan="6" style="background:var(--brand);color:#fff;font-weight:700;
+          font-size:12px;letter-spacing:.04em;padding:7px 10px;">
+          ${UI.esc(d.subjectName)} — <span style="opacity:.85;font-size:11px;">${UI.esc(d.subjectCode)}</span>
+          <span style="opacity:.7;font-size:11px;margin-left:8px;">${UI.esc(maxStr)}</span>
+        </td></tr>`;
         lastSubj   = d.subjectGroup;
-        lastBranch = null; // reset branch tracker on new subject
+        lastBranch = null;
       }
       if (multiBranch && d.branchGroup !== lastBranch) {
-        rows += `<tr><td colspan="5" style="background:var(--surface-2);font-weight:700;font-size:11px;letter-spacing:.05em;padding:6px 10px;color:var(--ink-2);">${UI.esc(d.branchGroup)}</td></tr>`;
+        rows += `<tr><td colspan="6" style="background:var(--surface-2);font-weight:700;font-size:11px;
+          letter-spacing:.05em;padding:6px 10px;color:var(--ink-2);">${UI.esc(d.branchGroup)}</td></tr>`;
         lastBranch = d.branchGroup;
       }
+      const maxStr = d.subjectMax != null ? `<small style="color:var(--ink-3);">/${d.subjectMax}</small>` : '';
       rows += `<tr>
         <td style="font-weight:700;color:var(--brand);">#${d.rank}</td>
-        <td>${UI.esc(d.name)}</td>
         <td><span class="subj-code-small">${UI.esc(d.uin)}</span></td>
+        <td>${UI.esc(d.name)}</td>
+        <td>${UI.esc(d.branch)}</td>
         <td>${UI.esc(d.gender || '—')}</td>
-        <td style="font-weight:600;">${d.totalMarks}</td>
+        <td style="font-weight:600;">${d.totalMarks}${maxStr}</td>
       </tr>`;
     }
     return `<div class="report-table-wrap"><table class="report-table">
-      <thead><tr><th>Rank</th><th>Name</th><th>UIN</th><th>Gender</th><th>Total Marks</th></tr></thead>
+      <thead><tr><th>Rank</th><th>UIN</th><th>Name</th><th>Branch</th><th>Gender</th><th>Total Marks</th></tr></thead>
       <tbody>${rows}</tbody>
     </table></div>`;
   }
 
-  toppersWrap.innerHTML = _renderPanel(data.all);
+  const renderFn = mode === 'branch' ? _renderBranchTable : _renderSubjectTable;
+  toppersWrap.innerHTML = renderFn(data.all);
 }
 
 function _rptExportToppers() {
-  const group           = _rptGetSharedExamGroup();
-  const sessionId       = group?.prelimSessionId  || null;
-  const gazetteSessionId = group?.gazetteSessionId || null;
+  const tabMode     = _rptGetTopperTab();
   const mode        = document.getElementById('rpt-topper-mode').value || 'branch';
-  const branch      = document.getElementById('rpt-shared-branch').value || null;
+  const branch      = document.getElementById('rpt-topper-branch').value || null;
+  const batchYear   = document.getElementById('rpt-topper-batch').value  || null;
   const subjectCode = document.getElementById('rpt-topper-subject').value || null;
   const topN        = Number(document.getElementById('rpt-topper-n').value || 10);
-  const data = State.reportToppers({ sessionId, gazetteSessionId, mode, branch, subjectCode, topN });
-  // Export all three panels combined with a Gender Group column
+  const data = State.reportToppers({ tabMode, mode, branch, batchYear, subjectCode, topN });
+
   const allRows = [
     ...data.all.map(d    => ({ ...d, genderGroup: 'All' })),
     ...data.male.map(d   => ({ ...d, genderGroup: 'Male' })),
     ...data.female.map(d => ({ ...d, genderGroup: 'Female' })),
   ];
+
   if (mode === 'branch') {
-    UI.exportCSV('Toppers_Branch',
-      ['Gender Group','Rank','Name','UIN','Branch','Gender','Total Marks','Credits Earned'],
-      allRows.map(d => [d.genderGroup, d.rank, d.name, d.uin, d.branch, d.gender||'', d.totalMarks, d.totalCredits])
+    UI.exportCSV(`Toppers_${tabMode.toUpperCase()}_Branch`,
+      ['Gender Group','Rank','UIN','PRN','Name','Branch','Gender',
+       'Sem I Total','Sem I SGPA','Sem II Total','Sem II SGPA','CGPA'],
+      allRows.map(d => [
+        d.genderGroup, d.rank, d.uin, d.prn, d.name, d.branch, d.gender||'',
+        d.sem1Total??'', d.sem1Sgpa!=null?d.sem1Sgpa.toFixed(2):'',
+        d.sem2Total??'', d.sem2Sgpa!=null?d.sem2Sgpa.toFixed(2):'',
+        d.cgpa!=null?d.cgpa.toFixed(2):'',
+      ])
     );
   } else {
-    UI.exportCSV('Toppers_Subject',
-      ['Gender Group','Rank','Name','UIN','Branch','Gender','Subject Code','Total Marks'],
-      allRows.map(d => [d.genderGroup, d.rank, d.name, d.uin, d.branch, d.gender||'', d.subjectCode, d.totalMarks])
+    UI.exportCSV(`Toppers_${tabMode.toUpperCase()}_Subject`,
+      ['Gender Group','Rank','UIN','PRN','Name','Branch','Gender','Subject Code','Subject Name','Total Marks','Subject Max'],
+      allRows.map(d => [
+        d.genderGroup, d.rank, d.uin, d.prn, d.name, d.branch, d.gender||'',
+        d.subjectCode, d.subjectName, d.totalMarks, d.subjectMax??'',
+      ])
     );
   }
   UI.toast('Toppers exported.', 'success');
@@ -3755,13 +3815,13 @@ function _rptRenderCreditFilterTable(rows, sem) {
     <div style="overflow-x:auto; max-height:400px; overflow-y:auto;">
     <table class="audit-table">
       <thead><tr>
-        <th>Name</th><th>UIN</th><th>Branch</th><th>Batch</th><th>Gender</th>
+        <th>UIN</th><th>Name</th><th>Branch</th><th>Batch</th><th>Gender</th>
         <th>Sem ${sem} Credits</th><th>Pending</th><th>CGPA</th>
       </tr></thead>
       <tbody>
         ${rows.map(r => `<tr>
-          <td>${UI.esc(r.name)}</td>
           <td><span class="subj-code-small">${UI.esc(r.uin)}</span></td>
+          <td>${UI.esc(r.name)}</td>
           <td>${UI.esc(r.branch)}</td>
           <td>${UI.esc(r.batchYear)}</td>
           <td>${UI.esc(r.gender || '—')}</td>
@@ -3785,13 +3845,13 @@ function _rptRenderTotalCreditFilterTable(rows, threshold) {
     <div style="overflow-x:auto;">
     <table class="audit-table">
       <thead><tr>
-        <th>Name</th><th>UIN</th><th>Branch</th><th>Batch</th>
+        <th>UIN</th><th>Name</th><th>Branch</th><th>Batch</th>
         <th>Sem 1</th><th>Sem 2</th><th>Total Credits</th><th>CGPA</th>
       </tr></thead>
       <tbody>
         ${rows.map(r => `<tr>
-          <td>${UI.esc(r.name)}</td>
           <td><span class="subj-code-small">${UI.esc(r.uin)}</span></td>
+          <td>${UI.esc(r.name)}</td>
           <td>${UI.esc(r.branch)}</td>
           <td>${UI.esc(r.batchYear)}</td>
           <td>${r.sem1Earned}/${r.sem1Max}</td>
@@ -4366,8 +4426,8 @@ function _aktdRun() {
     <table class="progress-table" style="width:100%; font-size:12px;">
       <thead><tr>
         <th>#</th>
+        <th>UIN</th>
         <th>Name</th>
-        <th>PRN / UIN</th>
         <th>Branch</th>
         <th>Div</th>
         <th>Batch</th>
@@ -4384,8 +4444,8 @@ function _aktdRun() {
     const markCells = fields.map(f => `<td>${UI.esc(r.compMarks[f])}</td>`).join('');
     html += `<tr>
       <td class="muted">${i + 1}</td>
+      <td class="muted"><span class="subj-code-small">${UI.esc(r.uin)}</span><br>${UI.esc(r.prn)}</td>
       <td><strong>${UI.esc(r.name)}</strong></td>
-      <td class="muted">${UI.esc(r.prn)}<br>${UI.esc(r.uin)}</td>
       <td>${UI.esc(r.branch)}</td>
       <td>${UI.esc(r.division)}</td>
       <td>${UI.esc(r.batchYear)}</td>
@@ -5003,6 +5063,7 @@ function _adminRenderAudit() {
     <tr>
       <td>${UI.esc(r.entryDateTime?.slice(0,16).replace('T',' ') || '')}</td>
       <td>${UI.esc(r.enteredBy)}</td>
+      <td><span class="subj-code-small">${UI.esc(r.uin)}</span></td>
       <td>${UI.esc(r.name)}</td>
       <td>${UI.esc(r.subjectCode)}</td>
       <td>${tagHtml}</td>
@@ -5734,8 +5795,8 @@ function _ciaRun() {
     <table class="progress-table" style="width:100%; font-size:12px;">
       <thead><tr>
         <th>#</th>
+        <th>UIN</th>
         <th>Name</th>
-        <th>PRN / UIN</th>
         <th>Branch</th>
         <th>Div</th>
         <th>Batch</th>
@@ -5753,8 +5814,8 @@ function _ciaRun() {
                           : 'badge-kt';
     html += `<tr>
       <td class="muted">${i + 1}</td>
+      <td class="muted"><span class="subj-code-small">${UI.esc(r.uin)}</span><br>${UI.esc(r.prn)}</td>
       <td><strong>${UI.esc(r.name)}</strong></td>
-      <td class="muted">${UI.esc(r.prn)}<br>${UI.esc(r.uin)}</td>
       <td>${UI.esc(r.branch)}</td>
       <td>${UI.esc(r.division)}</td>
       <td>${UI.esc(r.batchYear)}</td>
