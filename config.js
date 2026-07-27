@@ -17,8 +17,9 @@ const CONFIG = {
     SUBJECT:  'SUBJECT_MASTER',
     EXAM:     'EXAM_MASTER',
     LEDGER:   'MASTER_LEDGER',
-    SEAT:     'SEAT_MASTER',
+    SEAT:       'SEAT_MASTER',
     REVAL_SKIP: 'REVAL_SKIP',
+    EXAM_SKIP:  'EXAM_SKIP',
   },
 
   // ── Admin emails (hardcoded) ──────────────────────────────

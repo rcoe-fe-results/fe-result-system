@@ -8,6 +8,7 @@ const State = (() => {
   let ledger     = [];
   let seats      = [];   // [{ uin, sessionId, seatNumber }]
   let revalSkips = [];   // [{ uin, revalSessionId, decision, markedBy, markedAt }]
+  let examSkips  = [];   // [{ uin, sessionId, markedBy, markedAt }] — last row wins
   let _ktCache   = {};   // built by _buildKTCache(), keyed by uin
   let _loaded    = false;
 
@@ -313,12 +314,13 @@ const State = (() => {
 
   // ── Load all data ─────────────────────────────────────────
   async function loadAll() {
-    [students, sessions, ledger, seats, revalSkips] = await Promise.all([
+    [students, sessions, ledger, seats, revalSkips, examSkips] = await Promise.all([
       Sheets.getStudents(),
       Sheets.getSessions(),
       Sheets.getLedger(),
       Sheets.getSeats(),
       Sheets.getRevalSkips(),
+      Sheets.getExamSkips(),
     ]);
     _buildKTCache();
     _loaded = true;
@@ -495,6 +497,33 @@ const State = (() => {
     const skip = getRevalSkip(uin, revalSessionId);
     if (!skip) return 'Unknown';
     return skip.decision || 'Unknown';
+  }
+
+  // ── Exam Skip ─────────────────────────────────────────────
+  // Last row wins — a second append with the same uin+sessionId undoes the skip.
+  function getExamSkipDecision(uin, sessionId) {
+    const rows = examSkips.filter(r => r.uin === uin && r.sessionId === sessionId);
+    return rows.length % 2 !== 0; // odd count = skipped, even = not skipped (undone)
+  }
+
+  async function setExamSkip(uin, sessionId) {
+    const user = Auth.getUser();
+    await Sheets.appendExamSkip(uin, sessionId, user.email);
+    examSkips.push({ uin, sessionId, markedBy: user.email, markedAt: new Date().toISOString() });
+  }
+
+  // Returns all students who skipped a given session
+  function getExamSkipStudents(sessionId) {
+    const uins = new Set(
+      sessions
+        .filter(s => s.id === sessionId)
+        .flatMap(() =>
+          students
+            .filter(s => getExamSkipDecision(s.uin, sessionId))
+            .map(s => s.uin)
+        )
+    );
+    return [...uins].map(uin => getStudent(uin)).filter(Boolean);
   }
 
   // Returns all students with unresolved reval status for a given reval session
@@ -2435,6 +2464,7 @@ const State = (() => {
     getSeatNumber, getSeatsForSession, uploadSeats, updateSeatNumber, getSeatsForSessionWithFallback,
     computeAttemptTag,
     getRevalDecision, setRevalSkip, getUnresolvedRevalStudents,
+    getExamSkipDecision, setExamSkip, getExamSkipStudents,
     getKTData:           (uin) => _ktCache[uin] || null,
     getKTCount:          (uin) => _ktCache[uin]?.activeKTCount    ?? 0,
     getHistoricalKTData: (uin) => _ktCache[uin]?.historicalKTComponents ?? [],

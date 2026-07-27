@@ -265,6 +265,29 @@ const Sheets = (() => {
     return appendRevalSkip(uin, revalSessionId, decision, markedBy);
   }
 
+  // ── EXAM_SKIP ─────────────────────────────────────────────
+  // Columns: A=UIN, B=Session ID, C=Marked By, D=Marked At
+  // Binary — no decision column. Last row wins (append a new row to undo).
+  async function getExamSkips() {
+    try {
+      const rows = await getRange(CONFIG.TABS.EXAM_SKIP, 'A2:D');
+      return rows.map(r => ({
+        uin:       r[0] || '',
+        sessionId: r[1] || '',
+        markedBy:  r[2] || '',
+        markedAt:  r[3] || '',
+      })).filter(r => r.uin && r.sessionId);
+    } catch(e) {
+      console.warn('EXAM_SKIP tab not found or empty:', e.message);
+      return [];
+    }
+  }
+
+  async function appendExamSkip(uin, sessionId, markedBy) {
+    const markedAt = new Date().toISOString();
+    return appendRows(CONFIG.TABS.EXAM_SKIP, [[uin, sessionId, markedBy, markedAt]]);
+  }
+
   // ── Infer month from legacy session names ─────────────────
   // Fallback for sessions created before the Month column was added.
   // Parses 'Dec' or 'May' from the auto-generated session name.
@@ -286,6 +309,7 @@ const Sheets = (() => {
     getSubjectMaster,
     getSeats, uploadSeats, updateSeatNumber,
     getRevalSkips, appendRevalSkip, updateRevalSkip,
+    getExamSkips, appendExamSkip,
     newEntryId,
   };
 })();

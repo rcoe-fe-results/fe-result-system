@@ -357,10 +357,13 @@ function _meGetNextSession(student, sem, revalOverrides = {}) {
   const semCredits = acad?.semCredits[sem];
   if (semCredits && semCredits.max > 0 && semCredits.earned >= semCredits.max) return null;
 
+  // Walk forward chronologically — skip any Uni-Portal the student has an exam skip for
   return semSessions.find(s => {
     if (s.entryType === 'Revaluation_Gazette') return false;
     if (s.status !== 'Active') return false;
-    return _score(s) > lastScore;
+    if (_score(s) <= lastScore) return false;
+    if (State.getExamSkipDecision(student.uin, s.id)) return false;
+    return true;
   }) || null;
 }
 
@@ -368,9 +371,13 @@ function _meAdhocShowSessionPicker(sessions) {
   const student = meAdhocState.student;
   const picker  = document.getElementById('me-adhoc-session-picker');
 
-  // Per-render override map: revalSessionId → 'Yes'|'No'|'Unknown'
-  // Tracks UI toggle state before persisting
+  // Per-render override map: revalSessionId → 'Yes'|'No'|'Unknown'|'SkipForNow'
   const revalOverrides = {};
+
+  // All sessions student has a record in
+  const recordSessionIds = new Set(
+    State.ledger.filter(r => r.uin === student.uin).map(r => r.examSession)
+  );
 
   function _sessionStatus(session) {
     const acad = State.computeStudentAcademics(student.uin);
@@ -387,16 +394,11 @@ function _meAdhocShowSessionPicker(sessions) {
     return 'cleared';
   }
 
-  function _sessionTag(status) {
+  function _statusTag(status) {
     if (status === 'cleared')      return `<span class="session-status-tag tag-cleared">✓ Successful</span>`;
     if (status === 'unsuccessful') return `<span class="session-status-tag tag-unsuccessful">✗ Unsuccessful</span>`;
     return `<span class="session-status-tag tag-pending">Marks entry pending</span>`;
   }
-
-  // All sessions student has a record in
-  const recordSessionIds = new Set(
-    State.ledger.filter(r => r.uin === student.uin).map(r => r.examSession)
-  );
 
   function _renderSem(sem) {
     const nextSession = _meGetNextSession(student, sem, revalOverrides);
@@ -408,44 +410,63 @@ function _meAdhocShowSessionPicker(sessions) {
       )
     );
 
-    if (attended.length === 0 && !nextSession) return '';
+    // Also collect skipped Uni-Portals for this semester (no records, but skip persisted)
+    const skippedSessions = sortSessionsChronological(
+      State.getSessions().filter(s =>
+        s.semester === sem &&
+        s.entryType !== 'Revaluation_Gazette' &&
+        !recordSessionIds.has(s.id) &&
+        State.getExamSkipDecision(student.uin, s.id)
+      )
+    );
+
+    if (attended.length === 0 && skippedSessions.length === 0 && !nextSession) return '';
 
     let html = `<div class="pv-sem-separator">Semester ${sem}</div>`;
 
-    // Greyed out past sessions
+    // ── Historical attended strips ────────────────────────────
     for (const s of attended) {
       const status = _sessionStatus(s);
       html += `
-        <div class="session-option session-option-cleared">
-          <span class="session-option-name">${UI.esc(s.name)}</span>
-          <span class="session-option-meta">Sem ${s.semester} · ${UI.esc(s.batchYear)} · ${UI.esc(s.entryType)}</span>
-          ${_sessionTag(status)}
+        <div class="session-strip session-strip-historical">
+          <div class="session-strip-info">
+            <span class="session-strip-name">${UI.esc(s.name)}</span>
+            <span class="session-strip-meta">Sem ${s.semester} · ${UI.esc(s.batchYear)} · ${UI.esc(s.entryType)}</span>
+          </div>
+          <div class="session-strip-centre"></div>
+          <div class="session-strip-right">${_statusTag(status)}</div>
         </div>`;
     }
 
-    // Find the pending reval for this semester independently of nextSession
-    const lastAttended = attended.length > 0 ? attended[attended.length - 1] : null;
-    const pendingReval = lastAttended && lastAttended.entryType !== 'Revaluation_Gazette'
-      ? State.getSessions().find(s =>
-          s.entryType === 'Revaluation_Gazette' &&
-          s.linkedPrelimSessionId === lastAttended.id &&
-          s.status === 'Active'
-        )
-      : null;
-
-    // Reval toggle — always show if there is a pending reval for this semester
-    if (pendingReval) {
-      const persistedDecision = State.getRevalDecision(student.uin, pendingReval.id);
-      const currentDecision   = revalOverrides[pendingReval.id] !== undefined
-        ? revalOverrides[pendingReval.id]
-        : persistedDecision;
-
-      const isLocked = pendingReval.status !== 'Active';
-
+    // ── Skipped Uni-Portal strips ─────────────────────────────
+    for (const s of skippedSessions) {
       html += `
-        <div class="reval-toggle-wrap" id="reval-toggle-${sem}">
-          <span class="reval-toggle-label">Applied for Reval?</span>
-          <div class="seg-control reval-toggle" data-sem="${sem}" data-reval-id="${UI.esc(pendingReval.id)}">
+        <div class="session-strip session-strip-skipped">
+          <div class="session-strip-info">
+            <span class="session-strip-name">${UI.esc(s.name)}</span>
+            <span class="session-strip-meta">Sem ${s.semester} · ${UI.esc(s.batchYear)} · ${UI.esc(s.entryType)}</span>
+          </div>
+          <div class="session-strip-centre"></div>
+          <div class="session-strip-right">
+            <span class="tag-skipped">⊘ Skipped exam</span>
+            <button class="btn-exam-skip btn-exam-undo" data-session-id="${UI.esc(s.id)}">Undo</button>
+          </div>
+        </div>`;
+    }
+
+    // ── Active next session strip ─────────────────────────────
+    if (nextSession) {
+      const isReval = nextSession.entryType === 'Revaluation_Gazette';
+
+      if (isReval) {
+        const persistedDecision = State.getRevalDecision(student.uin, nextSession.id);
+        const currentDecision   = revalOverrides[nextSession.id] !== undefined
+          ? revalOverrides[nextSession.id]
+          : persistedDecision;
+        const isLocked = nextSession.status !== 'Active';
+
+        const revalToggle = `
+          <div class="reval-toggle-inline reval-toggle" data-sem="${sem}" data-reval-id="${UI.esc(nextSession.id)}">
             <button class="reval-tog-btn${currentDecision === 'Yes'        ? ' active' : ''}"
               data-val="Yes"        ${isLocked ? 'disabled' : ''}>Yes</button>
             <button class="reval-tog-btn${currentDecision === 'No'         ? ' active' : ''}"
@@ -454,37 +475,55 @@ function _meAdhocShowSessionPicker(sessions) {
               data-val="Unknown"    ${isLocked ? 'disabled' : ''}>Unknown</button>
             <button class="reval-tog-btn${currentDecision === 'SkipForNow' ? ' active' : ''}"
               data-val="SkipForNow" ${isLocked ? 'disabled' : ''}>Skip for now</button>
-          </div>
-          ${isLocked ? '<span class="reval-locked-note">Session locked</span>' : ''}
-        </div>`;
-
-      // Always render the reval session card with appropriate tag
-      if (currentDecision === 'No') {
-        html += `
-          <div class="session-option session-option-cleared">
-            <span class="session-option-name">${UI.esc(pendingReval.name)}</span>
-            <span class="session-option-meta">Sem ${pendingReval.semester} · ${UI.esc(pendingReval.batchYear)} · ${UI.esc(pendingReval.entryType)}</span>
-            <span class="session-status-tag tag-unsuccessful">✗ Opted out of Reval</span>
           </div>`;
+
+        if (currentDecision === 'No') {
+          // Opted out — greyed, no Enter marks
+          html += `
+            <div class="session-strip session-strip-historical">
+              <div class="session-strip-info">
+                <span class="session-strip-name">${UI.esc(nextSession.name)}</span>
+                <span class="session-strip-meta">Sem ${nextSession.semester} · ${UI.esc(nextSession.batchYear)} · Revaluation Gazette</span>
+              </div>
+              <div class="session-strip-centre"></div>
+              <div class="session-strip-right">
+                <span class="session-status-tag tag-unsuccessful">✗ Opted out of Reval</span>
+                ${revalToggle}
+              </div>
+            </div>`;
+        } else {
+          // Yes / Unknown / SkipForNow — active, Enter marks available
+          html += `
+            <div class="session-strip session-strip-active">
+              <div class="session-strip-info">
+                <span class="session-strip-name">${UI.esc(nextSession.name)}</span>
+                <span class="session-strip-meta">Sem ${nextSession.semester} · ${UI.esc(nextSession.batchYear)} · Revaluation Gazette</span>
+              </div>
+              <div class="session-strip-centre">
+                <button class="btn btn-primary btn-sm enter-marks-btn"
+                  data-session-id="${UI.esc(nextSession.id)}">Enter marks →</button>
+              </div>
+              <div class="session-strip-right">${revalToggle}</div>
+            </div>`;
+        }
+
       } else {
-        // Yes / Unknown / SkipForNow — clickable
+        // Uni-Portal — active, Enter marks + Skip exam
         html += `
-          <div class="session-option" data-session-id="${UI.esc(pendingReval.id)}">
-            <span class="session-option-name">${UI.esc(pendingReval.name)}</span>
-            <span class="session-option-meta">Sem ${pendingReval.semester} · ${UI.esc(pendingReval.batchYear)} · ${UI.esc(pendingReval.entryType)}</span>
-            <span class="session-status-tag tag-pending">${currentDecision === 'SkipForNow' ? '⏳ Decision pending' : 'Next →'}</span>
+          <div class="session-strip session-strip-active">
+            <div class="session-strip-info">
+              <span class="session-strip-name">${UI.esc(nextSession.name)}</span>
+              <span class="session-strip-meta">Sem ${nextSession.semester} · ${UI.esc(nextSession.batchYear)} · Uni Portal Gazette</span>
+            </div>
+            <div class="session-strip-centre">
+              <button class="btn btn-primary btn-sm enter-marks-btn"
+                data-session-id="${UI.esc(nextSession.id)}">Enter marks →</button>
+            </div>
+            <div class="session-strip-right">
+              <button class="btn-exam-skip" data-session-id="${UI.esc(nextSession.id)}">⊘ Skip exam</button>
+            </div>
           </div>`;
       }
-    }
-
-    // Next Uni-Portal session — show when reval is No, SkipForNow, or no reval exists
-    if (nextSession && nextSession.entryType !== 'Revaluation_Gazette') {
-      html += `
-        <div class="session-option" data-session-id="${UI.esc(nextSession.id)}">
-          <span class="session-option-name">${UI.esc(nextSession.name)}</span>
-          <span class="session-option-meta">Sem ${nextSession.semester} · ${UI.esc(nextSession.batchYear)} · ${UI.esc(nextSession.entryType)}</span>
-          <span class="session-status-tag tag-pending">Next →</span>
-        </div>`;
     }
 
     return html;
@@ -498,41 +537,95 @@ function _meAdhocShowSessionPicker(sessions) {
         ${_renderSem(2)}
       </div>`;
     _wireToggle();
-    _wireSessions();
+    _wireEnterMarks();
+    _wireExamSkip();
   }
 
   function _wireToggle() {
     picker.querySelectorAll('.reval-toggle').forEach(toggleEl => {
       const revalId = toggleEl.dataset.revalId;
-
       toggleEl.querySelectorAll('.reval-tog-btn').forEach(btn => {
         btn.addEventListener('click', async () => {
           const val = btn.dataset.val;
           revalOverrides[revalId] = val;
-
-          // 'SkipForNow' is never persisted — UI only
           if (val !== 'SkipForNow') {
             State.setRevalSkip(student.uin, revalId, val).catch(err => {
               UI.toast('Could not save reval decision: ' + err.message, 'error', 5000);
             });
           }
-
-          // Rebuild picker to reflect new decision
           _rebuild();
         });
       });
     });
   }
 
-  function _wireSessions() {
-    picker.querySelectorAll('.session-option[data-session-id]').forEach(el => {
-      el.onclick = () => {
-        meAdhocState.session = State.getSession(el.dataset.sessionId);
-        picker.querySelectorAll('.session-option[data-session-id]').forEach(o =>
-          o.style.borderColor = o === el ? 'var(--brand)' : ''
+  function _wireEnterMarks() {
+    picker.querySelectorAll('.enter-marks-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        meAdhocState.session = State.getSession(btn.dataset.sessionId);
+        picker.querySelectorAll('.enter-marks-btn').forEach(b =>
+          b.classList.toggle('btn-secondary', b !== btn)
         );
         _meAdhocRenderGrid();
-      };
+      });
+    });
+  }
+
+  function _wireExamSkip() {
+    // Skip exam
+    picker.querySelectorAll('.btn-exam-skip:not(.btn-exam-undo)').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const sessionId = btn.dataset.sessionId;
+        const sess = State.getSession(sessionId);
+        UI.showModal(
+          'Skip exam session',
+          `Mark <strong>${UI.esc(student.name)}</strong> as having skipped <strong>${UI.esc(sess?.name || sessionId)}</strong>?<br>
+          <small style="color:var(--ink-3);">This can be undone. The next eligible session will be shown instead.</small>`,
+          {
+            confirmLabel: 'Skip exam',
+            danger: true,
+            onConfirm: async () => {
+              UI.showSpinner('Saving…');
+              try {
+                await State.setExamSkip(student.uin, sessionId);
+                UI.hideSpinner();
+                UI.toast('Exam skip recorded.', 'success');
+                _rebuild();
+              } catch(err) {
+                UI.hideSpinner();
+                UI.toast('Could not save exam skip: ' + err.message, 'error', 5000);
+              }
+            }
+          }
+        );
+      });
+    });
+
+    // Undo skip
+    picker.querySelectorAll('.btn-exam-undo').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const sessionId = btn.dataset.sessionId;
+        const sess = State.getSession(sessionId);
+        UI.showModal(
+          'Undo exam skip',
+          `Undo skip for <strong>${UI.esc(student.name)}</strong> in <strong>${UI.esc(sess?.name || sessionId)}</strong>?`,
+          {
+            confirmLabel: 'Undo skip',
+            onConfirm: async () => {
+              UI.showSpinner('Saving…');
+              try {
+                await State.setExamSkip(student.uin, sessionId); // odd count = unskipped
+                UI.hideSpinner();
+                UI.toast('Exam skip undone.', 'success');
+                _rebuild();
+              } catch(err) {
+                UI.hideSpinner();
+                UI.toast('Could not undo exam skip: ' + err.message, 'error', 5000);
+              }
+            }
+          }
+        );
+      });
     });
   }
 
