@@ -1247,8 +1247,11 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
       <!-- ── Student Eligibility Checks ── -->
       <div class="report-section">
         <h3>Student Eligibility Checks</h3>
-        <p>Identify students by credit completion, KT count, or active KT subject. Use filters below to scope all checks.</p>
-        <div class="report-filters" style="margin-bottom:16px;">
+        <p>Identify students by credit completion, KT count, or active KT subject. Shared filters apply to all checks below.</p>
+
+        <!-- Shared filters -->
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;padding:12px 14px;
+                    background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius);margin-bottom:16px;">
           <div class="filter-group">
             <label>Branch</label>
             <select id="rpt-elig-branch" style="min-width:130px;"><option value="">— all branches —</option></select>
@@ -1261,124 +1264,154 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
               <option value="Female">Female</option>
             </select>
           </div>
+          <div class="filter-group" style="margin-left:auto;">
+            <label>&nbsp;</label>
+            <button id="rpt-elig-download-all" class="btn btn-secondary btn-sm">⬇ Download All (Excel)</button>
+          </div>
         </div>
 
-        <div class="report-card-grid">
+        <!-- ── Incomplete Semester Credits ── -->
+        <div class="report-card" style="margin-bottom:16px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+            <h3 style="margin-bottom:0;">Credit Eligibility — Incomplete Semester Credits</h3>
+            <button id="rpt-credit-csv" class="btn btn-secondary btn-sm" disabled>⬇ Export CSV</button>
+          </div>
+          <p>Students who have not yet completed all credits for a given semester. Includes current CGPA and branch breakdown.</p>
+          <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-bottom:12px;">
+            <div class="filter-group">
+              <label>Semester</label>
+              <select id="rpt-credit-sem" style="min-width:130px;">
+                <option value="">— select —</option>
+                <option value="1">Semester I</option>
+                <option value="2">Semester II</option>
+              </select>
+            </div>
+            <div class="filter-group" style="justify-content:flex-end;">
+              <label>&nbsp;</label>
+              <button id="rpt-credit-run" class="btn btn-primary btn-sm">Run</button>
+            </div>
+          </div>
+          <div id="rpt-credit-branch-summary" style="margin-bottom:10px;"></div>
+          <div id="rpt-credit-filter-output" style="max-height:400px;overflow-y:auto;"></div>
+        </div>
 
-          <!-- Credit Eligibility: Incomplete Sem Credits -->
-          <div class="report-card" style="grid-column:1/-1;">
-            <h3>Credit Eligibility — Incomplete Semester Credits</h3>
-            <p>Students who have not yet completed all credits for a given semester. Includes current CGPA.</p>
-            <div class="report-filters" style="flex-wrap:wrap; gap:10px; margin-bottom:10px;">
-              <div class="filter-group">
-                <label>Semester</label>
-                <select id="rpt-credit-sem" style="min-width:130px;">
-                  <option value="">— select —</option>
-                  <option value="1">Semester I</option>
-                  <option value="2">Semester II</option>
-                </select>
-              </div>
-              <div class="filter-group" style="justify-content:flex-end;">
-                <label>&nbsp;</label>
-                <button id="rpt-credit-run" class="btn btn-primary btn-sm">Run</button>
-                <button id="rpt-credit-csv" class="btn btn-secondary btn-sm" disabled style="margin-left:6px; opacity:0.4; cursor:not-allowed;">⬇ Export CSV</button>
+        <!-- ── Total Credits Below Threshold ── -->
+        <div class="report-card" style="margin-bottom:16px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+            <h3 style="margin-bottom:0;">Credit Eligibility — Total Credits Below Threshold</h3>
+            <button id="rpt-total-credit-csv" class="btn btn-secondary btn-sm" disabled>⬇ Export CSV</button>
+          </div>
+          <p>Students whose total earned credits (across both semesters) are below a given number. Includes CGPA and branch breakdown.</p>
+          <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-bottom:12px;">
+            <div class="filter-group">
+              <label>Total credits &lt;</label>
+              <input type="number" id="rpt-credit-x" placeholder="e.g. 30" min="0" style="width:90px;">
+            </div>
+            <div class="filter-group">
+              <label>Quick pick</label>
+              <div style="display:flex;gap:4px;">
+                <button class="col-pill" onclick="_tcSetThreshold(10)">10</button>
+                <button class="col-pill" onclick="_tcSetThreshold(20)">20</button>
+                <button class="col-pill" onclick="_tcSetThreshold(30)">30</button>
+                <button class="col-pill" onclick="_tcSetThreshold(40)">40</button>
               </div>
             </div>
-            <div id="rpt-credit-filter-output"></div>
-          </div>
-
-          <!-- Credit Eligibility: Total Credits Below Threshold -->
-          <div class="report-card" style="grid-column:1/-1;">
-            <h3>Credit Eligibility — Total Credits Below Threshold</h3>
-            <p>Students whose total earned credits (across both semesters) are below a given number. Includes CGPA.</p>
-            <div class="report-filters" style="flex-wrap:wrap; gap:10px; margin-bottom:10px;">
-              <div class="filter-group">
-                <label>Total credits &lt;</label>
-                <input type="number" id="rpt-credit-x" placeholder="e.g. 30" min="0" style="width:90px;">
-              </div>
-              <div class="filter-group" style="justify-content:flex-end;">
-                <label>&nbsp;</label>
-                <button id="rpt-total-credit-run" class="btn btn-primary btn-sm">Run</button>
-                <button id="rpt-total-credit-csv" class="btn btn-secondary btn-sm" disabled style="margin-left:6px; opacity:0.4; cursor:not-allowed;">⬇ Export CSV</button>
-              </div>
+            <div class="filter-group" style="justify-content:flex-end;">
+              <label>&nbsp;</label>
+              <button id="rpt-total-credit-run" class="btn btn-primary btn-sm">Run</button>
             </div>
-            <div id="rpt-total-credit-filter-output"></div>
           </div>
+          <div id="rpt-total-credit-branch-summary" style="margin-bottom:10px;"></div>
+          <div id="rpt-total-credit-filter-output" style="max-height:400px;overflow-y:auto;"></div>
+        </div>
 
-          <!-- KT Count Filter -->
-          <div class="report-card" style="grid-column:1/-1;">
-            <h3>KT Count Filter</h3>
-            <p>Students with a specific number of active or historical KTs.</p>
-            <div class="report-inputs">
+        <!-- ── KT Count Filter ── -->
+        <div class="report-card" style="margin-bottom:16px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+            <h3 style="margin-bottom:0;">KT Count Filter</h3>
+            <button id="rpt-kt-csv" class="btn btn-secondary btn-sm" disabled>⬇ Export CSV</button>
+          </div>
+          <p>Students with a specific number of active or historical KTs. Expands per-student to show failing subjects.</p>
+          <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-bottom:12px;">
+            <div class="filter-group">
+              <label>Mode</label>
               <select id="rpt-kt-mode" style="width:auto;">
                 <option>Exactly</option>
                 <option selected>At least</option>
               </select>
-              <input type="number" id="rpt-kt-n" value="1" min="1" style="width:60px;">
-              <span style="font-size:12px;">KT(s)</span>
             </div>
-            <div class="report-inputs">
-              <label style="font-size:12px;">Scope:</label>
+            <div class="filter-group">
+              <label>Count</label>
+              <input type="number" id="rpt-kt-n" value="1" min="1" style="width:60px;">
+            </div>
+            <div class="filter-group">
+              <label>KT(s) &nbsp; Scope</label>
               <select id="rpt-kt-scope" style="width:auto;">
                 <option>Active</option>
                 <option>Historical</option>
                 <option>Both</option>
               </select>
             </div>
-            <div style="margin-top:10px; display:flex; gap:8px;">
+            <div class="filter-group" style="justify-content:flex-end;">
+              <label>&nbsp;</label>
               <button id="rpt-kt-run" class="btn btn-primary btn-sm">Run</button>
-              <button id="rpt-kt-csv" class="btn btn-secondary btn-sm" disabled style="opacity:0.4; cursor:not-allowed;">⬇ Export CSV</button>
             </div>
-            <div id="rpt-kt-filter-output" style="margin-top:10px;"></div>
           </div>
-
-          
-
-          <!-- Active KT Drill-down -->
-          <div class="report-card" style="grid-column:1/-1;">
-            <h3>Active KT Drill-down</h3>
-            <p>Students with an Active KT in a specific subject and component. Shows last attempt marks, attempt count, and division.</p>
-            <div class="report-inputs" style="flex-wrap:wrap; gap:10px; align-items:flex-end;">
-              <div class="filter-group">
-                <label style="font-size:12px;">Subject</label>
-                <select id="rpt-aktd-subject" style="min-width:220px;"><option value="">— select subject —</option></select>
-              </div>
-              <div class="filter-group">
-                <label style="font-size:12px;">Component</label>
-                <select id="rpt-aktd-component" style="min-width:130px;">
-                  <option value="ESE">Theory (ESE)</option>
-                  <option value="TW_Oral">Lab (TW / Oral)</option>
-                  <option value="IAT">IAT</option>
-                </select>
-              </div>
-              <div class="filter-group">
-                <label style="font-size:12px;">Batch Year</label>
-                <select id="rpt-aktd-batch" style="min-width:110px;"><option value="">All Batches</option></select>
-              </div>
-              <div class="filter-group">
-                <label style="font-size:12px;">Division</label>
-                <select id="rpt-aktd-division" style="min-width:100px;"><option value="">All Divisions</option></select>
-              </div>
-              <button id="rpt-aktd-run" class="btn btn-primary btn-sm">Show List</button>
-              <button id="rpt-aktd-csv" class="btn btn-secondary btn-sm" disabled style="opacity:0.4; cursor:not-allowed;">⬇ Export CSV</button>
-            </div>
-            <div id="rpt-aktd-summary" style="margin-top:10px; font-size:12px; color:var(--ink-3);"></div>
-            <div id="rpt-aktd-output" style="margin-top:10px; max-height:420px; overflow-y:auto;"></div>
-          </div>
-
+          <div id="rpt-kt-branch-summary" style="margin-bottom:10px;"></div>
+          <div id="rpt-kt-filter-output" style="max-height:400px;overflow-y:auto;"></div>
         </div>
 
-        <!-- Cleared in N Attempts -->
-        <div class="report-card" style="grid-column:1/-1;">
-          <h3>Cleared in N Attempts</h3>
-          <p>Students who cleared a subject, semester, or full First Year in exactly N attempts. Uses merged Gazette + Preliminary marks where available.</p>
-          <div class="report-inputs" style="flex-wrap:wrap; gap:10px; align-items:flex-end;">
+        <!-- ── Active KT Drill-down ── -->
+        <div class="report-card" style="margin-bottom:16px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+            <h3 style="margin-bottom:0;">Active KT Drill-down</h3>
+            <button id="rpt-aktd-csv" class="btn btn-secondary btn-sm" disabled>⬇ Export CSV</button>
+          </div>
+          <p>Students with an Active KT in a specific subject and component. Shows last attempt marks, attempt count, and division.</p>
+          <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-bottom:12px;">
             <div class="filter-group">
-              <label style="font-size:12px;">Subject / Scope</label>
+              <label>Subject</label>
+              <select id="rpt-aktd-subject" style="min-width:220px;"><option value="">— select subject —</option></select>
+            </div>
+            <div class="filter-group">
+              <label>Component</label>
+              <select id="rpt-aktd-component" style="min-width:130px;">
+                <option value="ESE">Theory (ESE)</option>
+                <option value="TW_Oral">Lab (TW / Oral)</option>
+                <option value="IAT">IAT</option>
+              </select>
+            </div>
+            <div class="filter-group">
+              <label>Batch Year</label>
+              <select id="rpt-aktd-batch" style="min-width:110px;"><option value="">All Batches</option></select>
+            </div>
+            <div class="filter-group">
+              <label>Division</label>
+              <select id="rpt-aktd-division" style="min-width:100px;"><option value="">All Divisions</option></select>
+            </div>
+            <div class="filter-group" style="justify-content:flex-end;">
+              <label>&nbsp;</label>
+              <button id="rpt-aktd-run" class="btn btn-primary btn-sm">Show List</button>
+            </div>
+          </div>
+          <div id="rpt-aktd-summary" style="margin-top:4px;margin-bottom:8px;font-size:12px;color:var(--ink-3);"></div>
+          <div id="rpt-aktd-output" style="max-height:420px;overflow-y:auto;"></div>
+        </div>
+
+        <!-- ── Cleared in N Attempts ── -->
+        <div class="report-card" style="margin-bottom:16px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+            <h3 style="margin-bottom:0;">Cleared in N Attempts</h3>
+            <button id="rpt-cia-csv" class="btn btn-secondary btn-sm" disabled>⬇ Export CSV</button>
+          </div>
+          <p>Students who cleared a subject, semester, or full First Year in exactly N attempts. Uses merged Gazette + Preliminary marks where available.</p>
+          <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-bottom:12px;">
+            <div class="filter-group">
+              <label>Subject / Scope</label>
               <select id="rpt-cia-subject" style="min-width:240px;"><option value="">— select —</option></select>
             </div>
             <div class="filter-group">
-              <label style="font-size:12px;">Attempts</label>
+              <label>Attempts</label>
               <select id="rpt-cia-attempts" style="min-width:100px;">
                 <option value="">— select —</option>
                 <option value="1">1st attempt</option>
@@ -1392,19 +1425,23 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
               </select>
             </div>
             <div class="filter-group">
-              <label style="font-size:12px;">Batch Year</label>
+              <label>Batch Year</label>
               <select id="rpt-cia-batch" style="min-width:110px;"><option value="">All Batches</option></select>
             </div>
             <div class="filter-group">
-              <label style="font-size:12px;">Division</label>
+              <label>Division</label>
               <select id="rpt-cia-division" style="min-width:100px;"><option value="">All Divisions</option></select>
             </div>
-            <button id="rpt-cia-run" class="btn btn-primary btn-sm">Show List</button>
-            <button id="rpt-cia-csv" class="btn btn-secondary btn-sm" disabled style="opacity:0.4; cursor:not-allowed;">⬇ Export CSV</button>
+            <div class="filter-group" style="justify-content:flex-end;">
+              <label>&nbsp;</label>
+              <button id="rpt-cia-run" class="btn btn-primary btn-sm">Run</button>
+            </div>
           </div>
-          <div id="rpt-cia-summary" style="margin-top:10px; font-size:12px; color:var(--ink-3);"></div>
-          <div id="rpt-cia-output" style="margin-top:10px; max-height:420px; overflow-y:auto;"></div>
+          <div id="rpt-cia-summary" style="margin-top:4px;margin-bottom:8px;font-size:12px;color:var(--ink-3);"></div>
+          <div id="rpt-cia-output" style="max-height:420px;overflow-y:auto;"></div>
         </div>
+
+      </div>
 
       <!-- ── Batch Comparison ── -->
       <div class="report-section" id="rpt-batch-compare-section">

@@ -2484,7 +2484,9 @@ function initReports() {
   document.getElementById('rpt-kt-run').onclick             = _rptKTFilterRun;
   document.getElementById('rpt-kt-csv').onclick             = _rptKTFilterExport;
   const myEntriesBtn = document.getElementById('rpt-my-entries');
-if (myEntriesBtn) myEntriesBtn.onclick = _rptMyEntries;
+  if (myEntriesBtn) myEntriesBtn.onclick = _rptMyEntries;
+
+  document.getElementById('rpt-elig-download-all')?.addEventListener('click', _eligDownloadAll);
 
   // Batch comparison
   const bcYears = State.getBatchYears();
@@ -3437,6 +3439,8 @@ function _eligSetCsvEnabled(btnId, enabled) {
 
 let _creditFilterLastResult = [];
 let _creditFilterLastMeta   = {};
+let _creditSortCol = 'pending';
+let _creditSortDir = -1;
 
 function _rptCreditFilterRun() {
   const sem    = Number(document.getElementById('rpt-credit-sem').value || 0);
@@ -3455,26 +3459,119 @@ function _rptCreditFilterRun() {
     if (sc.earned >= sc.max) continue;
 
     rows.push({
-        uin:           student.uin,
-        prn:           student.prn,
-        name:          student.name,
-        branch:        student.branch,
-        division:      student.division,
-        batchYear:     student.batchYear,
-        gender:        student.gender || '',
-        attemptCount,
-        hasUnsuccessfulReval,
-        lastSession,
-        lastSessionId: effectiveRow._sess?.id || null,
-        compMarks,
-        result:        dr.result,
+      uin:        s.uin,
+      prn:        s.prn,
+      name:       s.name,
+      branch:     s.branch,
+      division:   s.division,
+      batchYear:  s.batchYear,
+      gender:     s.gender || '',
+      semEarned:  sc.earned,
+      semMax:     sc.max,
+      semPending: sc.max - sc.earned,
+      cgpa:       acad.cgpa != null ? acad.cgpa.toFixed(2) : '—',
     });
   }
 
   _creditFilterLastResult = rows;
   _creditFilterLastMeta   = { sem };
+  _creditSortCol = 'pending';
+  _creditSortDir = -1;
+
+  // Update Run button label
+  const btn = document.getElementById('rpt-credit-run');
+  if (btn) btn.textContent = rows.length > 0 ? `Run (${rows.length} students)` : 'Run';
+
+  _rptRenderCreditBranchSummary(rows, sem);
   _rptRenderCreditFilterTable(rows, sem);
   _eligSetCsvEnabled('rpt-credit-csv', rows.length > 0);
+}
+
+function _rptRenderCreditBranchSummary(rows, sem) {
+  const el = document.getElementById('rpt-credit-branch-summary');
+  if (!el) return;
+  if (!rows.length) { el.innerHTML = ''; return; }
+
+  const byBranch = {};
+  for (const r of rows) {
+    if (!byBranch[r.branch]) byBranch[r.branch] = 0;
+    byBranch[r.branch]++;
+  }
+
+  el.innerHTML = `
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:4px;">
+      ${Object.entries(byBranch).sort((a,b) => b[1]-a[1]).map(([br, count]) => `
+        <span style="background:var(--brand-light);color:var(--brand);border:1px solid #C7D7FF;
+          border-radius:20px;padding:2px 10px;font-size:11px;font-weight:600;">
+          ${UI.esc(br)}: ${count}
+        </span>`).join('')}
+      <span style="background:var(--surface-2);color:var(--ink-3);border:1px solid var(--border);
+        border-radius:20px;padding:2px 10px;font-size:11px;font-weight:600;">
+        Total: ${rows.length}
+      </span>
+    </div>`;
+}
+
+function _creditSortAndRender() {
+  _rptRenderCreditFilterTable(_creditFilterLastResult, _creditFilterLastMeta.sem);
+}
+
+function _rptRenderCreditFilterTable(rows, sem) {
+  const out = document.getElementById('rpt-credit-filter-output');
+  if (!out) return;
+  if (!rows.length) {
+    out.innerHTML = '<div class="empty-state">No students found matching this filter.</div>';
+    return;
+  }
+
+  // Sort
+  const sorted = [...rows].sort((a, b) => {
+    let va, vb;
+    if (_creditSortCol === 'pending')   { return _creditSortDir * (b.semPending - a.semPending); }
+    if (_creditSortCol === 'earned')    { return _creditSortDir * (b.semEarned  - a.semEarned); }
+    if (_creditSortCol === 'cgpa')      { return _creditSortDir * (parseFloat(b.cgpa) - parseFloat(a.cgpa)); }
+    if (_creditSortCol === 'name')      { va = a.name;     vb = b.name; }
+    else if (_creditSortCol === 'uin')  { va = a.uin;      vb = b.uin; }
+    else if (_creditSortCol === 'branch'){ va = a.branch;  vb = b.branch; }
+    else if (_creditSortCol === 'batch'){ va = a.batchYear;vb = b.batchYear; }
+    else if (_creditSortCol === 'gender'){ va = a.gender;  vb = b.gender; }
+    else { va = ''; vb = ''; }
+    return _creditSortDir * String(va).localeCompare(String(vb));
+  });
+
+  function _th(label, col) {
+    const active = _creditSortCol === col;
+    const arrow  = active ? (_creditSortDir === 1 ? ' ↑' : ' ↓') : ' ↕';
+    return `<th style="cursor:pointer;white-space:nowrap;user-select:none;position:sticky;top:0;background:var(--surface-2);"
+      onclick="_creditSortCol='${col}';_creditSortDir=_creditSortCol==='${col}'&&_creditSortDir===1?-1:1;_creditSortCol='${col}';_creditSortAndRender()">
+      ${UI.esc(label)}${arrow}</th>`;
+  }
+
+  out.innerHTML = `
+    <table class="audit-table" style="width:100%;">
+      <thead><tr>
+        ${_th('UIN','uin')}
+        ${_th('Name','name')}
+        ${_th('Branch','branch')}
+        ${_th('Batch','batch')}
+        ${_th('Gender','gender')}
+        ${_th(`Sem ${sem} Credits`,'earned')}
+        ${_th('Pending','pending')}
+        ${_th('CGPA','cgpa')}
+      </tr></thead>
+      <tbody>
+        ${sorted.map(r => `<tr>
+          <td><span class="subj-code-small">${UI.esc(r.uin)}</span></td>
+          <td>${UI.esc(r.name)}</td>
+          <td>${UI.esc(r.branch)}</td>
+          <td>${UI.esc(r.batchYear)}</td>
+          <td>${UI.esc(r.gender || '—')}</td>
+          <td>${r.semEarned} / ${r.semMax}</td>
+          <td class="credit-zero" style="font-weight:700;">${r.semPending}</td>
+          <td><strong>${UI.esc(r.cgpa)}</strong></td>
+        </tr>`).join('')}
+      </tbody>
+    </table>`;
 }
 
 function _rptCreditFilterExport() {
@@ -3490,6 +3587,13 @@ function _rptCreditFilterExport() {
 // Filter 2: Students with total cumulative credits < X
 let _totalCreditLastResult = [];
 let _totalCreditLastMeta   = {};
+let _totalCreditSortCol    = 'totalEarned';
+let _totalCreditSortDir    = 1;
+
+function _tcSetThreshold(val) {
+  const el = document.getElementById('rpt-credit-x');
+  if (el) { el.value = val; el.focus(); }
+}
 
 function _rptTotalCreditFilterRun() {
   const threshold = Number(document.getElementById('rpt-credit-x').value || 0);
@@ -3507,34 +3611,134 @@ function _rptTotalCreditFilterRun() {
     if (earned >= threshold) continue;
 
     rows.push({
-      uin:       s.uin,
-      prn:       s.prn,
-      name:      s.name,
-      branch:    s.branch,
-      division:  s.division,
-      batchYear: s.batchYear,
-      sem1Earned: acad.semCredits[1].earned,
-      sem1Max:    acad.semCredits[1].max,
-      sem2Earned: acad.semCredits[2].earned,
-      sem2Max:    acad.semCredits[2].max,
+      uin:         s.uin,
+      prn:         s.prn,
+      name:        s.name,
+      branch:      s.branch,
+      division:    s.division,
+      batchYear:   s.batchYear,
+      gender:      s.gender || '',
+      sem1Earned:  acad.semCredits[1].earned,
+      sem1Max:     acad.semCredits[1].max,
+      sem2Earned:  acad.semCredits[2].earned,
+      sem2Max:     acad.semCredits[2].max,
       totalEarned: earned,
       totalMax:    max,
-      cgpa:       acad.cgpa != null ? acad.cgpa.toFixed(2) : '—',
+      cgpa:        acad.cgpa != null ? acad.cgpa.toFixed(2) : '—',
     });
   }
 
   _totalCreditLastResult = rows;
   _totalCreditLastMeta   = { threshold };
+  _totalCreditSortCol    = 'totalEarned';
+  _totalCreditSortDir    = 1;
+
+  const btn = document.getElementById('rpt-total-credit-run');
+  if (btn) btn.textContent = rows.length > 0 ? `Run (${rows.length} students)` : 'Run';
+
+  _rptRenderTotalCreditBranchSummary(rows, threshold);
   _rptRenderTotalCreditFilterTable(rows, threshold);
   _eligSetCsvEnabled('rpt-total-credit-csv', rows.length > 0);
+}
+
+function _rptRenderTotalCreditBranchSummary(rows, threshold) {
+  const el = document.getElementById('rpt-total-credit-branch-summary');
+  if (!el) return;
+  if (!rows.length) { el.innerHTML = ''; return; }
+
+  const byBranch = {};
+  for (const r of rows) {
+    if (!byBranch[r.branch]) byBranch[r.branch] = 0;
+    byBranch[r.branch]++;
+  }
+
+  el.innerHTML = `
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:4px;">
+      ${Object.entries(byBranch).sort((a,b) => b[1]-a[1]).map(([br, count]) => `
+        <span style="background:var(--brand-light);color:var(--brand);border:1px solid #C7D7FF;
+          border-radius:20px;padding:2px 10px;font-size:11px;font-weight:600;">
+          ${UI.esc(br)}: ${count}
+        </span>`).join('')}
+      <span style="background:var(--surface-2);color:var(--ink-3);border:1px solid var(--border);
+        border-radius:20px;padding:2px 10px;font-size:11px;font-weight:600;">
+        Total: ${rows.length} · below ${threshold} credits
+      </span>
+    </div>`;
+}
+
+function _totalCreditSortAndRender() {
+  _rptRenderTotalCreditFilterTable(_totalCreditLastResult, _totalCreditLastMeta.threshold);
+}
+
+function _rptRenderTotalCreditFilterTable(rows, threshold) {
+  const out = document.getElementById('rpt-total-credit-filter-output');
+  if (!out) return;
+  if (!rows.length) {
+    out.innerHTML = '<div class="empty-state">No students found matching this filter.</div>';
+    return;
+  }
+
+  const sorted = [...rows].sort((a, b) => {
+    const col = _totalCreditSortCol;
+    if (col === 'totalEarned') return _totalCreditSortDir * (a.totalEarned - b.totalEarned);
+    if (col === 'sem1')        return _totalCreditSortDir * (a.sem1Earned  - b.sem1Earned);
+    if (col === 'sem2')        return _totalCreditSortDir * (a.sem2Earned  - b.sem2Earned);
+    if (col === 'cgpa')        return _totalCreditSortDir * (parseFloat(a.cgpa) - parseFloat(b.cgpa));
+    let va, vb;
+    if (col === 'name')   { va = a.name;      vb = b.name; }
+    else if (col === 'uin')    { va = a.uin;       vb = b.uin; }
+    else if (col === 'branch') { va = a.branch;    vb = b.branch; }
+    else if (col === 'batch')  { va = a.batchYear; vb = b.batchYear; }
+    else if (col === 'gender') { va = a.gender;    vb = b.gender; }
+    else { va = ''; vb = ''; }
+    return _totalCreditSortDir * String(va).localeCompare(String(vb));
+  });
+
+  function _th(label, col) {
+    const active = _totalCreditSortCol === col;
+    const arrow  = active ? (_totalCreditSortDir === 1 ? ' ↑' : ' ↓') : ' ↕';
+    return `<th style="cursor:pointer;white-space:nowrap;user-select:none;position:sticky;top:0;background:var(--surface-2);"
+      onclick="_totalCreditSortCol='${col}';_totalCreditSortDir=_totalCreditSortCol==='${col}'&&_totalCreditSortDir===1?-1:1;_totalCreditSortCol='${col}';_totalCreditSortAndRender()">
+      ${UI.esc(label)}${arrow}</th>`;
+  }
+
+  out.innerHTML = `
+    <table class="audit-table" style="width:100%;">
+      <thead><tr>
+        ${_th('UIN','uin')}
+        ${_th('Name','name')}
+        ${_th('Branch','branch')}
+        ${_th('Batch','batch')}
+        ${_th('Gender','gender')}
+        ${_th('Sem I','sem1')}
+        ${_th('Sem II','sem2')}
+        ${_th('Total Credits','totalEarned')}
+        ${_th('CGPA','cgpa')}
+      </tr></thead>
+      <tbody>
+        ${sorted.map(r => `<tr>
+          <td><span class="subj-code-small">${UI.esc(r.uin)}</span></td>
+          <td>${UI.esc(r.name)}</td>
+          <td>${UI.esc(r.branch)}</td>
+          <td>${UI.esc(r.batchYear)}</td>
+          <td>${UI.esc(r.gender || '—')}</td>
+          <td>${r.sem1Earned}/${r.sem1Max}</td>
+          <td>${r.sem2Earned}/${r.sem2Max}</td>
+          <td class="${r.totalEarned < threshold ? 'credit-zero' : 'credit-earned'}" style="font-weight:700;">
+            ${r.totalEarned} / ${r.totalMax}
+          </td>
+          <td><strong>${UI.esc(r.cgpa)}</strong></td>
+        </tr>`).join('')}
+      </tbody>
+    </table>`;
 }
 
 function _rptTotalCreditFilterExport() {
   if (!_totalCreditLastResult.length) { UI.toast('Run the filter first.', 'error'); return; }
   const { threshold } = _totalCreditLastMeta;
   UI.exportCSV(`TotalCredits_lt${threshold}`,
-    ['UIN','PRN/ERN','Name','Branch','Division','Batch Year','Sem 1 Earned','Sem 1 Max','Sem 2 Earned','Sem 2 Max','Total Earned','Total Max','CGPA'],
-    _totalCreditLastResult.map(r => [r.uin, r.prn, r.name, r.branch, r.division, r.batchYear, r.sem1Earned, r.sem1Max, r.sem2Earned, r.sem2Max, r.totalEarned, r.totalMax, r.cgpa])
+    ['UIN','PRN/ERN','Name','Branch','Division','Batch Year','Gender','Sem 1 Earned','Sem 1 Max','Sem 2 Earned','Sem 2 Max','Total Earned','Total Max','CGPA'],
+    _totalCreditLastResult.map(r => [r.uin, r.prn, r.name, r.branch, r.division, r.batchYear, r.gender, r.sem1Earned, r.sem1Max, r.sem2Earned, r.sem2Max, r.totalEarned, r.totalMax, r.cgpa])
   );
   UI.toast(`${_totalCreditLastResult.length} students exported.`, 'success');
 }
@@ -3601,6 +3805,8 @@ function _rptRenderTotalCreditFilterTable(rows, threshold) {
 
 let _ktFilterLastResult = [];
 let _ktFilterLastMeta   = {};
+let _ktSortCol          = 'ktCount';
+let _ktSortDir          = -1;
 
 function _rptKTFilterRun() {
   const n      = Number(document.getElementById('rpt-kt-n').value || 1);
@@ -3610,49 +3816,146 @@ function _rptKTFilterRun() {
   const gender = document.getElementById('rpt-elig-gender').value || null;
   const raw    = State.reportKTFilter(n, mode, scope, gender);
 
-  // Group into one row per student with KT subjects comma-separated
+  // Group into one row per student with KT subjects as array
   const byStudent = {};
   for (const d of raw) {
-    if (!byStudent[d.uin]) byStudent[d.uin] = { prn: d.prn, uin: d.uin, name: d.name, branch: d.branch, gender: d.gender || '', ktSubjects: [] };
     if (branch && d.branch !== branch) continue;
-    byStudent[d.uin].ktSubjects.push(`${d.subjectCode} — ${d.subjectName}${d.result === 'AB' ? ' (AB)' : ''}`);
+    if (!byStudent[d.uin]) byStudent[d.uin] = {
+      prn: d.prn, uin: d.uin, name: d.name,
+      branch: d.branch, gender: d.gender || '', ktSubjects: [],
+    };
+    byStudent[d.uin].ktSubjects.push({
+      code:   d.subjectCode,
+      name:   d.subjectName,
+      result: d.result,
+    });
   }
-  const rows = Object.values(byStudent).filter(r => (!branch || r.branch === branch) && r.ktSubjects.length > 0);
+  const rows = Object.values(byStudent)
+    .filter(r => r.ktSubjects.length > 0)
+    .map(r => ({ ...r, ktCount: r.ktSubjects.length }));
 
   _ktFilterLastResult = rows;
   _ktFilterLastMeta   = { n, mode, scope };
+  _ktSortCol          = 'ktCount';
+  _ktSortDir          = -1;
 
+  const btn = document.getElementById('rpt-kt-run');
+  if (btn) btn.textContent = rows.length > 0 ? `Run (${rows.length} students)` : 'Run';
+
+  _rptRenderKTBranchSummary(rows);
+  _rptRenderKTFilterTable(rows);
+  _eligSetCsvEnabled('rpt-kt-csv', rows.length > 0);
+}
+
+function _rptRenderKTBranchSummary(rows) {
+  const el = document.getElementById('rpt-kt-branch-summary');
+  if (!el) return;
+  if (!rows.length) { el.innerHTML = ''; return; }
+
+  const byBranch = {};
+  for (const r of rows) {
+    if (!byBranch[r.branch]) byBranch[r.branch] = 0;
+    byBranch[r.branch]++;
+  }
+
+  el.innerHTML = `
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:4px;">
+      ${Object.entries(byBranch).sort((a,b) => b[1]-a[1]).map(([br, count]) => `
+        <span style="background:var(--kt-bg);color:var(--kt);border:1px solid #FCD34D;
+          border-radius:20px;padding:2px 10px;font-size:11px;font-weight:600;">
+          ${UI.esc(br)}: ${count}
+        </span>`).join('')}
+      <span style="background:var(--surface-2);color:var(--ink-3);border:1px solid var(--border);
+        border-radius:20px;padding:2px 10px;font-size:11px;font-weight:600;">
+        Total: ${rows.length}
+      </span>
+    </div>`;
+}
+
+function _ktSortAndRender() {
+  _rptRenderKTFilterTable(_ktFilterLastResult);
+}
+
+function _rptRenderKTFilterTable(rows) {
   const out = document.getElementById('rpt-kt-filter-output');
-  if (rows.length === 0) {
+  if (!out) return;
+  if (!rows.length) {
     out.innerHTML = '<div class="empty-state">No students found for this filter.</div>';
-    _eligSetCsvEnabled('rpt-kt-csv', false);
     return;
   }
 
+  const sorted = [...rows].sort((a, b) => {
+    const col = _ktSortCol;
+    if (col === 'ktCount') return _ktSortDir * (b.ktCount - a.ktCount);
+    let va, vb;
+    if      (col === 'uin')    { va = a.uin;      vb = b.uin; }
+    else if (col === 'name')   { va = a.name;     vb = b.name; }
+    else if (col === 'branch') { va = a.branch;   vb = b.branch; }
+    else if (col === 'gender') { va = a.gender;   vb = b.gender; }
+    else { va = ''; vb = ''; }
+    return _ktSortDir * String(va).localeCompare(String(vb));
+  });
+
+  function _th(label, col) {
+    const active = _ktSortCol === col;
+    const arrow  = active ? (_ktSortDir === 1 ? ' ↑' : ' ↓') : ' ↕';
+    return `<th style="cursor:pointer;white-space:nowrap;user-select:none;position:sticky;top:0;background:var(--surface-2);"
+      onclick="_ktSortCol='${col}';_ktSortDir=_ktSortCol==='${col}'&&_ktSortDir===1?-1:1;_ktSortCol='${col}';_ktSortAndRender()">
+      ${UI.esc(label)}${arrow}</th>`;
+  }
+
   out.innerHTML = `
-    <div style="margin-bottom:8px; font-size:12px; color:var(--ink-3);">${rows.length} student${rows.length !== 1 ? 's' : ''}</div>
-    <div style="overflow-x:auto;">
-    <table class="audit-table">
-      <thead><tr><th>Name</th><th>PRN</th><th>UIN</th><th>Branch</th><th>Gender</th><th>KT Subjects</th></tr></thead>
-      <tbody>${rows.map(r => `<tr>
-        <td>${UI.esc(r.name)}</td>
-        <td>${UI.esc(r.prn)}</td>
-        <td><span class="subj-code-small">${UI.esc(r.uin)}</span></td>
-        <td>${UI.esc(r.branch)}</td>
-        <td>${UI.esc(r.gender || '—')}</td>
-        <td style="font-size:11px;">${UI.esc(r.ktSubjects.join(', '))}</td>
-      </tr>`).join('')}
+    <table class="audit-table" style="width:100%;">
+      <thead><tr>
+        ${_th('UIN','uin')}
+        ${_th('Name','name')}
+        ${_th('Branch','branch')}
+        ${_th('Gender','gender')}
+        ${_th('KT Count','ktCount')}
+        <th style="position:sticky;top:0;background:var(--surface-2);">KT Subjects</th>
+      </tr></thead>
+      <tbody>
+        ${sorted.map(r => `<tr>
+          <td><span class="subj-code-small">${UI.esc(r.uin)}</span></td>
+          <td>${UI.esc(r.name)}</td>
+          <td>${UI.esc(r.branch)}</td>
+          <td>${UI.esc(r.gender || '—')}</td>
+          <td style="text-align:center;">
+            <span class="badge badge-kt">${r.ktCount}</span>
+          </td>
+          <td>
+            <details>
+              <summary style="cursor:pointer;font-size:11px;color:var(--brand);font-weight:600;">
+                ${r.ktCount} subject${r.ktCount !== 1 ? 's' : ''} — click to expand
+              </summary>
+              <div style="margin-top:6px;display:flex;flex-direction:column;gap:3px;">
+                ${r.ktSubjects.map(s => `
+                  <div style="font-size:11px;padding:3px 6px;background:var(--kt-bg);
+                    border-radius:4px;border-left:3px solid var(--kt);">
+                    <span class="subj-code-small">${UI.esc(s.code)}</span>
+                    ${UI.esc(s.name)}
+                    ${s.result === 'AB'
+                      ? '<span class="badge badge-ab" style="margin-left:4px;">AB</span>'
+                      : '<span class="badge badge-fail" style="margin-left:4px;">Fail</span>'}
+                  </div>`).join('')}
+              </div>
+            </details>
+          </td>
+        </tr>`).join('')}
       </tbody>
-    </table></div>`;
-  _eligSetCsvEnabled('rpt-kt-csv', true);
+    </table>`;
 }
 
 function _rptKTFilterExport() {
   if (!_ktFilterLastResult.length) { UI.toast('Run the filter first.', 'error'); return; }
   const { n, mode, scope } = _ktFilterLastMeta;
   UI.exportCSV(`KTFilter_${mode.replace(' ','')}_${n}_${scope}`,
-    ['PRN/ERN','UIN','Name','Branch','Gender','KT Subjects'],
-    _ktFilterLastResult.map(r => [r.prn, r.uin, r.name, r.branch, r.gender, r.ktSubjects.join(', ')])
+    ['UIN','PRN/ERN','Name','Branch','Gender','KT Count','KT Subjects'],
+    _ktFilterLastResult.map(r => [
+      r.uin, r.prn, r.name, r.branch, r.gender,
+      r.ktCount,
+      r.ktSubjects.map(s => `${s.code} — ${s.name}${s.result === 'AB' ? ' (AB)' : ''}`).join('; '),
+    ])
   );
   UI.toast('KT filter exported.', 'success');
 }
@@ -3668,6 +3971,123 @@ function _rptMyEntries() {
   UI.toast(`Exported ${data.length} of your entries.`, 'success');
 }
 
+
+// ── Eligibility: Download All (Excel) ─────────────────────
+function _eligDownloadAll() {
+  const branch = document.getElementById('rpt-elig-branch').value || null;
+  const gender = document.getElementById('rpt-elig-gender').value || null;
+  const students = State.getStudents({ branch: branch || undefined, gender: gender || undefined });
+
+  const wb = XLSX.utils.book_new();
+
+  // ── Sheet 1: Incomplete Sem I Credits ─────────────────
+  const sem1Rows = [];
+  const sem2Rows = [];
+  for (const s of students) {
+    const acad = State.computeStudentAcademics(s.uin);
+    if (!acad) continue;
+    for (const sem of [1, 2]) {
+      const sc = acad.semCredits[sem];
+      if (!sc || sc.max === 0 || sc.earned >= sc.max) continue;
+      const row = {
+        uin:        s.uin,
+        prn:        s.prn,
+        name:       s.name,
+        branch:     s.branch,
+        division:   s.division,
+        batchYear:  s.batchYear,
+        gender:     s.gender || '',
+        semEarned:  sc.earned,
+        semMax:     sc.max,
+        semPending: sc.max - sc.earned,
+        cgpa:       acad.cgpa != null ? acad.cgpa.toFixed(2) : '—',
+      };
+      if (sem === 1) sem1Rows.push(row);
+      else           sem2Rows.push(row);
+    }
+  }
+
+  const _semHeaders = (sem) => [
+    'UIN','PRN/ERN','Name','Branch','Division','Batch Year','Gender',
+    `Sem ${sem} Earned`,`Sem ${sem} Max`,'Pending Credits','CGPA',
+  ];
+  const _semRow = (r, sem) => [
+    r.uin, r.prn, r.name, r.branch, r.division, r.batchYear, r.gender,
+    r.semEarned, r.semMax, r.semPending, r.cgpa,
+  ];
+
+  const ws1 = XLSX.utils.aoa_to_sheet([
+    _semHeaders(1),
+    ...sem1Rows.map(r => _semRow(r, 1)),
+  ]);
+  ws1['!cols'] = [8,12,24,10,8,8,8,10,8,10,8].map(w => ({ wch: w }));
+  XLSX.utils.book_append_sheet(wb, ws1, 'Sem I Incomplete');
+
+  const ws2 = XLSX.utils.aoa_to_sheet([
+    _semHeaders(2),
+    ...sem2Rows.map(r => _semRow(r, 2)),
+  ]);
+  ws2['!cols'] = [8,12,24,10,8,8,8,10,8,10,8].map(w => ({ wch: w }));
+  XLSX.utils.book_append_sheet(wb, ws2, 'Sem II Incomplete');
+
+  // ── Sheet 2: Total Credits Below Common Thresholds ────
+  const thresholds = [10, 20, 30, 40];
+  for (const threshold of thresholds) {
+    const tcRows = [];
+    for (const s of students) {
+      const acad = State.computeStudentAcademics(s.uin);
+      if (!acad) continue;
+      const { earned, max } = acad.totalCredits;
+      if (earned >= threshold) continue;
+      tcRows.push([
+        s.uin, s.prn, s.name, s.branch, s.division, s.batchYear, s.gender || '',
+        acad.semCredits[1].earned, acad.semCredits[1].max,
+        acad.semCredits[2].earned, acad.semCredits[2].max,
+        earned, max,
+        acad.cgpa != null ? acad.cgpa.toFixed(2) : '—',
+      ]);
+    }
+    const wsTc = XLSX.utils.aoa_to_sheet([
+      ['UIN','PRN/ERN','Name','Branch','Division','Batch Year','Gender',
+       'Sem I Earned','Sem I Max','Sem II Earned','Sem II Max',
+       'Total Earned','Total Max','CGPA'],
+      ...tcRows,
+    ]);
+    wsTc['!cols'] = [8,12,24,10,8,8,8,8,6,8,6,10,8,8].map(w => ({ wch: w }));
+    XLSX.utils.book_append_sheet(wb, wsTc, `Credits < ${threshold}`);
+  }
+
+  // ── Sheet 3: Active KT Students ───────────────────────
+  const ktRaw  = State.reportKTFilter(1, 'At least', 'Active', gender || undefined);
+  const ktByStudent = {};
+  for (const d of ktRaw) {
+    if (branch && d.branch !== branch) continue;
+    if (!ktByStudent[d.uin]) ktByStudent[d.uin] = {
+      prn: d.prn, uin: d.uin, name: d.name,
+      branch: d.branch, gender: d.gender || '', ktSubjects: [],
+    };
+    ktByStudent[d.uin].ktSubjects.push(
+      `${d.subjectCode} — ${d.subjectName}${d.result === 'AB' ? ' (AB)' : ''}`
+    );
+  }
+  const ktRows = Object.values(ktByStudent).map(r => [
+    r.uin, r.prn, r.name, r.branch, r.gender,
+    r.ktSubjects.length,
+    r.ktSubjects.join('; '),
+  ]);
+  const wsKT = XLSX.utils.aoa_to_sheet([
+    ['UIN','PRN/ERN','Name','Branch','Gender','KT Count','KT Subjects'],
+    ...ktRows,
+  ]);
+  wsKT['!cols'] = [8,12,24,10,8,8,40].map(w => ({ wch: w }));
+  XLSX.utils.book_append_sheet(wb, wsKT, 'Active KT Students');
+
+  // ── Export ─────────────────────────────────────────────
+  const suffix = branch ? `_${branch}` : '';
+  const filename = `EligibilityReport${suffix}_${new Date().toISOString().slice(0,10)}.xlsx`;
+  XLSX.writeFile(wb, filename);
+  UI.toast(`✓ Exported: ${filename}`, 'success');
+}
 
 // ── Active KT Drill-down ──────────────────────────────────────
 
