@@ -2509,9 +2509,12 @@ function initReports() {
   UI.buildSelect('rpt-bc-batch-a', bcYears, '— select —');
   UI.buildSelect('rpt-bc-batch-b', bcYears, '— select —');
   UI.buildSelect('rpt-bc-branch',  BRANCHES, '— all branches —');
-  // Session selects are populated when batch is chosen
   document.getElementById('rpt-bc-batch-a').addEventListener('change', () => _bcPopulateSessions('a'));
   document.getElementById('rpt-bc-batch-b').addEventListener('change', () => _bcPopulateSessions('b'));
+  // Cross-check: show warning if same session selected on both sides
+  ['rpt-bc-session-a','rpt-bc-session-b'].forEach(id => {
+    document.getElementById(id)?.addEventListener('change', _bcCheckSameSession);
+  });
   document.getElementById('rpt-bc-run').onclick = _rptBatchCompare;
   document.getElementById('rpt-bc-csv').onclick = _rptBatchCompareCsv;
 
@@ -2538,21 +2541,67 @@ function initReports() {
 // ── Batch Comparison ──────────────────────────────────────────
 function _bcPopulateSessions(side) {
   const batchYear = document.getElementById(`rpt-bc-batch-${side}`).value;
+  const semFilter = document.getElementById('rpt-bc-semester')?.value || '';
   const sessions  = sortSessions(State.getSessions().filter(s =>
-    !batchYear || s.batchYear === batchYear
+    (!batchYear || s.batchYear === batchYear) &&
+    (!semFilter  || String(s.semester) === semFilter)
   ));
-  const el = document.getElementById(`rpt-bc-session-${side}`);
+  const el   = document.getElementById(`rpt-bc-session-${side}`);
+  const hint = document.getElementById(`bc-hint-${side}`);
+  if (!batchYear) {
+    el.innerHTML = '<option value="">— select batch first —</option>';
+    if (hint) hint.textContent = 'Select a batch year to load sessions';
+    return;
+  }
   el.innerHTML = '<option value="">— select session —</option>' +
     sessions.map(s => `<option value="${UI.esc(s.id)}">${UI.esc(s.name)}</option>`).join('');
+  if (hint) hint.textContent = sessions.length
+    ? `${sessions.length} session${sessions.length > 1 ? 's' : ''} available`
+    : 'No sessions found for this batch';
+  _bcCheckSameSession();
 }
 
-function _bcGetData(batchYear, sessionId, branch) {
+function _bcCheckSameSession() {
+  const aId = document.getElementById('rpt-bc-session-a')?.value;
+  const bId = document.getElementById('rpt-bc-session-b')?.value;
+  const warn = document.getElementById('bc-same-warning');
+  if (!warn) return;
+  warn.style.display = (aId && bId && aId === bId) ? '' : 'none';
+}
+
+function _bcSwapBatches() {
+  const batchA   = document.getElementById('rpt-bc-batch-a');
+  const batchB   = document.getElementById('rpt-bc-batch-b');
+  const sessA    = document.getElementById('rpt-bc-session-a');
+  const sessB    = document.getElementById('rpt-bc-session-b');
+
+  // Swap batch year values
+  const tmpBatch = batchA.value;
+  batchA.value   = batchB.value;
+  batchB.value   = tmpBatch;
+
+  // Repopulate session dropdowns for new batch values, then restore session selections
+  const tmpSessAVal = sessA.value;
+  const tmpSessBVal = sessB.value;
+
+  _bcPopulateSessions('a');
+  _bcPopulateSessions('b');
+
+  // Restore session selections (they may still be valid after swap)
+  sessA.value = tmpSessBVal;
+  sessB.value = tmpSessAVal;
+
+  _bcCheckSameSession();
+  UI.toast('Batches swapped.', 'info', 1800);
+}
+
+function _bcGetData(batchYear, sessionId, branch, semesterOverride) {
   // Returns { students, sessionResults } for the given batch+session+branch
   let students = State.getStudents({ branch: branch || undefined });
   if (batchYear) students = students.filter(s => s.batchYear === batchYear);
 
   const sess = sessionId ? State.getSession(sessionId) : null;
-  const sem  = sess?.semester || 1;
+  const sem  = semesterOverride ? Number(semesterOverride) : (sess?.semester || 1);
 
   const subjects = sess
     ? getSubjectsForSem(sem, null, sess)
@@ -2648,14 +2697,19 @@ function _rptBatchCompare() {
   const sessAId  = document.getElementById('rpt-bc-session-a').value;
   const sessBId  = document.getElementById('rpt-bc-session-b').value;
   const branch   = document.getElementById('rpt-bc-branch').value;
+  const semester = document.getElementById('rpt-bc-semester')?.value || '';
   const output   = document.getElementById('rpt-bc-output');
 
   if (!sessAId || !sessBId) {
     UI.toast('Please select sessions for both batches.', 'error'); return;
   }
+  if (sessAId === sessBId) {
+    UI.toast('Both sides point to the same session — please select different sessions.', 'error', 5000);
+    return;
+  }
 
-  const A = _bcGetData(batchA, sessAId, branch);
-  const B = _bcGetData(batchB, sessBId, branch);
+  const A = _bcGetData(batchA, sessAId, branch, semester);
+  const B = _bcGetData(batchB, sessBId, branch, semester);
 
   if (A.studentData.length === 0 && B.studentData.length === 0) {
     output.innerHTML = '<div class="empty-state">No data found for selected filters.</div>'; return;

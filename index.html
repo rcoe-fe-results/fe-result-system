@@ -942,6 +942,54 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
 .subj-preview.preview-pending {
   color:var(--ink-4);
 }
+/* ─── Batch Comparison redesign ─────────────────────────── */
+.bc-vs-layout {
+  display:grid; grid-template-columns:1fr auto 1fr; gap:0; align-items:start;
+  margin-bottom:16px;
+}
+.bc-side-card {
+  border:1px solid var(--border); border-radius:var(--radius-lg);
+  padding:16px; background:var(--surface);
+}
+.bc-side-card.side-a { border-top:3px solid var(--brand); }
+.bc-side-card.side-b { border-top:3px solid var(--accent); }
+.bc-side-label {
+  font-size:11px; font-weight:700; letter-spacing:.05em; text-transform:uppercase;
+  margin-bottom:10px; display:flex; align-items:center; gap:8px;
+}
+.bc-side-label.label-a { color:var(--brand); }
+.bc-side-label.label-b { color:var(--accent); }
+.bc-vs-divider {
+  display:flex; flex-direction:column; align-items:center; justify-content:center;
+  padding:0 12px; gap:10px;
+}
+.bc-vs-badge {
+  width:36px; height:36px; border-radius:50%;
+  background:var(--ink); color:#fff;
+  display:flex; align-items:center; justify-content:center;
+  font-size:12px; font-weight:700; flex-shrink:0;
+}
+.bc-swap-btn {
+  background:var(--surface-2); border:1px solid var(--border-2);
+  border-radius:20px; padding:5px 12px; cursor:pointer;
+  font-size:12px; color:var(--ink-3); font-family:inherit;
+  transition:all .15s; white-space:nowrap;
+}
+.bc-swap-btn:hover { background:var(--border); color:var(--ink); }
+.bc-shared-filters {
+  display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap;
+  padding:12px 14px; background:var(--surface-2);
+  border:1px solid var(--border); border-radius:var(--radius);
+  margin-bottom:14px;
+}
+.bc-same-warning {
+  display:none; background:var(--grace-bg); border:1px solid #FCD34D;
+  color:var(--kt); font-size:12px; font-weight:500;
+  padding:7px 12px; border-radius:var(--radius); margin-bottom:10px;
+}
+.bc-session-hint {
+  font-size:11px; color:var(--ink-4); font-style:italic; margin-top:4px;
+}
 </style>
 </head>
 <body>
@@ -1477,31 +1525,72 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
       <div class="report-section" id="rpt-batch-compare-section">
         <h3>Batch Comparison</h3>
         <p>Compare two batches side-by-side — pass rates, average marks, and CGPA distribution.</p>
-        <div class="filter-row" style="flex-wrap:wrap; gap:12px; align-items:flex-end;">
-          <div class="filter-group">
-            <label>Batch A</label>
-            <select id="rpt-bc-batch-a" style="min-width:120px;"><option value="">— select —</option></select>
+
+        <!-- A vs B two-column layout -->
+        <div class="bc-vs-layout">
+
+          <!-- Side A -->
+          <div class="bc-side-card side-a">
+            <div class="bc-side-label label-a">🔵 Batch A</div>
+            <div class="filter-group" style="margin-bottom:10px;">
+              <label>Batch Year</label>
+              <select id="rpt-bc-batch-a" style="width:100%;"><option value="">— select —</option></select>
+            </div>
+            <div class="filter-group">
+              <label>Session</label>
+              <select id="rpt-bc-session-a" style="width:100%;"><option value="">— select batch first —</option></select>
+              <div class="bc-session-hint" id="bc-hint-a">Select a batch year to load sessions</div>
+            </div>
           </div>
-          <div class="filter-group">
-            <label>Session A</label>
-            <select id="rpt-bc-session-a" style="min-width:200px;"><option value="">— select —</option></select>
+
+          <!-- VS divider -->
+          <div class="bc-vs-divider">
+            <div class="bc-vs-badge">vs</div>
+            <button class="bc-swap-btn" onclick="_bcSwapBatches()" title="Swap A and B">⇄ Swap</button>
           </div>
-          <div class="filter-group">
-            <label>Batch B</label>
-            <select id="rpt-bc-batch-b" style="min-width:120px;"><option value="">— select —</option></select>
+
+          <!-- Side B -->
+          <div class="bc-side-card side-b">
+            <div class="bc-side-label label-b">🟢 Batch B</div>
+            <div class="filter-group" style="margin-bottom:10px;">
+              <label>Batch Year</label>
+              <select id="rpt-bc-batch-b" style="width:100%;"><option value="">— select —</option></select>
+            </div>
+            <div class="filter-group">
+              <label>Session</label>
+              <select id="rpt-bc-session-b" style="width:100%;"><option value="">— select batch first —</option></select>
+              <div class="bc-session-hint" id="bc-hint-b">Select a batch year to load sessions</div>
+            </div>
           </div>
-          <div class="filter-group">
-            <label>Session B</label>
-            <select id="rpt-bc-session-b" style="min-width:200px;"><option value="">— select —</option></select>
-          </div>
+
+        </div>
+
+        <!-- Shared filters -->
+        <div class="bc-shared-filters">
           <div class="filter-group">
             <label>Branch</label>
             <select id="rpt-bc-branch" style="min-width:130px;"><option value="">— all branches —</option></select>
           </div>
-          <button id="rpt-bc-run" class="btn btn-primary btn-sm">Compare</button>
-          <button id="rpt-bc-csv" class="btn btn-secondary btn-sm">⬇ Export CSV</button>
+          <div class="filter-group">
+            <label>Semester</label>
+            <select id="rpt-bc-semester" style="min-width:120px;">
+              <option value="">— any —</option>
+              <option value="1">Semester I</option>
+              <option value="2">Semester II</option>
+            </select>
+          </div>
+          <div style="margin-left:auto; display:flex; gap:8px; align-items:flex-end;">
+            <button id="rpt-bc-run" class="btn btn-primary">Compare →</button>
+            <button id="rpt-bc-csv" class="btn btn-secondary">⬇ Export CSV</button>
+          </div>
         </div>
-        <div id="rpt-bc-output" style="margin-top:20px;"></div>
+
+        <!-- Same-session warning -->
+        <div class="bc-same-warning" id="bc-same-warning">
+          ⚠ Both sides point to the same session — comparison will show identical results.
+        </div>
+
+        <div id="rpt-bc-output"></div>
       </div>
 
     </div>
