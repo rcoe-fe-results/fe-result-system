@@ -3135,7 +3135,6 @@ let _revalData        = [];   // full result from State
 let _revalSortCol     = 'change';
 let _revalSortDir     = 1;    // 1 = asc, -1 = desc
 let _revalDirFilter   = 'all';
-let _revalDirFilter   = 'all';
 let _topperActiveTab  = 'sem1';
 
 function _rptLiveRevalImpact() {
