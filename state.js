@@ -1842,9 +1842,16 @@ const State = (() => {
     );
 
     // Helper: get total marks + SGPA for a student in a session pair
+    // Cache academics per student to avoid redundant recomputation
+    const _acadCache = {};
+    function _getAcad(uin) {
+      if (!_acadCache[uin]) _acadCache[uin] = computeStudentAcademics(uin);
+      return _acadCache[uin];
+    }
+
     function _semStats(uin, studentBranch, sess) {
       if (!sess.prelim) return null;
-      const acad = computeStudentAcademics(uin);
+      const acad = _getAcad(uin);
       if (!acad) return null;
 
       // Use the gazette session result if available, else prelim
@@ -1877,9 +1884,8 @@ const State = (() => {
         if (tabMode === 'sem2' && !sem2Stats) continue;
         if (tabMode === 'fy'   && (!sem1Stats || !sem2Stats)) continue;
 
-        // CGPA from academics
-        const acad = computeStudentAcademics(student.uin);
-        const cgpa = acad?.cgpa ?? null;
+        // CGPA from cached academics
+        const cgpa = _getAcad(student.uin)?.cgpa ?? null;
 
         byStudent[student.uin] = {
           uin:          student.uin,
