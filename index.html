@@ -1678,7 +1678,17 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
 
         <!-- Session completion % -->
         <div class="dash-card dash-card-wide">
-          <div class="dash-card-title">Session Completion</div>
+          <div class="dash-card-title" style="display:flex; justify-content:space-between; align-items:center;">
+            <span>Session Completion</span>
+            <select id="dash-session-branch" class="dash-filter-select">
+              <option value="">— All Branches —</option>
+              <option value="AIDS">AIDS</option>
+              <option value="Civil">Civil</option>
+              <option value="Computer">Computer</option>
+              <option value="ECSE">ECSE</option>
+              <option value="Mechanical">Mechanical</option>
+            </select>
+          </div>
           <div id="dash-session-completion"></div>
         </div>
 

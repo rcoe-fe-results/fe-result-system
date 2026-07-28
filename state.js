@@ -12,6 +12,24 @@ const State = (() => {
   let _ktCache   = {};   // built by _buildKTCache(), keyed by uin
   let _loaded    = false;
 
+  function _getSessionYear(s) {
+    if (!s) return 2024;
+    let year = null;
+    if (s.name) {
+      const m = String(s.name).match(/\b(20\d\d)\b/);
+      if (m) year = Number(m[1]);
+    }
+    if (!year && s.batchYear) year = Number(s.batchYear);
+    return year || 2024;
+  }
+
+  function _getSessionScore(s) {
+    if (!s) return 0;
+    const year = _getSessionYear(s);
+    const month = (s.month || s.name || '').toLowerCase().includes('may') ? 5 : 12;
+    return year * 12 + month;
+  }
+
   // ── Applicable sessions per student per semester ──────────
   // Returns { sem1: [...], sem2: [...] } of Preliminary sessions
   // in chronological order, filtered by batch year rules:
@@ -22,13 +40,6 @@ const State = (() => {
   function _getApplicableSessions(student) {
     const batchYear = Number(student.batchYear);
 
-    // Chronological score: year × 12 + month
-    const _score = s => {
-      const year  = Number((s.name || '').slice(0, 4));
-      const month = (s.name || '').includes('May') ? 5 : 12;
-      return year * 12 + month;
-    };
-
     // Sem-I: batch's own December onwards (Dec of batchYear)
     const sem1Start = batchYear * 12 + 12;
 
@@ -37,11 +48,11 @@ const State = (() => {
 
     const prelims = sessions
       .filter(s => s.entryType !== 'Revaluation_Gazette')
-      .sort((a, b) => _score(a) - _score(b));
+      .sort((a, b) => _getSessionScore(a) - _getSessionScore(b));
 
     return {
-      sem1: prelims.filter(s => s.semester === 1 && _score(s) >= sem1Start),
-      sem2: prelims.filter(s => s.semester === 2 && _score(s) >= sem2Start),
+      sem1: prelims.filter(s => s.semester === 1 && _getSessionScore(s) >= sem1Start),
+      sem2: prelims.filter(s => s.semester === 2 && _getSessionScore(s) >= sem2Start),
     };
   }
 
@@ -333,7 +344,7 @@ const State = (() => {
     return students.filter(s =>
       (!branch    || s.branch    === branch)   &&
       (!division  || s.division  === division) &&
-      (!batchYear || s.batchYear === batchYear) &&
+      (!batchYear || String(s.batchYear) === String(batchYear)) &&
       (!gender    || s.gender    === gender)
     );
   }
@@ -357,7 +368,7 @@ const State = (() => {
   function getSession(id) { return sessions.find(s => s.id === id); }
 
   function getSessionsForBatch(batchYear) {
-    return sessions.filter(s => s.batchYear === batchYear || s.status === 'Active');
+    return sessions.filter(s => String(s.batchYear) === String(batchYear) || s.status === 'Active');
   }
 
   function getExamGroups() {
@@ -731,14 +742,7 @@ const State = (() => {
         s.semester   === subjectSemester &&
         Number(s.batchYear) >= Number(student.batchYear)
       )
-      .sort((a, b) => {
-        const _score = s => {
-          const year  = Number((s.name || '').slice(0, 4));
-          const month = (s.name || '').includes('May') ? 5 : 12;
-          return year * 12 + month;
-        };
-        return _score(a) - _score(b);
-      });
+      .sort((a, b) => _getSessionScore(a) - _getSessionScore(b));
 
     let attemptNumber = 0;
     for (const s of allPrelimSessions) {
@@ -1125,10 +1129,8 @@ const State = (() => {
     function _sessScore(sessionId) {
       const sess = getSession(sessionId);
       if (!sess) return 0;
-      const year  = Number((sess.name || '').slice(0, 4));
-      const month = (sess.name || '').includes('May') ? 5 : 12;
       const typeBonus = sess.entryType === 'Revaluation_Gazette' ? 1 : 0;
-      return (year * 12 + month) * 2 + typeBonus;
+      return _getSessionScore(sess) * 2 + typeBonus;
     }
 
     const latestPerSubject = {};
@@ -2170,10 +2172,7 @@ const State = (() => {
         // Use session chronological score — not entryDateTime — to determine "prior"
         const _sessionScore = (sessionId) => {
           const sess = getSession(sessionId);
-          if (!sess) return 0;
-          const year  = Number((sess.name || '').slice(0, 4));
-          const month = (sess.name || '').includes('May') ? 5 : 12;
-          return year * 12 + month;
+          return _getSessionScore(sess);
         };
         const prelimScore = _sessionScore(prelimSessionId);
         const priorRows = allSemRows.filter(r =>
@@ -2253,12 +2252,7 @@ const State = (() => {
     }
 
     // Session chronological score
-    const _sessionScore = sess => {
-      if (!sess) return 0;
-      const year  = Number((sess.name || '').slice(0, 4));
-      const month = (sess.name || '').includes('May') ? 5 : 12;
-      return year * 12 + month;
-    };
+    const _sessionScore = sess => _getSessionScore(sess);
 
     // All Preliminary sessions for this subject's semester, chronologically
     const allPrelimSessions = getSessions()
@@ -2470,7 +2464,7 @@ const State = (() => {
     }
 
     const freshBatch  = String(deriveFreshBatch(
-      Number(session.name.slice(0, 4)),   // year from name prefix
+      _getSessionYear(session),   // year from session name/batchYear
       session.month || (session.name.includes('Dec') ? 'December' : 'May')
     ));
     const sem = session.semester;
@@ -2516,15 +2510,14 @@ const State = (() => {
       const hasRecordInThisSession = ledger.some(r =>
         r.uin === s.uin && r.examSession === session.id
       );
-      const isFresh = s.batchYear === freshBatch && !hasSemRecord;
+      const isFresh = String(s.batchYear) === String(freshBatch) && !hasSemRecord;
 
       // Only include KT students whose academics could have started by this session.
       // A 2025 batch student's Sem-I starts Dec 2025; they must not appear in 2024_Dec.
       const studentBatchYear = Number(s.batchYear);
       const sem1Start = studentBatchYear * 12 + 12; // December of batch year
       const sem2Start = (studentBatchYear + 1) * 12 + 5; // May of following year
-      const sessionScore = Number(session.name.slice(0, 4)) * 12 +
-        (session.name.includes('May') ? 5 : 12);
+      const sessionScore = _getSessionScore(session);
       const semStart = session.semester === 1 ? sem1Start : sem2Start;
       const sessionIsReachable = sessionScore >= semStart;
 

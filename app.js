@@ -232,8 +232,7 @@ if (semCredits && semCredits.max > 0 && semCredits.earned >= semCredits.max) ret
       const studentBatchYear = Number(student.batchYear);
       const sem1Start = studentBatchYear * 12 + 12;
       const sem2Start = (studentBatchYear + 1) * 12 + 5;
-      const sessionScore = Number(session.name.slice(0, 4)) * 12 +
-        (session.name.includes('May') ? 5 : 12);
+      const sessionScore = _chronoScore(session);
       const semStart = session.semester === 1 ? sem1Start : sem2Start;
       if (sessionScore < semStart) return false;
 
@@ -317,7 +316,7 @@ function _meGetNextSession(student, sem, revalOverrides = {}) {
   );
 
   // Chronological score helper
-  const _score = s => Number(s.name.slice(0, 4)) * 12 + (s.name.includes('May') ? 5 : 12);
+  const _score = s => _chronoScore(s);
 
   // Find last session student has a record in, for this semester
   const attended = semSessions.filter(s => recordSessionIds.has(s.id));
@@ -1375,26 +1374,14 @@ function _meRosterBuildStudentStatus(student, session) {
   let lastSession = null;
   if (priorSessIds.length > 0) {
     // Find the chronologically latest one
-    const _score = sid => {
-      const s = State.getSession(sid);
-      if (!s) return 0;
-      const year  = Number((s.name || '').slice(0, 4));
-      const month = (s.name || '').includes('May') ? 5 : 12;
-      return year * 12 + month;
-    };
+    const _score = sid => _chronoScore(State.getSession(sid));
     const latestId = priorSessIds.sort((a, b) => _score(b) - _score(a))[0];
     const latestSess = State.getSession(latestId);
     if (latestSess) lastSession = latestSess.name;
   }
 
   // KT = student had any prior ledger records in this semester BEFORE this session
-  const sessionScore = (sid) => {
-    const s = State.getSession(sid);
-    if (!s) return 0;
-    const year  = Number((s.name || '').slice(0, 4));
-    const month = (s.name || '').includes('May') ? 5 : 12;
-    return year * 12 + month;
-  };
+  const sessionScore = (sid) => _chronoScore(State.getSession(sid));
   const thisScore = sessionScore(session.id);
   const isKT = State.ledger.some(r =>
     r.uin === student.uin &&
@@ -2493,10 +2480,8 @@ function _pvShowStudent(uin) {
   function _defaultSession(list) {
     if (!list.length) return null;
     const _score = s => {
-      const year  = Number((s.name || '').slice(0, 4));
-      const month = (s.name || '').includes('May') ? 5 : 12;
       const typeBonus = s.entryType === 'Revaluation_Gazette' ? 1 : 0;
-      return (year * 12 + month) * 2 + typeBonus;
+      return _chronoScore(s) * 2 + typeBonus;
     };
     return [...list].sort((a, b) => _score(b) - _score(a))[0].id;
   }
@@ -2759,37 +2744,71 @@ function initDashboard() {
   _dashActiveKTs();
   _dashBranchPassRates();
   _dashInitHeatmap();
+
+  const branchSel = document.getElementById('dash-session-branch');
+  if (branchSel && !branchSel._bound) {
+    branchSel.addEventListener('change', _dashSessionCompletion);
+    branchSel._bound = true;
+  }
 }
 
 function _dashSessionCompletion() {
   const sessions = sortSessions(State.getSessions().filter(s => s.status === 'Active'));
   const students  = State.getStudents();
   const el        = document.getElementById('dash-session-completion');
+  const branchSel = document.getElementById('dash-session-branch');
+  const selectedBranch = branchSel ? branchSel.value : '';
+
   if (!sessions.length) { el.innerHTML = '<div class="muted">No active sessions.</div>'; return; }
 
   let html = '';
   for (const sess of sessions) {
-    const semStudents = students.filter(s => s.batchYear === sess.batchYear);
-    const total       = semStudents.length;
-    if (total === 0) continue;
+    const semStudents = students.filter(s =>
+      String(s.batchYear) === String(sess.batchYear) &&
+      (!selectedBranch || s.branch === selectedBranch)
+    );
+    const totalStudents = semStudents.length;
+    if (totalStudents === 0) continue;
 
-    const subjects = getSubjectsForSem(sess.semester, null, sess);
-    let   entered  = 0;
+    let totalEntriesNeeded = 0;
+    let actualEntriesFound = 0;
+    let fullyCompletedStudents = 0;
+
     for (const student of semStudents) {
+      const subjects = getSubjectsForSem(sess.semester, student.branch, sess);
+      const expectedCount = subjects.length;
+      totalEntriesNeeded += expectedCount;
+
       const rows = State.ledger.filter(r => r.uin === student.uin && r.examSession === sess.id);
       const uniqueSubjs = new Set(rows.map(r => r.subjectCode)).size;
-      if (uniqueSubjs >= subjects.length) entered++;
+
+      actualEntriesFound += Math.min(uniqueSubjs, expectedCount);
+      if (uniqueSubjs >= expectedCount) {
+        fullyCompletedStudents++;
+      }
     }
-    const pct = Math.round(entered / total * 100);
+
+    const markPct = totalEntriesNeeded > 0 ? Math.round((actualEntriesFound / totalEntriesNeeded) * 100) : 0;
+    const studentPct = Math.round((fullyCompletedStudents / totalStudents) * 100);
+
+    const barColor = markPct >= 100 ? 'var(--pass)' : markPct > 0 ? 'var(--brand)' : 'var(--border-2)';
+
     html += `
-      <div class="dash-completion-row">
-        <span class="dash-completion-label">${UI.esc(sess.name)}</span>
-        <div class="dash-progress-bar"><div class="dash-progress-fill" style="width:${pct}%"></div></div>
-        <span class="dash-completion-pct">${pct}%</span>
-        <span class="dash-sub-label" style="min-width:60px;">${entered}/${total}</span>
+      <div class="dash-completion-row" style="margin-bottom:14px;">
+        <div style="flex:1;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+            <span class="dash-completion-label" style="font-weight:600;">${UI.esc(sess.name)}</span>
+            <span class="dash-completion-pct" style="font-weight:700; color:${barColor}">${markPct}%</span>
+          </div>
+          <div class="dash-progress-bar"><div class="dash-progress-fill" style="width:${markPct}%; background:${barColor}"></div></div>
+          <div style="display:flex; justify-content:space-between; font-size:11px; color:var(--ink-3); margin-top:4px;">
+            <span>${actualEntriesFound} / ${totalEntriesNeeded} subject entries</span>
+            <span>${fullyCompletedStudents} / ${totalStudents} students complete (${studentPct}%)</span>
+          </div>
+        </div>
       </div>`;
   }
-  el.innerHTML = html || '<div class="muted">No data.</div>';
+  el.innerHTML = html || '<div class="muted">No students matching filter.</div>';
 }
 
 function _dashActiveKTs() {
@@ -2830,7 +2849,7 @@ function _dashBranchPassRates() {
     for (const branch of BRANCHES) {
       const branchStudents = students.filter(s =>
         s.branch === branch &&
-        (!batchYear || s.batchYear === batchYear)
+        (!batchYear || String(s.batchYear) === String(batchYear))
       );
       if (!branchStudents.length) continue;
 
@@ -3085,9 +3104,7 @@ function _bcPopulateSessions(side) {
   const semFilter = document.getElementById('rpt-bc-semester')?.value || '';
   const sessions  = sortSessions(State.getSessions().filter(s => {
     if (batchYear) {
-      const year  = Number(s.name.slice(0, 4));
-      const month = s.name.includes('May') ? 5 : 12;
-      const score = year * 12 + month;
+      const score = _chronoScore(s);
       const batch = Number(batchYear);
       const semStart = s.semester === 1
         ? batch * 12 + 12          // Sem I: Dec of batch year
@@ -4879,12 +4896,7 @@ function _aktdRun() {
     if (allRows.length === 0) continue;
 
     // Session chronology score — year × 12 + month from session name, never from entryDateTime
-    const _sessionScore = sess => {
-      if (!sess) return 0;
-      const year  = Number((sess.name || '').slice(0, 4));
-      const month = (sess.name || '').includes('May') ? 5 : 12;
-      return year * 12 + month;
-    };
+    const _sessionScore = sess => _chronoScore(sess);
 
     // Step 1: merge multiple ledger rows within the same session
     // (latest component value wins within a session, same as _getActiveKTsForStudent)
