@@ -976,6 +976,12 @@ let meQueueState = {
   entered: 0, skipped: 0,
 };
 
+let meRosterState = {
+  loaded: false,
+  sessionId: null, branch: null, division: null, batchYear: null,
+  rows: null, session: null, seatLookup: null,
+};
+
 function _meInitQueue() {
   const sessions = sortSessions(State.getSessions().filter(s =>
     s.status === 'Active' &&
@@ -1226,10 +1232,42 @@ function _meInitRoster() {
     batchEl.onchange = _meRosterOnFilterChange;
   }
 
-  // Reset output
+  document.getElementById('me-roster-load-btn').disabled = true;
+
+  // Restore previous roster if available
+  if (meRosterState.loaded) {
+    if (meRosterState.sessionId)
+      document.getElementById('me-roster-session').value = meRosterState.sessionId;
+    if (meRosterState.branch)
+      document.getElementById('me-roster-branch').value = meRosterState.branch;
+    if (meRosterState.batchYear) {
+      const batchEl = document.getElementById('me-roster-batch');
+      if (batchEl) batchEl.value = meRosterState.batchYear;
+    }
+    // Repopulate division dropdown for this branch, then restore value
+    if (meRosterState.branch) {
+      _meRosterOnBranchChange();
+      if (meRosterState.division)
+        document.getElementById('me-roster-division').value = meRosterState.division;
+    }
+    document.getElementById('me-roster-load-btn').disabled = false;
+    // Re-render saved roster
+    const { rows, session, seatLookup } = meRosterState;
+    const counts = { pending: 0, partial: 0, done: 0 };
+    rows.forEach(r => counts[r.status]++);
+    const pillsEl = document.getElementById('me-roster-pills');
+    pillsEl.classList.remove('hidden');
+    pillsEl.style.display = 'flex';
+    document.getElementById('me-roster-pill-pending').textContent = `🔴 Pending: ${counts.pending}`;
+    document.getElementById('me-roster-pill-partial').textContent  = `🟡 Partial: ${counts.partial}`;
+    document.getElementById('me-roster-pill-done').textContent     = `🟢 Done: ${counts.done}`;
+    document.getElementById('me-roster-session-label').textContent = session.name;
+    _meRosterRenderTable(rows, session, seatLookup);
+    return;
+  }
+
   document.getElementById('me-roster-pills').classList.add('hidden');
   document.getElementById('me-roster-output').innerHTML = '';
-  document.getElementById('me-roster-load-btn').disabled = true;
 }
 
 function _meRosterOnFilterChange() {
@@ -1237,6 +1275,8 @@ function _meRosterOnFilterChange() {
   const branch  = document.getElementById('me-roster-branch').value;
   const ready   = !!(sessId && branch);
   document.getElementById('me-roster-load-btn').disabled = !ready;
+  // Invalidate saved roster when filters change
+  meRosterState.loaded = false;
 }
 
 function _meRosterOnBranchChange() {
@@ -1347,7 +1387,21 @@ function _meRosterBuildStudentStatus(student, session) {
     if (latestSess) lastSession = latestSess.name;
   }
 
-  const isKT = student.attemptFlag === 'KT';
+  // KT = student had any prior ledger records in this semester BEFORE this session
+  const sessionScore = (sid) => {
+    const s = State.getSession(sid);
+    if (!s) return 0;
+    const year  = Number((s.name || '').slice(0, 4));
+    const month = (s.name || '').includes('May') ? 5 : 12;
+    return year * 12 + month;
+  };
+  const thisScore = sessionScore(session.id);
+  const isKT = State.ledger.some(r =>
+    r.uin === student.uin &&
+    Number(r.semester) === session.semester &&
+    r.examSession !== session.id &&
+    sessionScore(r.examSession) < thisScore
+  );
 
   const pendingSubjects = [];
   const doneSubjects    = [];
@@ -1493,6 +1547,18 @@ function _meRosterLoad() {
       document.getElementById('me-roster-pill-partial').textContent = `🟡 Partial: ${counts.partial}`;
       document.getElementById('me-roster-pill-done').textContent    = `🟢 Done: ${counts.done}`;
       document.getElementById('me-roster-session-label').textContent = session.name;
+
+      // Save roster state for persistence
+      meRosterState = {
+        loaded: true,
+        sessionId: sessId,
+        branch,
+        division,
+        batchYear: document.getElementById('me-roster-batch')?.value || null,
+        rows,
+        session,
+        seatLookup,
+      };
 
       UI.hideSpinner();
       _meRosterRenderTable(rows, session, seatLookup);
