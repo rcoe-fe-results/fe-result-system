@@ -2513,6 +2513,9 @@ const State = (() => {
       const hasSemRecord = ledger.some(r =>
         r.uin === s.uin && Number(r.semester) === sem
       );
+      const hasRecordInThisSession = ledger.some(r =>
+        r.uin === s.uin && r.examSession === session.id
+      );
       const isFresh = s.batchYear === freshBatch && !hasSemRecord;
 
       // Only include KT students whose academics could have started by this session.
