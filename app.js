@@ -2428,7 +2428,7 @@ function initReports() {
   const yearEl = document.getElementById('rpt-year');
   yearEl.innerHTML = '<option value="">— all —</option>' +
     allSessionYears.map(y => `<option value="${y}">${y}</option>`).join('');
-  UI.buildSelect('rpt-shared-branch', BRANCHES, '— all —');
+    UI.buildSelect('rpt-shared-branch', BRANCHES, '— all branches —');
 
   // Fire all three blocks on shared filter change
   const sharedIds = ['rpt-year','rpt-month','rpt-semester','rpt-shared-branch','rpt-shared-gender'];
@@ -2452,14 +2452,14 @@ function initReports() {
   _rptLiveResultSummary();
 
   // ── Reval Impact ──────────────────────────────────────────
-  UI.buildSelect('rpt-reval-subject', [{ code:'', name:'All subjects' }, ...subjects], '— all subjects —', 'code', 'name');
+  UI.buildSelect('rpt-reval-subject', subjects, '— all subjects —', 'code', 'name');
   document.getElementById('rpt-reval-subject')?.addEventListener('change', _rptLiveRevalImpact);
   _rptLiveRevalImpact();
 
   // ── Topper List ───────────────────────────────────────────
-  UI.buildSelect('rpt-topper-subject', [{ code:'', name:'All subjects' }, ...subjects], '— all subjects —', 'code', 'name');
+  UI.buildSelect('rpt-topper-subject', subjects, '— all subjects —', 'code', 'name');
   UI.buildSelect('rpt-topper-batch', State.getBatchYears(), '— all —');
-  UI.buildSelect('rpt-topper-branch', [{ code:'', name:'All Branches' }, ...BRANCHES.map(b => ({ code:b, name:b }))], 'All Branches', 'code', 'name');
+  UI.buildSelect('rpt-topper-branch', BRANCHES, '— all branches —');
   document.getElementById('rpt-topper-mode').onchange = _rptToggleTopperMode;
   _rptToggleTopperMode();
   ['rpt-topper-mode','rpt-topper-subject','rpt-topper-n','rpt-topper-batch','rpt-topper-branch'].forEach(id => {
@@ -4279,7 +4279,7 @@ function _aktdPopulateSubjects() {
 function _aktdPopulateBatchYears() {
   const years = State.getBatchYears();
   const el = document.getElementById('rpt-aktd-batch');
-  el.innerHTML = '<option value="">All Batches</option>' +
+  el.innerHTML = '<option value="">— all batches —</option>' +
     years.map(y => `<option value="${UI.esc(y)}">${UI.esc(y)}</option>`).join('');
 }
 
@@ -5820,7 +5820,7 @@ function _ciaPopulateBatchYears() {
   const el = document.getElementById('rpt-cia-batch');
   if (!el) return;
   const years = State.getBatchYears();
-  el.innerHTML = '<option value="">All Batches</option>' +
+  el.innerHTML = '<option value="">— all batches —</option>' +
     years.map(y => `<option value="${UI.esc(y)}">${UI.esc(y)}</option>`).join('');
 }
 
