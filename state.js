@@ -2451,6 +2451,24 @@ const State = (() => {
   // Flag: 'KT' if student has any active fail/AB in any sem-N subject,
   //       'Regular' otherwise.
   function getEligibleStudents(session, branch) {
+    // For Revaluation Gazette: only students with a record in the linked Preliminary session
+    if (session.entryType === 'Revaluation_Gazette') {
+      if (!session.linkedPrelimSessionId) return [];
+      const prelimUINs = new Set(
+        ledger
+          .filter(r => r.examSession === session.linkedPrelimSessionId)
+          .map(r => r.uin)
+      );
+      return students.filter(s =>
+        prelimUINs.has(s.uin) &&
+        (!branch || s.branch === branch)
+      ).map(s => ({
+        ...s,
+        attemptFlag: 'Regular',
+        ktSubjects: [],
+      }));
+    }
+
     const freshBatch  = String(deriveFreshBatch(
       Number(session.name.slice(0, 4)),   // year from name prefix
       session.month || (session.name.includes('Dec') ? 'December' : 'May')
@@ -2492,7 +2510,10 @@ const State = (() => {
     const eligible = new Map();
 
     for (const s of branchStudents) {
-      const isFresh = s.batchYear === freshBatch;
+      const hasSemRecord = ledger.some(r =>
+        r.uin === s.uin && Number(r.semester) === sem
+      );
+      const isFresh = s.batchYear === freshBatch && !hasSemRecord;
 
       // Only include KT students whose academics could have started by this session.
       // A 2025 batch student's Sem-I starts Dec 2025; they must not appear in 2024_Dec.
