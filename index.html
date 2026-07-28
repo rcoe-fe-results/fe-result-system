@@ -846,6 +846,39 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
   color: var(--ink); cursor: pointer;
 }
 
+/* ─── Roster tab ─────────────────────────────────────────── */
+.roster-pill {
+  display:inline-flex; align-items:center; gap:6px;
+  padding:5px 14px; border-radius:20px; font-size:12px; font-weight:600;
+  border:1.5px solid;
+}
+.pill-pending { background:var(--fail-bg);   color:var(--fail);  border-color:#FCA5A5; }
+.pill-partial { background:var(--grace-bg);  color:var(--grace); border-color:#FCD34D; }
+.pill-done    { background:var(--pass-bg);   color:var(--pass);  border-color:#6EE7B7; }
+
+.roster-table { width:100%; border-collapse:collapse; font-size:12px; }
+.roster-table th, .roster-table td {
+  padding:8px 10px; border:1px solid var(--border); vertical-align:top;
+}
+.roster-table thead th {
+  background:var(--surface-2); font-weight:600; color:var(--ink-3);
+  font-size:11px; position:sticky; top:56px; z-index:2;
+}
+.roster-table tbody tr:hover { background:var(--surface-2); }
+.roster-row-pending { background:#FFF8F8; }
+.roster-row-partial { background:#FFFDF0; }
+.roster-row-done    { background:#F8FFF8; }
+
+.roster-subj-pill {
+  display:inline-block; font-size:10px; font-weight:600;
+  font-family:'DM Mono',monospace; padding:2px 6px;
+  border-radius:4px; margin:2px 2px 2px 0;
+  background:var(--fail-bg); color:var(--fail); border:1px solid #FCA5A5;
+}
+.roster-all-label {
+  font-size:11px; color:var(--ink-3); font-style:italic;
+}
+
 .session-option-cleared {
   cursor: default; opacity: 0.65; border-color: var(--pass) !important;
 }
@@ -1048,6 +1081,7 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
           <div class="mode-toggle">
             <button id="me-adhoc-btn" class="mode-btn active">Single Student</button>
             <button id="me-queue-btn" class="mode-btn">Queue</button>
+            <button id="me-roster-btn" class="mode-btn">Roster</button>
           </div>
           <span style="font-size:12px; color:var(--ink-3);" id="me-mode-hint">
             Search for any student by name / UIN / PRN/ERN
@@ -1135,6 +1169,41 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
         <div id="me-queue-summary" class="hidden" style="margin-top:12px;"></div>
       </div>
 
+    </div>
+
+    <!-- ── ROSTER PANEL ── -->
+    <div id="me-roster-panel" class="hidden">
+      <div class="card">
+        <div class="filters">
+          <div class="filter-group">
+            <label>Session</label>
+            <select id="me-roster-session"><option value="">— select session —</option></select>
+          </div>
+          <div class="filter-group">
+            <label>Branch</label>
+            <select id="me-roster-branch"><option value="">— select branch —</option></select>
+          </div>
+          <div class="filter-group">
+            <label>Division</label>
+            <select id="me-roster-division"><option value="">— all divisions —</option></select>
+          </div>
+          <div class="filter-group" style="justify-content:flex-end;">
+            <label>&nbsp;</label>
+            <button id="me-roster-load-btn" class="btn btn-primary" disabled>Load Roster →</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Status pills -->
+      <div id="me-roster-pills" class="hidden" style="display:flex; gap:10px; margin-top:14px; flex-wrap:wrap; align-items:center;">
+        <span class="roster-pill pill-pending" id="me-roster-pill-pending"></span>
+        <span class="roster-pill pill-partial" id="me-roster-pill-partial"></span>
+        <span class="roster-pill pill-done"    id="me-roster-pill-done"></span>
+        <span style="margin-left:auto; font-size:12px; color:var(--ink-3);" id="me-roster-session-label"></span>
+      </div>
+
+      <!-- Table -->
+      <div id="me-roster-output" style="margin-top:12px;"></div>
     </div>
 
     <!-- ─── TAB: Progress View ─── -->

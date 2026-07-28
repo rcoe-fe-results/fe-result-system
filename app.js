@@ -98,17 +98,21 @@ function initMarkEntry() {
   // Toggle buttons
   document.getElementById('me-adhoc-btn').onclick = () => _meSetMode('adhoc');
   document.getElementById('me-queue-btn').onclick = () => _meSetMode('queue');
+  document.getElementById('me-roster-btn').onclick = () => _meSetMode('roster');
   _meSetMode(meMode);
 }
 
-function _meSetMode(mode) {
+function _meSetMode(mode, opts) {
   meMode = mode;
   document.getElementById('me-adhoc-btn').classList.toggle('active', mode === 'adhoc');
   document.getElementById('me-queue-btn').classList.toggle('active', mode === 'queue');
+  document.getElementById('me-roster-btn').classList.toggle('active', mode === 'roster');
   document.getElementById('me-adhoc-panel').classList.toggle('hidden', mode !== 'adhoc');
   document.getElementById('me-queue-panel').classList.toggle('hidden', mode !== 'queue');
-  if (mode === 'adhoc') _meInitAdhoc();
+  document.getElementById('me-roster-panel').classList.toggle('hidden', mode !== 'roster');
+  if (mode === 'adhoc' && !(opts && opts.skipInit)) _meInitAdhoc();
   if (mode === 'queue') _meInitQueue();
+  if (mode === 'roster') _meInitRoster();
 }
 
 // ── AD-HOC MODE ───────────────────────────────────────────────
@@ -284,9 +288,12 @@ function _meAdhocSelectStudent(uin, matchedSeat) {
 
 function _meAdhocShowAutoSession(session, seatNum) {
   const picker = document.getElementById('me-adhoc-session-picker');
+  const label  = seatNum
+    ? `Session — auto-detected from seat ${UI.esc(String(seatNum))}`
+    : `Session — selected from Roster`;
   picker.innerHTML = `
     <div class="session-picker">
-      <div class="session-picker-label">Session — auto-detected from seat ${UI.esc(String(seatNum))}</div>
+      <div class="session-picker-label">${label}</div>
       <div class="session-option" style="cursor:default; border-color:var(--pass); background:var(--pass-bg);">
         <span class="session-option-name">${UI.esc(session.name)}</span>
         <span class="session-auto-badge">✓ Auto-selected</span>
@@ -1191,6 +1198,389 @@ function _meQueueShowSummary() {
         <button class="btn btn-secondary" onclick="_meSetMode('adhoc')">Switch to Ad-hoc</button>
       </div>
     </div>`;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// MARK ENTRY — ROSTER MODE
+// ═══════════════════════════════════════════════════════════════
+
+function _meInitRoster() {
+  const sessions = sortSessions(State.getSessions().filter(s =>
+    s.status === 'Active' &&
+    (s.entryType !== 'Revaluation_Gazette' || Auth.isAdmin())
+  ));
+  UI.buildSelect('me-roster-session', sessions, '— select session —', 'id', 'name');
+  UI.buildSelect('me-roster-branch', BRANCHES, '— select branch —');
+
+  document.getElementById('me-roster-session').onchange = _meRosterOnFilterChange;
+  document.getElementById('me-roster-branch').onchange  = _meRosterOnBranchChange;
+  document.getElementById('me-roster-division').onchange = _meRosterOnFilterChange;
+  document.getElementById('me-roster-load-btn').onclick  = _meRosterLoad;
+
+  // Reset output
+  document.getElementById('me-roster-pills').classList.add('hidden');
+  document.getElementById('me-roster-output').innerHTML = '';
+  document.getElementById('me-roster-load-btn').disabled = true;
+}
+
+function _meRosterOnFilterChange() {
+  const sessId  = document.getElementById('me-roster-session').value;
+  const branch  = document.getElementById('me-roster-branch').value;
+  const ready   = !!(sessId && branch);
+  document.getElementById('me-roster-load-btn').disabled = !ready;
+}
+
+function _meRosterOnBranchChange() {
+  const branch = document.getElementById('me-roster-branch').value;
+  const divEl  = document.getElementById('me-roster-division');
+  divEl.innerHTML = '<option value="">— all divisions —</option>';
+  if (branch) {
+    const divs = State.getDivisions(branch);
+    divs.forEach(d => {
+      const opt = document.createElement('option');
+      opt.value = d; opt.textContent = d;
+      divEl.appendChild(opt);
+    });
+  }
+  _meRosterOnFilterChange();
+}
+
+// ── Build merged marks map for a student+subject across sessions ──
+// Mirrors the KT carry-forward logic in computeStudentAcademics.
+// Returns a marksMap { IAT, ESE, TW, Oral } combining current session
+// entries with passing component values carried from prior sessions.
+function _meRosterBuildMergedMarks(studentLedgerRows, subj, currentSessionId, semester) {
+  // All rows for this subject sorted oldest first
+  const subjRows = studentLedgerRows
+    .filter(r => r.subjectCode === subj.code && Number(r.semester) === semester)
+    .sort((a, b) => a.entryDateTime.localeCompare(b.entryDateTime));
+
+  if (subjRows.length === 0) return {};
+
+  // Latest value per component per session
+  const perSession = {}; // sessionId → { IAT, ESE, TW, Oral }
+  for (const r of subjRows) {
+    if (!perSession[r.examSession]) perSession[r.examSession] = {};
+    const s = perSession[r.examSession];
+    if (r.iatMarks  !== '') s.IAT  = r.iatMarks;
+    if (r.eseMarks  !== '') s.ESE  = r.eseMarks;
+    if (r.twMarks   !== '') s.TW   = r.twMarks;
+    if (r.oralMarks !== '') s.Oral = r.oralMarks;
+  }
+
+  // Current session values
+  const current = perSession[currentSessionId] || {};
+
+  // Prior sessions — latest non-empty value per component
+  const prior = {};
+  for (const [sid, vals] of Object.entries(perSession)) {
+    if (sid === currentSessionId) continue;
+    for (const [comp, val] of Object.entries(vals)) {
+      prior[comp] = val; // later sessions overwrite earlier (already sorted)
+    }
+  }
+
+  // Build merged map
+  const merged = {};
+  for (const comp of Object.keys(subj.marks)) {
+    if (current[comp] !== undefined) {
+      // Has a value in current session — use it
+      merged[comp] = current[comp];
+    } else if (prior[comp] !== undefined) {
+      // No current session value — check if prior was passing → carry forward
+      const max    = subj.marks[comp];
+      const parsed = parseMarkValue(prior[comp], max);
+      const passed = parsed.valid && !parsed.absent &&
+        (parsed.grace || (max && parsed.value / max >= 0.40));
+      if (passed) merged[comp] = prior[comp];
+      // If prior was failing → leave empty (student must re-enter)
+    }
+  }
+  return merged;
+}
+
+// ── Build status for one student in a session ──────────────────
+// Returns:
+// {
+//   status: 'done'|'partial'|'pending',
+//   pendingSubjects: [{ code, name }],   // subjects genuinely not yet complete
+//   doneSubjects:    [{ code, name }],
+//   lastSession: string|null,            // name of last session with any entry this sem
+//   isKT: bool,
+//   totalExpected: number,
+// }
+function _meRosterBuildStudentStatus(student, session) {
+  const sem      = session.semester;
+  const subjects = getSubjectsForSem(sem, student.branch, session);
+
+  // All ledger rows for this student
+  const studentRows = State.ledger.filter(r => r.uin === student.uin);
+
+  // Last session (excluding current) where student has any entry for this semester
+  const priorSessIds = [...new Set(
+    studentRows
+      .filter(r => Number(r.semester) === sem && r.examSession !== session.id)
+      .map(r => r.examSession)
+  )];
+
+  let lastSession = null;
+  if (priorSessIds.length > 0) {
+    // Find the chronologically latest one
+    const _score = sid => {
+      const s = State.getSession(sid);
+      if (!s) return 0;
+      const year  = Number((s.name || '').slice(0, 4));
+      const month = (s.name || '').includes('May') ? 5 : 12;
+      return year * 12 + month;
+    };
+    const latestId = priorSessIds.sort((a, b) => _score(b) - _score(a))[0];
+    const latestSess = State.getSession(latestId);
+    if (latestSess) lastSession = latestSess.name;
+  }
+
+  const isKT = student.attemptFlag === 'KT';
+
+  const pendingSubjects = [];
+  const doneSubjects    = [];
+
+  for (const subj of subjects) {
+    // For KT students: if this subject is not in their active KT list,
+    // it means they already passed it — skip (not their concern this session)
+    if (isKT) {
+      const ktSubjs = State.getActiveKTSubjects(student.uin);
+      const isKTSubject = ktSubjs.some(k => k.subjectCode === subj.code);
+      if (!isKTSubject) {
+        doneSubjects.push({ code: subj.code, name: subj.name });
+        continue;
+      }
+    }
+
+    const mergedMap = _meRosterBuildMergedMarks(studentRows, subj, session.id, sem);
+    const dr        = computeDisplayResult(subj, mergedMap);
+
+    if (dr.pending) {
+      pendingSubjects.push({ code: subj.code, name: subj.name });
+    } else {
+      doneSubjects.push({ code: subj.code, name: subj.name });
+    }
+  }
+
+  let status;
+  if (pendingSubjects.length === 0) {
+    status = 'done';
+  } else if (doneSubjects.length === 0) {
+    status = 'pending';
+  } else {
+    status = 'partial';
+  }
+
+  return { status, pendingSubjects, doneSubjects, lastSession, isKT, totalExpected: subjects.length };
+}
+
+function _meRosterLoad() {
+  const sessId   = document.getElementById('me-roster-session').value;
+  const branch   = document.getElementById('me-roster-branch').value;
+  const division = document.getElementById('me-roster-division').value || null;
+  const session  = State.getSession(sessId);
+
+  if (!session || !branch) {
+    UI.toast('Select session and branch.', 'error'); return;
+  }
+
+  UI.showSpinner('Building roster…');
+
+  // Use setTimeout so spinner renders before heavy computation
+  setTimeout(() => {
+    try {
+      let students = State.getEligibleStudents(session, branch);
+      if (division) students = students.filter(s => s.division === division);
+
+      if (students.length === 0) {
+        UI.hideSpinner();
+        document.getElementById('me-roster-output').innerHTML =
+          '<div class="empty-state">No eligible students found for this selection.</div>';
+        document.getElementById('me-roster-pills').classList.add('hidden');
+        return;
+      }
+
+      // Build status for each student
+      const rows = students.map(s => ({
+        student: s,
+        ...(_meRosterBuildStudentStatus(s, session)),
+      }));
+
+      // Sort: pending → partial → done, then seat↑ / name↑ within group
+      const seatEntries = State.getSeatsForSessionWithFallback(session.id);
+      const seatLookup  = {};
+      for (const s of seatEntries) seatLookup[s.uin] = s.seatNumber;
+
+      const statusOrder = { pending: 0, partial: 1, done: 2 };
+      rows.sort((a, b) => {
+        const so = statusOrder[a.status] - statusOrder[b.status];
+        if (so !== 0) return so;
+        // Within group: seat number (numeric) first, then name
+        const sa = seatLookup[a.student.uin] || '';
+        const sb = seatLookup[b.student.uin] || '';
+        const na = Number(sa), nb = Number(sb);
+        const bothNumeric = !isNaN(na) && !isNaN(nb) && sa !== '' && sb !== '';
+        if (bothNumeric) return na - nb;
+        if (sa && !sb) return -1; // has seat comes before no seat
+        if (!sa && sb) return  1;
+        return a.student.name.localeCompare(b.student.name);
+      });
+
+      // Count per status
+      const counts = { pending: 0, partial: 0, done: 0 };
+      rows.forEach(r => counts[r.status]++);
+
+      // Pills
+      const pillsEl = document.getElementById('me-roster-pills');
+      pillsEl.classList.remove('hidden');
+      pillsEl.style.display = 'flex';
+      document.getElementById('me-roster-pill-pending').textContent = `🔴 Pending: ${counts.pending}`;
+      document.getElementById('me-roster-pill-partial').textContent = `🟡 Partial: ${counts.partial}`;
+      document.getElementById('me-roster-pill-done').textContent    = `🟢 Done: ${counts.done}`;
+      document.getElementById('me-roster-session-label').textContent = session.name;
+
+      UI.hideSpinner();
+      _meRosterRenderTable(rows, session, seatLookup);
+    } catch(err) {
+      UI.hideSpinner();
+      UI.toast('Error building roster: ' + err.message, 'error', 8000);
+      console.error('[_meRosterLoad]', err);
+    }
+  }, 30);
+}
+
+function _meRosterRenderTable(rows, session, seatLookup) {
+  const out = document.getElementById('me-roster-output');
+
+  if (rows.length === 0) {
+    out.innerHTML = '<div class="empty-state">No students found.</div>';
+    return;
+  }
+
+  const isFinal = session.entryType === 'Revaluation_Gazette';
+
+  let html = `
+    <div style="overflow-x:auto;">
+    <table class="roster-table">
+      <thead><tr>
+        <th style="min-width:52px;">Seat</th>
+        <th style="min-width:180px;">Student</th>
+        <th style="min-width:90px;">Branch · Batch</th>
+        <th style="min-width:80px;">Type</th>
+        <th style="min-width:80px;">Status</th>
+        <th style="min-width:220px;">Pending Subjects</th>
+        <th style="min-width:140px;">Last Session (this sem)</th>
+        <th style="min-width:110px;">Action</th>
+      </tr></thead>
+      <tbody>`;
+
+  for (const { student, status, pendingSubjects, lastSession, isKT, totalExpected } of rows) {
+    const seat = seatLookup[student.uin] || '—';
+
+    const statusBadge = status === 'done'
+      ? '<span class="badge badge-pass">✓ Done</span>'
+      : status === 'partial'
+        ? '<span class="badge badge-grace">⚡ Partial</span>'
+        : '<span class="badge badge-fail">⏳ Pending</span>';
+
+    const typeBadge = isKT
+      ? '<span class="badge badge-kt">KT</span>'
+      : '<span class="badge badge-regular">Regular</span>';
+
+    // Pending subjects cell
+    let pendingCell = '';
+    if (status === 'done') {
+      pendingCell = '<span class="muted" style="font-size:11px;">—</span>';
+    } else if (status === 'pending' && !isKT) {
+      // Regular student, fully pending — don't list all subjects
+      pendingCell = `<span class="roster-all-label">All ${totalExpected} subjects</span>`;
+    } else {
+      // Partial, or KT pending — show specific subject pills
+      pendingCell = pendingSubjects.map(s =>
+        `<span class="roster-subj-pill" title="${UI.esc(s.name)}">${UI.esc(s.code)}</span>`
+      ).join('');
+    }
+
+    // Last session cell
+    const lastSessCell = lastSession
+      ? `<span style="font-size:11px; font-family:'DM Mono',monospace; color:var(--ink-3);">${UI.esc(lastSession)}</span>`
+      : '<span class="muted" style="font-size:11px;">—</span>';
+
+    // Action cell
+    const actionCell = status === 'done'
+      ? `<button class="btn btn-secondary btn-sm"
+           onclick="_pvShowStudentFromRoster('${UI.esc(student.uin)}')">View →</button>`
+      : `<button class="btn btn-primary btn-sm"
+           onclick="_meRosterOpenAdhoc('${UI.esc(student.uin)}', '${UI.esc(session.id)}')">Enter Marks →</button>`;
+
+    const rowCls = `roster-row-${status}`;
+
+    html += `<tr class="${rowCls}">
+      <td style="font-family:'DM Mono',monospace; font-weight:600; color:var(--brand); text-align:center;">
+        ${UI.esc(seat)}
+      </td>
+      <td>
+        <div style="font-weight:600;">${UI.esc(student.name)}</div>
+        <div style="font-size:11px; font-family:'DM Mono',monospace; color:var(--ink-3);">
+          ${UI.esc(student.uin)} · ${UI.esc(student.prn || '—')}
+        </div>
+      </td>
+      <td>
+        <div style="font-size:12px;">${UI.esc(student.branch)}</div>
+        <div style="font-size:11px; color:var(--ink-3);">Batch ${UI.esc(student.batchYear)}</div>
+      </td>
+      <td>${typeBadge}</td>
+      <td>${statusBadge}</td>
+      <td>${pendingCell}</td>
+      <td>${lastSessCell}</td>
+      <td>${actionCell}</td>
+    </tr>`;
+  }
+
+  html += `</tbody></table></div>`;
+  out.innerHTML = html;
+}
+
+// ── Open Ad-hoc entry for a specific student + session ─────────
+function _meRosterOpenAdhoc(uin, sessionId) {
+  const student = State.getStudent(uin);
+  const session = State.getSession(sessionId);
+  if (!student || !session) return;
+
+  // Switch to adhoc mode WITHOUT resetting (skipInit: true)
+  _meSetMode('adhoc', { skipInit: true });
+
+  // Manually set adhoc state
+  meAdhocState.student = student;
+  meAdhocState.session = session;
+
+  // Update search box to show student name
+  document.getElementById('me-adhoc-search').value = student.name;
+  document.getElementById('me-adhoc-results').innerHTML = '';
+
+  // Show the auto-session indicator (same as seat-based auto-select)
+  _meAdhocShowAutoSession(session, null);
+
+  // Show student info + render grid
+  document.getElementById('me-adhoc-student-info').innerHTML =
+    _meStudentInfoHtml(student, session);
+  document.getElementById('me-adhoc-grid').innerHTML =
+    _meBuildSubjectGrid(student, session, 'adhoc');
+  _meWireGrid('me-adhoc-grid');
+
+  document.getElementById('me-adhoc-student-panel').classList.remove('hidden');
+
+  // Scroll to top of entry area
+  document.getElementById('me-adhoc-student-panel').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+// ── View progress from Roster ──────────────────────────────────
+function _pvShowStudentFromRoster(uin) {
+  showTab('progress');
+  setTimeout(() => _pvShowStudent(uin), 80);
 }
 
 function _beResetFilters() {
