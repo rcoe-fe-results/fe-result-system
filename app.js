@@ -1374,7 +1374,29 @@ function _meRosterBuildStudentStatus(student, session) {
     status = 'partial';
   }
 
-  return { status, pendingSubjects, doneSubjects, lastSession, isKT, totalExpected: subjects.length };
+  // Result status — only meaningful when entry is Done
+  let result = null;
+  if (status === 'done') {
+    const studentRows = State.ledger.filter(r => r.uin === student.uin);
+    const subjects = getSubjectsForSem(session.semester, student.branch, session);
+    let unsuccessful = false;
+    for (const subj of subjects) {
+      if (isKT) {
+        const ktSubjs = State.getActiveKTSubjects(student.uin);
+        const isKTSubject = ktSubjs.some(k => k.subjectCode === subj.code);
+        if (!isKTSubject) continue;
+      }
+      const mergedMap = _meRosterBuildMergedMarks(studentRows, subj, session.id, session.semester);
+      const dr = computeDisplayResult(subj, mergedMap);
+      if (!dr.pending && (dr.result === 'Fail' || dr.result === 'AB')) {
+        unsuccessful = true;
+        break;
+      }
+    }
+    result = unsuccessful ? 'unsuccessful' : 'successful';
+  }
+
+  return { status, result, pendingSubjects, doneSubjects, lastSession, isKT, totalExpected };
 }
 
 function _meRosterLoad() {
@@ -1414,17 +1436,34 @@ function _meRosterLoad() {
       const seatLookup  = {};
       for (const s of seatEntries) seatLookup[s.uin] = s.seatNumber;
 
-      const statusOrder = { pending: 0, partial: 1, done: 2 };
+      const statusOrder  = { pending: 0, partial: 1, done: 2 };
+      const resultOrder  = { unsuccessful: 0, successful: 1 };
+
       rows.sort((a, b) => {
-        const so = statusOrder[a.status] - statusOrder[b.status];
-        if (so !== 0) return so;
-        // Within group: seat number (numeric) first, then name
         const sa = seatLookup[a.student.uin] || '';
         const sb = seatLookup[b.student.uin] || '';
         const na = Number(sa), nb = Number(sb);
-        const bothNumeric = !isNaN(na) && !isNaN(nb) && sa !== '' && sb !== '';
-        if (bothNumeric) return na - nb;
-        if (sa && !sb) return -1; // has seat comes before no seat
+
+        if (_rosterSortCol === 'seat') {
+          if (!isNaN(na) && !isNaN(nb)) return _rosterSortDir * (na - nb);
+          if (sa && !sb) return -1;
+          if (!sa && sb) return  1;
+          return _rosterSortDir * sa.localeCompare(sb);
+        }
+        if (_rosterSortCol === 'name')
+          return _rosterSortDir * a.student.name.localeCompare(b.student.name);
+        if (_rosterSortCol === 'type')
+          return _rosterSortDir * ((a.isKT ? 1 : 0) - (b.isKT ? 1 : 0));
+        if (_rosterSortCol === 'status')
+          return _rosterSortDir * ((statusOrder[a.status] ?? 0) - (statusOrder[b.status] ?? 0));
+        if (_rosterSortCol === 'result')
+          return _rosterSortDir * ((resultOrder[a.result] ?? 2) - (resultOrder[b.result] ?? 2));
+
+        // Default: status order then seat
+        const so = statusOrder[a.status] - statusOrder[b.status];
+        if (so !== 0) return so;
+        if (!isNaN(na) && !isNaN(nb)) return na - nb;
+        if (sa && !sb) return -1;
         if (!sa && sb) return  1;
         return a.student.name.localeCompare(b.student.name);
       });
@@ -1465,26 +1504,35 @@ function _meRosterRenderTable(rows, session, seatLookup) {
   let html = `
     <div style="overflow-x:auto;">
     <table class="roster-table">
-      <thead><tr>
-        <th style="min-width:52px;">Seat</th>
-        <th style="min-width:180px;">Student</th>
-        <th style="min-width:90px;">Branch · Batch</th>
-        <th style="min-width:80px;">Type</th>
-        <th style="min-width:80px;">Status</th>
-        <th style="min-width:220px;">Pending Subjects</th>
-        <th style="min-width:140px;">Last Session (this sem)</th>
-        <th style="min-width:110px;">Action</th>
-      </tr></thead>
+      <thead>
+        <tr>
+          <th style="min-width:52px; cursor:pointer;" onclick="_rosterSort('seat')">Seat ↕</th>
+          <th style="min-width:180px; cursor:pointer;" onclick="_rosterSort('name')">Student ↕</th>
+          <th style="min-width:90px;">Branch · Batch</th>
+          <th style="min-width:80px; cursor:pointer;" onclick="_rosterSort('type')">Type ↕</th>
+          <th style="min-width:90px; cursor:pointer;" onclick="_rosterSort('status')">Entry Status ↕</th>
+          <th style="min-width:100px; cursor:pointer;" onclick="_rosterSort('result')">Result ↕</th>
+          <th style="min-width:220px;">Pending Subjects</th>
+          <th style="min-width:140px;">Last Session (this sem)</th>
+          <th style="min-width:110px;">Action</th>
+        </tr>
+      </thead>
       <tbody>`;
 
   for (const { student, status, pendingSubjects, lastSession, isKT, totalExpected } of rows) {
     const seat = seatLookup[student.uin] || '—';
 
-    const statusBadge = status === 'done'
+    const entryStatusBadge = status === 'done'
       ? '<span class="badge badge-pass">✓ Done</span>'
       : status === 'partial'
         ? '<span class="badge badge-grace">⚡ Partial</span>'
         : '<span class="badge badge-fail">⏳ Pending</span>';
+
+    const resultBadge = result === 'successful'
+      ? '<span class="badge badge-pass">✓ Successful</span>'
+      : result === 'unsuccessful'
+        ? '<span class="badge badge-fail">✗ Unsuccessful</span>'
+        : '<span class="muted">—</span>';
 
     const typeBadge = isKT
       ? '<span class="badge badge-kt">KT</span>'
@@ -1516,7 +1564,11 @@ function _meRosterRenderTable(rows, session, seatLookup) {
       : `<button class="btn btn-primary btn-sm"
            onclick="_meRosterOpenAdhoc('${UI.esc(student.uin)}', '${UI.esc(session.id)}')">Enter Marks →</button>`;
 
-    const rowCls = `roster-row-${status}`;
+    const rowCls = result === 'unsuccessful'
+      ? 'roster-row-unsuccessful'
+      : result === 'successful'
+        ? 'roster-row-successful'
+        : `roster-row-${status}`;
 
     html += `<tr class="${rowCls}">
       <td style="font-family:'DM Mono',monospace; font-weight:600; color:var(--brand); text-align:center;">
@@ -1533,7 +1585,8 @@ function _meRosterRenderTable(rows, session, seatLookup) {
         <div style="font-size:11px; color:var(--ink-3);">Batch ${UI.esc(student.batchYear)}</div>
       </td>
       <td>${typeBadge}</td>
-      <td>${statusBadge}</td>
+      <td>${entryStatusBadge}</td>
+      <td>${resultBadge}</td>
       <td>${pendingCell}</td>
       <td>${lastSessCell}</td>
       <td>${actionCell}</td>
@@ -1543,6 +1596,21 @@ function _meRosterRenderTable(rows, session, seatLookup) {
   html += `</tbody></table></div>`;
   out.innerHTML = html;
 }
+
+let _rosterSortCol = 'seat';
+let _rosterSortDir = 1;
+
+function _rosterSort(col) {
+  if (_rosterSortCol === col) {
+    _rosterSortDir *= -1;
+  } else {
+    _rosterSortCol = col;
+    _rosterSortDir = 1;
+  }
+  // Re-trigger roster load with current filters
+  _meRosterLoad();
+}
+
 
 // ── Open Ad-hoc entry for a specific student + session ─────────
 function _meRosterOpenAdhoc(uin, sessionId) {
