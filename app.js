@@ -232,7 +232,8 @@ if (semCredits && semCredits.max > 0 && semCredits.earned >= semCredits.max) ret
       const studentBatchYear = Number(student.batchYear);
       const sem1Start = studentBatchYear * 12 + 12;
       const sem2Start = (studentBatchYear + 1) * 12 + 5;
-      const sessionScore = _chronoScore(session);
+      const sessionScore = Number(session.name.slice(0, 4)) * 12 +
+        (session.name.includes('May') ? 5 : 12);
       const semStart = session.semester === 1 ? sem1Start : sem2Start;
       if (sessionScore < semStart) return false;
 
@@ -316,7 +317,7 @@ function _meGetNextSession(student, sem, revalOverrides = {}) {
   );
 
   // Chronological score helper
-  const _score = s => _chronoScore(s);
+  const _score = s => Number(s.name.slice(0, 4)) * 12 + (s.name.includes('May') ? 5 : 12);
 
   // Find last session student has a record in, for this semester
   const attended = semSessions.filter(s => recordSessionIds.has(s.id));
@@ -1374,14 +1375,26 @@ function _meRosterBuildStudentStatus(student, session) {
   let lastSession = null;
   if (priorSessIds.length > 0) {
     // Find the chronologically latest one
-    const _score = sid => _chronoScore(State.getSession(sid));
+    const _score = sid => {
+      const s = State.getSession(sid);
+      if (!s) return 0;
+      const year  = Number((s.name || '').slice(0, 4));
+      const month = (s.name || '').includes('May') ? 5 : 12;
+      return year * 12 + month;
+    };
     const latestId = priorSessIds.sort((a, b) => _score(b) - _score(a))[0];
     const latestSess = State.getSession(latestId);
     if (latestSess) lastSession = latestSess.name;
   }
 
   // KT = student had any prior ledger records in this semester BEFORE this session
-  const sessionScore = (sid) => _chronoScore(State.getSession(sid));
+  const sessionScore = (sid) => {
+    const s = State.getSession(sid);
+    if (!s) return 0;
+    const year  = Number((s.name || '').slice(0, 4));
+    const month = (s.name || '').includes('May') ? 5 : 12;
+    return year * 12 + month;
+  };
   const thisScore = sessionScore(session.id);
   const isKT = State.ledger.some(r =>
     r.uin === student.uin &&
@@ -2480,8 +2493,10 @@ function _pvShowStudent(uin) {
   function _defaultSession(list) {
     if (!list.length) return null;
     const _score = s => {
+      const year  = Number((s.name || '').slice(0, 4));
+      const month = (s.name || '').includes('May') ? 5 : 12;
       const typeBonus = s.entryType === 'Revaluation_Gazette' ? 1 : 0;
-      return _chronoScore(s) * 2 + typeBonus;
+      return (year * 12 + month) * 2 + typeBonus;
     };
     return [...list].sort((a, b) => _score(b) - _score(a))[0].id;
   }
@@ -3104,7 +3119,9 @@ function _bcPopulateSessions(side) {
   const semFilter = document.getElementById('rpt-bc-semester')?.value || '';
   const sessions  = sortSessions(State.getSessions().filter(s => {
     if (batchYear) {
-      const score = _chronoScore(s);
+      const year  = Number(s.name.slice(0, 4));
+      const month = s.name.includes('May') ? 5 : 12;
+      const score = year * 12 + month;
       const batch = Number(batchYear);
       const semStart = s.semester === 1
         ? batch * 12 + 12          // Sem I: Dec of batch year
@@ -4896,7 +4913,12 @@ function _aktdRun() {
     if (allRows.length === 0) continue;
 
     // Session chronology score — year × 12 + month from session name, never from entryDateTime
-    const _sessionScore = sess => _chronoScore(sess);
+    const _sessionScore = sess => {
+      if (!sess) return 0;
+      const year  = Number((sess.name || '').slice(0, 4));
+      const month = (sess.name || '').includes('May') ? 5 : 12;
+      return year * 12 + month;
+    };
 
     // Step 1: merge multiple ledger rows within the same session
     // (latest component value wins within a session, same as _getActiveKTsForStudent)

@@ -332,20 +332,15 @@ function computeDisplayResult(subject, marksMap) {
 
 // ── Session sort ──────────────────────────────────────────────
 // Global sort: Year DESC → Month DESC (May > Dec) → Sem ASC → Type DESC (Gazette > Preliminary)
-function _chronoScore(s) {
-  if (!s) return 0;
-  let year = null;
-  if (s.name) {
-    const m = String(s.name).match(/\b(20\d\d)\b/);
-    if (m) year = Number(m[1]);
-  }
-  if (!year && s.batchYear) year = Number(s.batchYear);
-  if (!year) year = 2024;
-  const month = (s.month || s.name || '').toLowerCase().includes('may') ? 5 : 12;
-  return year * 12 + month;
-}
-
 function sortSessions(sessions) {
+  function _chronoScore(s) {
+    // Convert session name to a numeric score for true chronological ordering
+    // May YYYY → YYYY * 12 + 5, Dec YYYY → YYYY * 12 + 12
+    const year  = Number(s.name.slice(0, 4));
+    const month = s.name.includes('May') ? 5 : 12;
+    return year * 12 + month;
+  }
+
   return [...sessions].sort((a, b) => {
     const scoreA = _chronoScore(a);
     const scoreB = _chronoScore(b);
@@ -362,6 +357,12 @@ function sortSessions(sessions) {
 
 // Progress View sort: oldest attempt first (Year ASC → Month ASC → Type ASC)
 function sortSessionsChronological(sessions) {
+  function _chronoScore(s) {
+    const year  = Number(s.name.slice(0, 4));
+    const month = s.name.includes('May') ? 5 : 12;
+    return year * 12 + month;
+  }
+
   return [...sessions].sort((a, b) => {
     const scoreA = _chronoScore(a);
     const scoreB = _chronoScore(b);
