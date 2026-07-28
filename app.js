@@ -1509,8 +1509,7 @@ function _meRosterLoad() {
       for (const s of seatEntries) seatLookup[s.uin] = s.seatNumber;
 
       const statusOrder  = { pending: 0, partial: 1, done: 2 };
-      const resultOrder  = { unsuccessful: 0, successful: 1 };
-
+      
       rows.sort((a, b) => {
         const sa = seatLookup[a.student.uin] || '';
         const sb = seatLookup[b.student.uin] || '';
@@ -1532,9 +1531,7 @@ function _meRosterLoad() {
           return _rosterSortDir * ((a.isKT ? 1 : 0) - (b.isKT ? 1 : 0));
         if (_rosterSortCol === 'status')
           return _rosterSortDir * ((statusOrder[a.status] ?? 0) - (statusOrder[b.status] ?? 0));
-        if (_rosterSortCol === 'result')
-          return _rosterSortDir * ((resultOrder[a.result] ?? 2) - (resultOrder[b.result] ?? 2));
-
+        
         // Default: status order then seat
         const so = statusOrder[a.status] - statusOrder[b.status];
         if (so !== 0) return so;
@@ -1600,7 +1597,6 @@ function _meRosterRenderTable(rows, session, seatLookup) {
         <th style="min-width:80px; cursor:pointer;" onclick="_rosterSort('batch')">Batch ↕</th>
           <th style="min-width:80px; cursor:pointer;" onclick="_rosterSort('type')">Type ↕</th>
           <th style="min-width:90px; cursor:pointer;" onclick="_rosterSort('status')">Entry Status ↕</th>
-          <th style="min-width:100px; cursor:pointer;" onclick="_rosterSort('result')">Result ↕</th>
           <th style="min-width:220px;">Pending Subjects</th>
           <th style="min-width:140px;">Last Session (this sem)</th>
           <th style="min-width:110px;">Action</th>
@@ -1617,11 +1613,7 @@ function _meRosterRenderTable(rows, session, seatLookup) {
         ? '<span class="badge badge-grace">⚡ Partial</span>'
         : '<span class="badge badge-fail">⏳ Pending</span>';
 
-    const resultBadge = result === 'successful'
-      ? '<span class="badge badge-pass">✓ Successful</span>'
-      : result === 'unsuccessful'
-        ? '<span class="badge badge-fail">✗ Unsuccessful</span>'
-        : '<span class="muted">—</span>';
+    // result column dropped
 
     const typeBadge = isKT
       ? '<span class="badge badge-kt">KT</span>'
@@ -1678,8 +1670,7 @@ function _meRosterRenderTable(rows, session, seatLookup) {
       </td>
       <td>${typeBadge}</td>
       <td>${entryStatusBadge}</td>
-      <td>${resultBadge}</td>
-      <td>${pendingCell}</td>
+       <td>${pendingCell}</td>
       <td>${lastSessCell}</td>
       <td>${actionCell}</td>
     </tr>`;
