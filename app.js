@@ -1396,7 +1396,7 @@ function _meRosterBuildStudentStatus(student, session) {
     result = unsuccessful ? 'unsuccessful' : 'successful';
   }
 
-  return { status, result, pendingSubjects, doneSubjects, lastSession, isKT, totalExpected };
+  return { status, result, pendingSubjects, doneSubjects, lastSession, isKT, totalExpected: subjects.length };
 }
 
 function _meRosterLoad() {
