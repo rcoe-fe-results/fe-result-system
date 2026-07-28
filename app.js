@@ -2542,10 +2542,17 @@ function initReports() {
 function _bcPopulateSessions(side) {
   const batchYear = document.getElementById(`rpt-bc-batch-${side}`).value;
   const semFilter = document.getElementById('rpt-bc-semester')?.value || '';
-  const sessions  = sortSessions(State.getSessions().filter(s =>
-    (!batchYear || s.batchYear === batchYear) &&
-    (!semFilter  || String(s.semester) === semFilter)
-  ));
+  const sessions  = sortSessions(State.getSessions().filter(s => {
+    if (batchYear) {
+      const year  = Number(s.name.slice(0, 4));
+      const month = s.name.includes('May') ? 5 : 12;
+      const score = year * 12 + month;
+      const batchStart = Number(batchYear) * 12 + 12;
+      if (score < batchStart) return false;
+    }
+    if (semFilter && String(s.semester) !== semFilter) return false;
+    return true;
+  }));
   const el   = document.getElementById(`rpt-bc-session-${side}`);
   const hint = document.getElementById(`bc-hint-${side}`);
   if (!batchYear) {
