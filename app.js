@@ -1217,6 +1217,15 @@ function _meInitRoster() {
   document.getElementById('me-roster-division').onchange = _meRosterOnFilterChange;
   document.getElementById('me-roster-load-btn').onclick  = _meRosterLoad;
 
+  // Populate batch year
+  const batchYears = State.getBatchYears();
+  const batchEl = document.getElementById('me-roster-batch');
+  if (batchEl) {
+    batchEl.innerHTML = '<option value="">— all batches —</option>' +
+      batchYears.map(y => `<option value="${UI.esc(y)}">${UI.esc(y)}</option>`).join('');
+    batchEl.onchange = _meRosterOnFilterChange;
+  }
+
   // Reset output
   document.getElementById('me-roster-pills').classList.add('hidden');
   document.getElementById('me-roster-output').innerHTML = '';
@@ -1452,6 +1461,10 @@ function _meRosterLoad() {
         }
         if (_rosterSortCol === 'name')
           return _rosterSortDir * a.student.name.localeCompare(b.student.name);
+        if (_rosterSortCol === 'branch')
+          return _rosterSortDir * a.student.branch.localeCompare(b.student.branch);
+        if (_rosterSortCol === 'batch')
+          return _rosterSortDir * a.student.batchYear.localeCompare(b.student.batchYear);
         if (_rosterSortCol === 'type')
           return _rosterSortDir * ((a.isKT ? 1 : 0) - (b.isKT ? 1 : 0));
         if (_rosterSortCol === 'status')
@@ -1508,7 +1521,8 @@ function _meRosterRenderTable(rows, session, seatLookup) {
         <tr>
           <th style="min-width:52px; cursor:pointer;" onclick="_rosterSort('seat')">Seat ↕</th>
           <th style="min-width:180px; cursor:pointer;" onclick="_rosterSort('name')">Student ↕</th>
-          <th style="min-width:90px;">Branch · Batch</th>
+          <th style="min-width:80px; cursor:pointer;" onclick="_rosterSort('branch')">Branch ↕</th>
+        <th style="min-width:80px; cursor:pointer;" onclick="_rosterSort('batch')">Batch ↕</th>
           <th style="min-width:80px; cursor:pointer;" onclick="_rosterSort('type')">Type ↕</th>
           <th style="min-width:90px; cursor:pointer;" onclick="_rosterSort('status')">Entry Status ↕</th>
           <th style="min-width:100px; cursor:pointer;" onclick="_rosterSort('result')">Result ↕</th>
@@ -1580,9 +1594,12 @@ function _meRosterRenderTable(rows, session, seatLookup) {
           ${UI.esc(student.uin)} · ${UI.esc(student.prn || '—')}
         </div>
       </td>
+      <td>${UI.esc(student.branch)}</td>
       <td>
-        <div style="font-size:12px;">${UI.esc(student.branch)}</div>
-        <div style="font-size:11px; color:var(--ink-3);">Batch ${UI.esc(student.batchYear)}</div>
+        <span style="font-size:12px; font-weight:600; background:var(--brand-light); color:var(--brand);
+          border:1px solid #C7D7FF; border-radius:20px; padding:2px 10px; white-space:nowrap;">
+          ${UI.esc(student.batchYear)}
+        </span>
       </td>
       <td>${typeBadge}</td>
       <td>${entryStatusBadge}</td>

@@ -862,7 +862,7 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
 }
 .roster-table thead th {
   background:var(--surface-2); font-weight:600; color:var(--ink-3);
-  font-size:11px; position:sticky; top:56px; z-index:2;
+  font-size:11px; position:sticky; top:0; z-index:2;
 }
 .roster-table tbody tr:hover { background:var(--surface-2); }
 .roster-row-pending { background:#FFF8F8; }
@@ -1188,6 +1188,10 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
             <label>Division</label>
             <select id="me-roster-division"><option value="">— all divisions —</option></select>
           </div>
+          <div class="filter-group">
+            <label>Batch Year</label>
+            <select id="me-roster-batch"><option value="">— all batches —</option></select>
+          </div>
           <div class="filter-group" style="justify-content:flex-end;">
             <label>&nbsp;</label>
             <button id="me-roster-load-btn" class="btn btn-primary" disabled>Load Roster →</button>
@@ -1204,7 +1208,7 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
       </div>
 
       <!-- Table -->
-      <div id="me-roster-output" style="margin-top:12px;"></div>
+      <div id="me-roster-output" style="margin-top:12px; max-height:70vh; overflow-y:auto; overflow-x:auto; border:1px solid var(--border); border-radius:var(--radius);"></div>
     </div>
 
     </div>
