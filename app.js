@@ -1519,7 +1519,7 @@ function _meRosterRenderTable(rows, session, seatLookup) {
       </thead>
       <tbody>`;
 
-  for (const { student, status, pendingSubjects, lastSession, isKT, totalExpected } of rows) {
+  for (const { student, status, result, pendingSubjects, lastSession, isKT, totalExpected } of rows) {
     const seat = seatLookup[student.uin] || '—';
 
     const entryStatusBadge = status === 'done'
