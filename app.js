@@ -1440,7 +1440,16 @@ function _meRosterBuildStudentStatus(student, session) {
   // Result status — only meaningful when entry is Done
   let result = null;
   if (status === 'done') {
-    const studentRows = State.ledger.filter(r => r.uin === student.uin);
+    // Only use marks from this session (+ linked prelim for Reval Gazette)
+    // Never carry forward from later sessions — result must reflect THIS session only
+    const isFinalGazette = session.entryType === 'Revaluation_Gazette';
+    const linkedPrelimId = isFinalGazette ? session.linkedPrelimSessionId : null;
+
+    const sessionOnlyRows = State.ledger.filter(r =>
+      r.uin === student.uin &&
+      (r.examSession === session.id || (linkedPrelimId && r.examSession === linkedPrelimId))
+    );
+
     const subjects = getSubjectsForSem(session.semester, student.branch, session);
     let unsuccessful = false;
     for (const subj of subjects) {
@@ -1449,7 +1458,7 @@ function _meRosterBuildStudentStatus(student, session) {
         const isKTSubject = ktSubjs.some(k => k.subjectCode === subj.code);
         if (!isKTSubject) continue;
       }
-      const mergedMap = _meRosterBuildMergedMarks(studentRows, subj, session.id, session.semester);
+      const mergedMap = _meRosterBuildMergedMarks(sessionOnlyRows, subj, session.id, session.semester);
       const dr = computeDisplayResult(subj, mergedMap);
       if (!dr.pending && (dr.result === 'Fail' || dr.result === 'AB')) {
         unsuccessful = true;
