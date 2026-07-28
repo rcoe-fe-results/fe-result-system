@@ -1645,7 +1645,7 @@ function _meRosterRenderTable(rows, session, seatLookup) {
       : `<button class="btn btn-primary btn-sm"
            onclick="_meRosterOpenAdhoc('${UI.esc(student.uin)}', '${UI.esc(session.id)}')">Enter Marks →</button>`;
 
-    /*const rowCls = result === 'unsuccessful'
+    const rowCls = result === 'unsuccessful'
       ? 'roster-row-unsuccessful'
       : result === 'successful'
         ? 'roster-row-successful'
@@ -1673,7 +1673,7 @@ function _meRosterRenderTable(rows, session, seatLookup) {
        <td>${pendingCell}</td>
       <td>${lastSessCell}</td>
       <td>${actionCell}</td>
-    </tr>`;*/
+    </tr>`;
   }
 
   html += `</tbody></table></div>`;
