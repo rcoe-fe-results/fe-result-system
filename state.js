@@ -2527,7 +2527,7 @@ const State = (() => {
 
       const hasKT = !!ktSubjectsByStudent[s.uin] && sessionIsReachable;
 
-      if (!isFresh && !hasKT) continue;
+      if (!isFresh && !hasKT && !hasRecordInThisSession) continue;
 
       eligible.set(s.uin, {
         ...s,
