@@ -2547,8 +2547,11 @@ function _bcPopulateSessions(side) {
       const year  = Number(s.name.slice(0, 4));
       const month = s.name.includes('May') ? 5 : 12;
       const score = year * 12 + month;
-      const batchStart = Number(batchYear) * 12 + 12;
-      if (score < batchStart) return false;
+      const batch = Number(batchYear);
+      const semStart = s.semester === 1
+        ? batch * 12 + 12          // Sem I: Dec of batch year
+        : (batch + 1) * 12 + 5;   // Sem II: May of following year
+      if (score < semStart) return false;
     }
     if (semFilter && String(s.semester) !== semFilter) return false;
     return true;
