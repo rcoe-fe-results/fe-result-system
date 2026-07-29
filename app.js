@@ -2776,7 +2776,7 @@ function _dashSessionCompletion() {
 
   if (!sessions.length) { el.innerHTML = '<div class="muted">No active sessions.</div>'; return; }
 
-  let html = '';
+  let html = '<div class="dash-progress-container">';
   for (const sess of sessions) {
     const semStudents = State.getEligibleStudents(sess, selectedBranch || null);
     const totalStudents = semStudents.length;
@@ -2808,23 +2808,32 @@ function _dashSessionCompletion() {
     const markPct = totalEntriesNeeded > 0 ? Math.round((actualEntriesFound / totalEntriesNeeded) * 100) : 0;
     const studentPct = Math.round((fullyCompletedStudents / totalStudents) * 100);
 
-    const barColor = markPct >= 100 ? 'var(--pass)' : markPct > 0 ? 'var(--brand)' : 'var(--border-2)';
+    let badgeClass = 'dash-badge-entry-progress';
+    let badgeText  = `⏳ ${markPct}% Logged`;
+    if (markPct >= 100) {
+      badgeClass = 'dash-badge-entry-complete';
+      badgeText  = '✔ Entry Complete';
+    } else if (markPct === 0) {
+      badgeClass = 'dash-badge-entry-pending';
+      badgeText  = '⏸ Not Started';
+    }
 
     html += `
-      <div class="dash-completion-row" style="margin-bottom:14px;">
-        <div style="flex:1;">
-          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
-            <span class="dash-completion-label" style="font-weight:600;">${UI.esc(sess.name)}</span>
-            <span class="dash-completion-pct" style="font-weight:700; color:${barColor}">${markPct}%</span>
-          </div>
-          <div class="dash-progress-bar"><div class="dash-progress-fill" style="width:${markPct}%; background:${barColor}"></div></div>
-          <div style="display:flex; justify-content:space-between; font-size:11px; color:var(--ink-3); margin-top:4px;">
-            <span>${actualEntriesFound} / ${totalEntriesNeeded} subject entries</span>
-            <span>${fullyCompletedStudents} / ${totalStudents} students complete (${studentPct}%)</span>
-          </div>
+      <div class="dash-completion-card">
+        <div class="dash-completion-header">
+          <span class="dash-completion-title">${UI.esc(sess.name)}</span>
+          <span class="dash-badge ${badgeClass}">${badgeText}</span>
+        </div>
+        <div class="dash-progress-track">
+          <div class="dash-progress-fill-entry ${markPct >= 100 ? 'complete' : ''}" style="width:${markPct}%;"></div>
+        </div>
+        <div class="dash-completion-meta">
+          <span><b>${actualEntriesFound}</b> / ${totalEntriesNeeded} subject entries logged</span>
+          <span><b>${fullyCompletedStudents}</b> / ${totalStudents} students complete (${studentPct}%)</span>
         </div>
       </div>`;
   }
+  html += '</div>';
   el.innerHTML = html || '<div class="muted">No students matching filter.</div>';
 }
 
@@ -2883,9 +2892,14 @@ function _dashBranchPassRates() {
       const pct   = Math.round(passed / appeared.length * 100);
       const color = pct >= 80 ? 'var(--pass)' : pct >= 60 ? 'var(--kt)' : 'var(--fail)';
       html += `
-        <div class="dash-branch-row">
-          <span>${UI.esc(branch)}</span>
-          <span class="dash-pass-pct" style="color:${color}">${pct}% <small>(${passed}/${appeared.length})</small></span>
+        <div class="dash-branch-item">
+          <div class="dash-branch-meta">
+            <span class="dash-branch-name">${UI.esc(branch)}</span>
+            <span class="dash-branch-pct" style="color:${color}">${pct}% <small>(${passed}/${appeared.length} passed)</small></span>
+          </div>
+          <div class="dash-progress-track" style="height:8px;">
+            <div class="dash-progress-fill-academic" style="width:${pct}%; background:${color};"></div>
+          </div>
         </div>`;
     }
     rowsEl.innerHTML = html || '<div class="muted">No data for selected batch year.</div>';

@@ -793,6 +793,76 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
   font-size: 12px; padding: 3px 8px; border-radius: var(--radius);
   border: 1px solid var(--border-2); background: var(--surface); color: var(--ink);
 }
+/* ─── Dashboard Modern Progress Bars & Workflow Badges ─── */
+.dash-progress-container {
+  display: flex; flex-direction: column; gap: 14px;
+}
+.dash-completion-card {
+  background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: var(--radius-lg); padding: 14px 16px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.03);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.dash-completion-card:hover {
+  box-shadow: 0 4px 12px rgba(0,0,0,0.06);
+}
+.dash-completion-header {
+  display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;
+}
+.dash-completion-title {
+  font-weight: 700; font-size: 13px; color: var(--ink); display: flex; align-items: center; gap: 8px;
+}
+.dash-badge {
+  font-size: 11px; font-weight: 600; padding: 2px 9px; border-radius: 999px;
+  display: inline-flex; align-items: center; gap: 4px; letter-spacing: 0.1px;
+}
+.dash-badge-entry-complete { background: #E0F2FE; color: #0369A1; border: 1px solid #BAE6FD; }
+.dash-badge-entry-progress { background: #EFF6FF; color: #1D4ED8; border: 1px solid #BFDBFE; }
+.dash-badge-entry-pending  { background: #F3F4F6; color: #4B5563; border: 1px solid #E5E7EB; }
+
+.dash-progress-track {
+  width: 100%; height: 11px; background: #E2E8F0;
+  border: 1px solid var(--border); border-radius: 999px; overflow: hidden;
+  position: relative; box-shadow: inset 0 1px 2px rgba(0,0,0,0.04);
+}
+.dash-progress-fill-entry {
+  height: 100%; border-radius: 999px;
+  background: linear-gradient(90deg, #2563EB, #06B6D4);
+  transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+}
+.dash-progress-fill-entry.complete {
+  background: linear-gradient(90deg, #0284C7, #0D9488);
+}
+.dash-progress-fill-entry::after {
+  content: ''; position: absolute; top: 0; left: -100%; width: 100%; height: 100%;
+  background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.45) 50%, transparent 100%);
+  animation: dashShimmer 2.5s infinite;
+}
+@keyframes dashShimmer {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(200%); }
+}
+.dash-progress-fill-academic {
+  height: 100%; border-radius: 999px;
+  transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.dash-completion-meta {
+  display: flex; justify-content: space-between; font-size: 11px;
+  color: var(--ink-3); margin-top: 6px; font-weight: 500;
+}
+.dash-branch-item {
+  margin-bottom: 12px;
+}
+.dash-branch-item:last-child {
+  margin-bottom: 0;
+}
+.dash-branch-meta {
+  display: flex; justify-content: space-between; align-items: center;
+  font-size: 12px; margin-bottom: 4px;
+}
+.dash-branch-name { font-weight: 600; color: var(--ink); }
+.dash-branch-pct { font-weight: 700; font-family: 'DM Mono', monospace; }
 .dash-completion-row {
   display: flex; align-items: center; gap: 10px; margin-bottom: 10px;
 }
@@ -1676,22 +1746,22 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
     <div id="tab-dashboard" class="tab-pane hidden">
       <div class="dash-grid">
 
-        <!-- Session completion % -->
+        <!-- Mark Entry Workflow Completion % -->
         <div class="dash-card dash-card-wide">
-          <div class="dash-card-title">Session Completion</div>
+          <div class="dash-card-title">📝 Mark Entry Workflow Progress (Faculty Upload Status)</div>
           <div id="dash-session-completion"></div>
         </div>
 
         <!-- Active KT count -->
         <div class="dash-card">
-          <div class="dash-card-title">Active KTs</div>
+          <div class="dash-card-title">⚠️ Active KTs</div>
           <div id="dash-kt-count" class="dash-big-number"></div>
           <div id="dash-kt-sub" class="dash-sub-label"></div>
         </div>
 
-        <!-- Branch-wise pass rates -->
+        <!-- Branch-wise academic pass rates -->
         <div class="dash-card">
-          <div class="dash-card-title">Branch-wise Pass Rate</div>
+          <div class="dash-card-title">🎓 Branch Academic Pass Rates</div>
           <div id="dash-branch-pass"></div>
         </div>
 
