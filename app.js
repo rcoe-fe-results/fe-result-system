@@ -2795,7 +2795,12 @@ function _dashSessionCompletion() {
       const uniqueSubjs = new Set(rows.map(r => r.subjectCode)).size;
 
       actualEntriesFound += Math.min(uniqueSubjs, expectedCount);
-      if (uniqueSubjs >= expectedCount) {
+
+      // Use semCredits from computeStudentAcademics to correctly handle
+      // KT carry-forward and Reval ESE-only entries
+      const acad = State.computeStudentAcademics(student.uin);
+      const sc   = acad?.semCredits[sess.semester];
+      if (sc && sc.max > 0 && sc.earned >= sc.max) {
         fullyCompletedStudents++;
       }
     }
