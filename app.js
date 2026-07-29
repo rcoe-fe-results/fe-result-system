@@ -2778,10 +2778,7 @@ function _dashSessionCompletion() {
 
   let html = '';
   for (const sess of sessions) {
-    const semStudents = students.filter(s =>
-      String(s.batchYear) === String(sess.batchYear) &&
-      (!selectedBranch || s.branch === selectedBranch)
-    );
+    const semStudents = State.getEligibleStudents(sess, selectedBranch || null);
     const totalStudents = semStudents.length;
     if (totalStudents === 0) continue;
 
