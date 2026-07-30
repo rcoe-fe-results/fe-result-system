@@ -7165,7 +7165,7 @@ async function _gazProcParse() {
 }
 
 function _gazProcRenderPreview() {
-  const { matchedStudents, missingStudents } = _gazProcState;
+  const { session, matchedStudents, missingStudents } = _gazProcState;
 
   // Panel A
   const matchedCountEl = document.getElementById('gaz-proc-matched-count');
