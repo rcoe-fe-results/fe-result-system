@@ -5112,6 +5112,54 @@ function _aktdRun() {
     return f;
   }).join('</th><th>');
 
+  // ── Group rows by attempt ─────────────────────────────
+  function _aktdAttemptGroup(tag) {
+    if (!tag) return null;
+    // Strip "after Reval" suffix — merge into plain attempt group
+    const clean = tag.replace(/\s*after Reval/i, '').trim();
+    // Extract attempt label: "Regular Attempt" | "2nd Attempt" | "3rd Attempt" | "Nth Attempt"
+    const m = clean.match(/in (.+)$/);
+    return m ? m[1].trim() : null;
+  }
+
+  function _aktdAttemptOrder(groupKey) {
+    if (!groupKey) return -1; // Unknown → bottom
+    if (groupKey === 'Regular Attempt') return 1;
+    const n = parseInt(groupKey);
+    return isNaN(n) ? 0 : n;
+  }
+
+  // Compute tag per row and assign group
+  const rowsWithGroup = rows.map(r => {
+    const tag = r.lastSessionId
+      ? State.computeAttemptTag(r.uin, _aktdLastMeta.subjectCode, r.lastSessionId)
+      : null;
+    return { ...r, _tag: tag, _group: _aktdAttemptGroup(tag) };
+  });
+
+  // Sort within each group: branch A→Z, then UIN A→Z
+  rowsWithGroup.sort((a, b) =>
+    (a.branch || '').localeCompare(b.branch || '') ||
+    (a.uin    || '').localeCompare(b.uin    || '')
+  );
+
+  // Build ordered group list: highest attempt first, Unknown last
+  const groupMap = {};
+  for (const r of rowsWithGroup) {
+    const key = r._group || '—';
+    if (!groupMap[key]) groupMap[key] = [];
+    groupMap[key].push(r);
+  }
+
+  const unknownRows = groupMap['—'] || [];
+  delete groupMap['—'];
+
+  const orderedGroups = Object.entries(groupMap)
+    .sort((a, b) => _aktdAttemptOrder(b[0]) - _aktdAttemptOrder(a[0]));
+
+  if (unknownRows.length) orderedGroups.push(['—', unknownRows]);
+
+  // ── Render ────────────────────────────────────────────
   let html = `
     <table class="progress-table" style="width:100%; font-size:12px;">
       <thead><tr>
@@ -5122,7 +5170,7 @@ function _aktdRun() {
         <th>Div</th>
         <th>Batch</th>
         <th>Gender</th>
-        <th>Attempts</th>
+        <th>Attempt</th>
         <th>Last Session</th>
         <th>${markHeaders}</th>
         <th>Result</th>
@@ -5130,27 +5178,60 @@ function _aktdRun() {
       </tr></thead>
       <tbody>`;
 
-  rows.forEach((r, i) => {
-    const markCells = fields.map(f => `<td>${UI.esc(r.compMarks[f])}</td>`).join('');
-    html += `<tr>
-      <td class="muted">${i + 1}</td>
-      <td class="muted"><span class="subj-code-small">${UI.esc(r.uin)}</span><br>${UI.esc(r.prn)}</td>
-      <td><strong>${UI.esc(r.name)}</strong></td>
-      <td>${UI.esc(r.branch)}</td>
-      <td>${UI.esc(r.division)}</td>
-      <td>${UI.esc(r.batchYear)}</td>
-      <td>${UI.esc(r.gender)}</td>
-      <td>${r.lastSessionId ? (() => { const t = State.computeAttemptTag(r.uin, _aktdLastMeta.subjectCode, r.lastSessionId); return t ? `<span class="badge ${t.startsWith('Unsuccessful') ? 'badge-fail' : t.includes('after Reval') || t.includes('Marks Reval') ? 'badge-reval' : 'badge-pass'}" title="${UI.esc(t)}">${UI.esc(t)}</span>` : '—'; })() : '—'}</td>
-      <td class="muted" style="font-size:11px;">${UI.esc(r.lastSession)}</td>
-      ${markCells}
-      <td><span class="badge ${r.result === 'AB' ? 'badge-warning' : 'badge-kt'}">${UI.esc(r.result)}</span></td>
-      <td><button class="btn btn-secondary btn-sm" onclick="_aktdOpenProgress('${UI.esc(r.uin)}')">More Details</button></td>
-    </tr>`;
-  });
+  let globalIdx = 1;
+
+  for (const [groupKey, groupRows] of orderedGroups) {
+    const groupId = `aktd-group-${groupKey.replace(/\s+/g, '-')}`;
+    const label   = groupKey === '—' ? 'Unknown' : `Unsuccessful in ${groupKey}`;
+
+    html += `
+      <tr class="aktd-group-header" onclick="_aktdToggleGroup('${groupId}')">
+        <td colspan="12" style="
+          background:var(--surface-2); font-weight:700; font-size:12px;
+          padding:8px 12px; cursor:pointer; user-select:none;
+          border-top:2px solid var(--border-2); color:var(--ink-2);
+        ">
+          <span id="${groupId}-arrow" style="margin-right:8px; font-size:10px;">▶</span>
+          ${UI.esc(label)}
+          <span style="font-weight:400; color:var(--ink-3); margin-left:8px;">${groupRows.length} student${groupRows.length !== 1 ? 's' : ''}</span>
+        </td>
+      </tr>`;
+
+    for (const r of groupRows) {
+      const markCells = fields.map(f => `<td>${UI.esc(r.compMarks[f])}</td>`).join('');
+      html += `
+        <tr class="${groupId}-rows" style="display:none;">
+          <td class="muted">${globalIdx++}</td>
+          <td class="muted"><span class="subj-code-small">${UI.esc(r.uin)}</span><br>${UI.esc(r.prn)}</td>
+          <td><strong>${UI.esc(r.name)}</strong></td>
+          <td>${UI.esc(r.branch)}</td>
+          <td>${UI.esc(r.division)}</td>
+          <td>${UI.esc(r.batchYear)}</td>
+          <td>${UI.esc(r.gender)}</td>
+          <td>
+            ${r._tag
+              ? `<span class="badge badge-fail" title="${UI.esc(r._tag)}">${UI.esc(r._tag)}</span>`
+              : '<span class="muted">—</span>'}
+          </td>
+          <td class="muted" style="font-size:11px;">${UI.esc(r.lastSession)}</td>
+          ${markCells}
+          <td><span class="badge ${r.result === 'AB' ? 'badge-warning' : 'badge-kt'}">${UI.esc(r.result)}</span></td>
+          <td><button class="btn btn-secondary btn-sm" onclick="_aktdOpenProgress('${UI.esc(r.uin)}')">More Details</button></td>
+        </tr>`;
+    }
+  }
 
   html += '</tbody></table>';
   output.innerHTML = html;
   _eligSetCsvEnabled('rpt-aktd-csv', true);
+}
+
+function _aktdToggleGroup(groupId) {
+  const arrow = document.getElementById(`${groupId}-arrow`);
+  const rows  = document.querySelectorAll(`.${groupId}-rows`);
+  const isOpen = arrow?.textContent.trim() === '▼';
+  if (arrow) arrow.textContent = isOpen ? '▶' : '▼';
+  rows.forEach(r => r.style.display = isOpen ? 'none' : '');
 }
 
 function _aktdOpenProgress(uin) {
