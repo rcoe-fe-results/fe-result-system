@@ -5350,6 +5350,7 @@ function initAdmin() {
 
   _adminRenderSessionList();
   _adminRenderAudit();
+  _gazetteProcessorInit();
 }
 
 function _adminToggleLinkedPrelim() {
@@ -7001,4 +7002,395 @@ function _pvExport(scope) {
 function _debounce(fn, ms) {
   let t;
   return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
+}
+
+// ═══════════════════════════════════════════════════════════════
+// GAZETTE PDF PROCESSOR & MANIFEST PIPELINE
+// ═══════════════════════════════════════════════════════════════
+
+let _gazProcState = {
+  session:         null,
+  branch:          null,
+  matchedStudents: [], // [{ student, ern, seatNo, pageNo, seatExists }]
+  missingStudents: [], // [{ student, hasLedgerEntries }]
+};
+
+function _gazetteProcessorInit() {
+  const sessEl = document.getElementById('gaz-proc-session');
+  const brEl   = document.getElementById('gaz-proc-branch');
+  const fileEl = document.getElementById('gaz-proc-file');
+  const parseBtn = document.getElementById('gaz-proc-parse-btn');
+  const saveBtn  = document.getElementById('gaz-proc-save-seats-btn');
+  const skipBtn  = document.getElementById('gaz-proc-skip-btn');
+
+  if (!sessEl || !brEl || !fileEl) return;
+
+  const sessions = sortSessions(State.getSessions().filter(s =>
+    s.status === 'Active' &&
+    s.entryType !== 'Revaluation_Gazette'
+  ));
+  UI.buildSelect('gaz-proc-session', sessions, '— select session —', 'id', 'name');
+  UI.buildSelect('gaz-proc-branch', BRANCHES, '— select branch —');
+
+  sessEl.onchange  = _gazProcOnFilterChange;
+  brEl.onchange    = _gazProcOnFilterChange;
+  fileEl.onchange  = _gazProcOnFilterChange;
+  if (parseBtn) parseBtn.onclick = _gazProcParse;
+  if (saveBtn)  saveBtn.onclick  = _gazProcSaveSeats;
+  if (skipBtn)  skipBtn.onclick  = _gazProcMarkSkips;
+}
+
+function _gazProcOnFilterChange() {
+  const sessId = document.getElementById('gaz-proc-session')?.value;
+  const branch = document.getElementById('gaz-proc-branch')?.value;
+  const file   = document.getElementById('gaz-proc-file')?.files[0];
+  const ready  = !!(sessId && branch && file);
+  
+  const parseBtn = document.getElementById('gaz-proc-parse-btn');
+  if (parseBtn) parseBtn.disabled = !ready;
+
+  document.getElementById('gaz-proc-preview')?.classList.add('hidden');
+  document.getElementById('gaz-proc-report')?.classList.add('hidden');
+  _gazProcState = { session: null, branch: null, matchedStudents: [], missingStudents: [] };
+}
+
+async function _gazProcExtractFromPDF(file) {
+  if (!window.pdfjsLib) {
+    await new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+      script.onload = resolve;
+      script.onerror = reject;
+      document.head.appendChild(script);
+    });
+    window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+      'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  }
+
+  const arrayBuffer = await file.arrayBuffer();
+  const pdf         = await window.pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+  const numPages    = pdf.numPages;
+
+  const records = []; // [{ ern, seatNo, pageNo }]
+
+  for (let pageNum = 1; pageNum <= numPages; pageNum++) {
+    const page    = await pdf.getPage(pageNum);
+    const content = await page.getTextContent();
+    const items   = content.items;
+
+    const texts = items.map(item => ({
+      str: item.str.trim(),
+      x:   item.transform[4],
+      y:   item.transform[5],
+    })).filter(t => t.str.length > 0);
+
+    const ernRegex  = /MU\d{15,}/g;
+    const seatRegex = /^\d{7}$/;
+
+    const ernCandidates  = [];
+    const seatCandidates = [];
+
+    for (const t of texts) {
+      const ernMatch = t.str.match(ernRegex);
+      if (ernMatch) {
+        ernCandidates.push({ ern: ernMatch[0], y: t.y, x: t.x });
+      }
+      if (seatRegex.test(t.str) && t.x < 80) {
+        seatCandidates.push({ seatNo: t.str, y: t.y, x: t.x });
+      }
+    }
+
+    for (const ern of ernCandidates) {
+      const seatsAbove = seatCandidates.filter(s => s.y >= ern.y);
+      if (seatsAbove.length === 0) continue;
+      seatsAbove.sort((a, b) => (a.y - ern.y) - (b.y - ern.y));
+      const nearest = seatsAbove[0];
+      records.push({ ern: ern.ern, seatNo: nearest.seatNo, pageNo: pageNum });
+    }
+  }
+
+  const seen = new Set();
+  return records.filter(r => {
+    if (seen.has(r.ern)) return false;
+    seen.add(r.ern);
+    return true;
+  });
+}
+
+async function _gazProcParse() {
+  const sessId  = document.getElementById('gaz-proc-session')?.value;
+  const branch  = document.getElementById('gaz-proc-branch')?.value;
+  const file    = document.getElementById('gaz-proc-file')?.files[0];
+  const session = State.getSession(sessId);
+
+  if (!session || !branch || !file) return;
+
+  UI.showSpinner('Parsing Gazette PDF & matching ERNs…');
+
+  try {
+    const records = await _gazProcExtractFromPDF(file);
+    const eligibleStudents = State.getEligibleStudents(session, branch);
+
+    const ernMap = {}; // ern -> { seatNo, pageNo }
+    for (const r of records) {
+      ernMap[r.ern] = { seatNo: r.seatNo, pageNo: r.pageNo };
+    }
+
+    const matchedStudents = [];
+    const missingStudents = [];
+
+    for (const student of eligibleStudents) {
+      const prn = (student.prn || '').trim();
+      if (ernMap[prn]) {
+        const { seatNo, pageNo } = ernMap[prn];
+        const existingSeats = State.getSeatsForSession(sessId);
+        const seatExists    = !!existingSeats.find(s => s.uin === student.uin);
+        matchedStudents.push({ student, ern: prn, seatNo, pageNo, seatExists });
+      } else {
+        const hasLedgerEntries = State.ledger.some(r =>
+          r.uin === student.uin && r.examSession === sessId
+        );
+        missingStudents.push({ student, hasLedgerEntries });
+      }
+    }
+
+    _gazProcState = { session, branch, matchedStudents, missingStudents };
+    UI.hideSpinner();
+    _gazProcRenderPreview();
+
+  } catch(err) {
+    UI.hideSpinner();
+    UI.toast('PDF parsing failed: ' + err.message, 'error', 8000);
+    console.error('[_gazProcParse]', err);
+  }
+}
+
+function _gazProcRenderPreview() {
+  const { matchedStudents, missingStudents } = _gazProcState;
+
+  // Panel A
+  const matchedCountEl = document.getElementById('gaz-proc-matched-count');
+  if (matchedCountEl) matchedCountEl.textContent = matchedStudents.length;
+
+  const matchedList = document.getElementById('gaz-proc-matched-list');
+  if (matchedList) {
+    if (matchedStudents.length === 0) {
+      matchedList.innerHTML = '<div class="empty-state" style="padding:12px;">No eligible students found in PDF.</div>';
+    } else {
+      matchedList.innerHTML = `
+        <table class="audit-table" style="width:100%;">
+          <thead><tr>
+            <th>Seat No</th><th>Page</th><th>UIN / ERN</th><th>Name</th><th>Branch</th><th>Seat Status</th>
+          </tr></thead>
+          <tbody>
+            ${matchedStudents.map(({ student, ern, seatNo, pageNo, seatExists }) => `
+              <tr>
+                <td style="font-family:'DM Mono',monospace;font-weight:600;color:var(--brand);">
+                  ${UI.esc(seatNo)}
+                </td>
+                <td><span class="badge badge-regular" style="font-size:10px;">Page ${pageNo}</span></td>
+                <td>
+                  <span class="subj-code-small">${UI.esc(student.uin)}</span><br>
+                  <small style="color:var(--ink-3);">${UI.esc(ern)}</small>
+                </td>
+                <td>${UI.esc(student.name)}</td>
+                <td>${UI.esc(student.branch)}</td>
+                <td>${seatExists
+                  ? '<span class="badge badge-pending">Already saved</span>'
+                  : '<span class="badge badge-pass">New</span>'}</td>
+              </tr>`).join('')}
+          </tbody>
+        </table>`;
+    }
+  }
+
+  // Panel B
+  const skipCandidates = missingStudents.filter(m => !m.hasLedgerEntries);
+
+  const missingCountEl = document.getElementById('gaz-proc-missing-count');
+  if (missingCountEl) missingCountEl.textContent = missingStudents.length;
+
+  const skipBtn = document.getElementById('gaz-proc-skip-btn');
+  if (skipBtn) skipBtn.disabled = skipCandidates.length === 0;
+
+  const missingList = document.getElementById('gaz-proc-missing-list');
+  if (missingList) {
+    if (missingStudents.length === 0) {
+      missingList.innerHTML = '<div class="empty-state" style="padding:12px;">All eligible students found in PDF.</div>';
+    } else {
+      let html = `<table class="audit-table" style="width:100%;">
+        <thead><tr>
+          <th>UIN</th><th>Name</th><th>Branch</th><th>Action</th>
+        </tr></thead>
+        <tbody>`;
+
+      for (const { student, hasLedgerEntries } of missingStudents) {
+        html += `<tr class="${hasLedgerEntries ? '' : 'roster-row-pending'}">
+          <td><span class="subj-code-small">${UI.esc(student.uin)}</span></td>
+          <td>${UI.esc(student.name)}</td>
+          <td>${UI.esc(student.branch)}</td>
+          <td>${hasLedgerEntries
+            ? '<span class="badge badge-pending">Has entries — skip only</span>'
+            : '<span class="badge badge-fail">Will be exam-skipped</span>'}</td>
+        </tr>`;
+      }
+
+      html += '</tbody></table>';
+      missingList.innerHTML = html;
+    }
+  }
+
+  document.getElementById('gaz-proc-preview')?.classList.remove('hidden');
+  document.getElementById('gaz-proc-report')?.classList.add('hidden');
+}
+
+async function _gazProcSaveSeats() {
+  const { session, matchedStudents } = _gazProcState;
+  if (!session || matchedStudents.length === 0) return;
+
+  const newSeats = matchedStudents.filter(m => !m.seatExists);
+
+  if (newSeats.length === 0) {
+    UI.toast('All seat numbers already saved. Nothing to do.', 'info');
+    return;
+  }
+
+  UI.showModal(
+    'Save Seat Numbers & Manifest',
+    `Save <strong>${newSeats.length}</strong> new seat number${newSeats.length > 1 ? 's' : ''} 
+     and persist page numbers for session <strong>${UI.esc(session.name)}</strong>?
+     <br><small style="color:var(--ink-3);">
+       ${matchedStudents.length - newSeats.length} already saved — will be updated in manifest.
+     </small>`,
+    {
+      confirmLabel: 'Save Seats & Manifest',
+      onConfirm: async () => {
+        UI.showSpinner('Saving seat numbers & manifest…');
+        try {
+          const seatList = newSeats.map(({ student, seatNo }) => ({
+            uin:        student.uin,
+            sessionId:  session.id,
+            seatNumber: seatNo,
+          }));
+
+          const userEmail = Auth.getUser()?.email || '';
+          const manifestRecords = matchedStudents.map(({ ern, seatNo, pageNo }) => ({
+            ern,
+            sessionId: session.id,
+            seatNo,
+            pageNo,
+            uploadedBy: userEmail,
+          }));
+
+          await State.uploadSeats(seatList);
+          await State.uploadGazetteManifest(manifestRecords);
+
+          UI.hideSpinner();
+          UI.toast(`✓ ${newSeats.length} seats & ${manifestRecords.length} manifest records saved.`, 'success');
+
+          _gazProcState.matchedStudents = _gazProcState.matchedStudents.map(m => ({
+            ...m,
+            seatExists: true,
+          }));
+          _gazProcRenderPreview();
+          _gazProcShowSeatReport();
+        } catch(err) {
+          UI.hideSpinner();
+          UI.toast('Error saving seats: ' + err.message, 'error', 8000);
+        }
+      }
+    }
+  );
+}
+
+async function _gazProcMarkSkips() {
+  const { session, missingStudents } = _gazProcState;
+  if (!session) return;
+
+  const skipCandidates = missingStudents.filter(m => !m.hasLedgerEntries);
+  if (skipCandidates.length === 0) {
+    UI.toast('No students to mark as skipped.', 'info');
+    return;
+  }
+
+  const toSkip = skipCandidates.filter(m =>
+    !State.getExamSkipDecision(m.student.uin, session.id)
+  );
+
+  if (toSkip.length === 0) {
+    UI.toast('All absent students already marked as skipped.', 'info');
+    return;
+  }
+
+  UI.showModal(
+    'Mark Exam Skips',
+    `Mark <strong>${toSkip.length}</strong> student${toSkip.length > 1 ? 's' : ''} 
+     as having skipped <strong>${UI.esc(session.name)}</strong>?
+     <br><small style="color:var(--ink-3);">
+       Only students with zero ledger entries for this session are affected.
+       ${skipCandidates.length - toSkip.length > 0
+         ? ` ${skipCandidates.length - toSkip.length} already marked — will be skipped.`
+         : ''}
+     </small>`,
+    {
+      confirmLabel: 'Mark Skipped',
+      danger: true,
+      onConfirm: async () => {
+        UI.showSpinner('Marking exam skips…');
+        try {
+          for (const { student } of toSkip) {
+            await State.setExamSkip(student.uin, session.id);
+          }
+          UI.hideSpinner();
+          UI.toast(`✓ ${toSkip.length} students marked as exam-skipped.`, 'success');
+          _gazProcRenderPreview();
+        } catch(err) {
+          UI.hideSpinner();
+          UI.toast('Error marking skips: ' + err.message, 'error', 8000);
+        }
+      }
+    }
+  );
+}
+
+function _gazProcShowSeatReport() {
+  const { session, branch } = _gazProcState;
+  if (!session) return;
+
+  const eligibleStudents = State.getEligibleStudents(session, branch);
+  const seatsForSession  = State.getSeatsForSession(session.id);
+  const seatUINs         = new Set(seatsForSession.map(s => s.uin));
+
+  const stillMissing = eligibleStudents.filter(s => !seatUINs.has(s.uin));
+  const reportEl     = document.getElementById('gaz-proc-report');
+  if (!reportEl) return;
+
+  if (stillMissing.length === 0) {
+    reportEl.innerHTML = `
+      <div style="background:var(--pass-bg);border:1px solid #6EE7B7;border-radius:var(--radius);
+                  padding:12px 16px;font-size:12px;color:var(--pass);font-weight:600;">
+        ✓ All eligible students for ${UI.esc(session.name)} now have seat numbers.
+      </div>`;
+  } else {
+    reportEl.innerHTML = `
+      <div style="margin-bottom:8px;font-size:12px;font-weight:600;color:var(--ink-2);">
+        ${stillMissing.length} eligible student${stillMissing.length > 1 ? 's' : ''} 
+        still without a seat number for ${UI.esc(session.name)}:
+      </div>
+      <table class="audit-table" style="width:100%;">
+        <thead><tr><th>UIN</th><th>Name</th><th>Branch</th><th>Type</th></tr></thead>
+        <tbody>
+          ${stillMissing.map(s => `<tr>
+            <td><span class="subj-code-small">${UI.esc(s.uin)}</span></td>
+            <td>${UI.esc(s.name)}</td>
+            <td>${UI.esc(s.branch)}</td>
+            <td>${s.attemptFlag === 'KT'
+              ? '<span class="badge badge-kt">KT</span>'
+              : '<span class="badge badge-regular">Regular</span>'}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>`;
+  }
+
+  reportEl.classList.remove('hidden');
 }

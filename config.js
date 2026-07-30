@@ -20,6 +20,7 @@ const CONFIG = {
     SEAT:       'SEAT_MASTER',
     REVAL_SKIP: 'REVAL_SKIP',
     EXAM_SKIP:  'EXAM_SKIP',
+    GAZETTE_MANIFEST: 'GAZETTE_MANIFEST',
   },
 
   // ── Admin emails (hardcoded) ──────────────────────────────

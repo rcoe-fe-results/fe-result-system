@@ -288,6 +288,34 @@ const Sheets = (() => {
     return appendRows(CONFIG.TABS.EXAM_SKIP, [[uin, sessionId, markedBy, markedAt]]);
   }
 
+  // ── GAZETTE_MANIFEST ───────────────────────────────────────
+  // Columns: A=ERN, B=Session ID, C=Seat Number, D=Page Number, E=Uploaded By, F=Uploaded At
+  async function getGazetteManifest() {
+    try {
+      const rows = await getRange(CONFIG.TABS.GAZETTE_MANIFEST, 'A2:F');
+      return rows.map(r => ({
+        ern:        r[0] || '',
+        sessionId:  r[1] || '',
+        seatNo:     r[2] || '',
+        pageNo:     Number(r[3]) || 0,
+        uploadedBy: r[4] || '',
+        uploadedAt: r[5] || '',
+      })).filter(r => r.ern && r.sessionId);
+    } catch(e) {
+      console.warn('GAZETTE_MANIFEST tab not found or empty:', e.message);
+      return [];
+    }
+  }
+
+  async function uploadGazetteManifest(records) {
+    // records = [{ ern, sessionId, seatNo, pageNo, uploadedBy }]
+    const uploadedAt = new Date().toISOString();
+    const rows = records.map(r => [
+      r.ern, r.sessionId, r.seatNo, r.pageNo, r.uploadedBy || '', uploadedAt
+    ]);
+    return appendRows(CONFIG.TABS.GAZETTE_MANIFEST, rows);
+  }
+
   // ── Infer month from legacy session names ─────────────────
   // Fallback for sessions created before the Month column was added.
   // Parses 'Dec' or 'May' from the auto-generated session name.
@@ -310,6 +338,7 @@ const Sheets = (() => {
     getSeats, uploadSeats, updateSeatNumber,
     getRevalSkips, appendRevalSkip, updateRevalSkip,
     getExamSkips, appendExamSkip,
+    getGazetteManifest, uploadGazetteManifest,
     newEntryId,
   };
 })();

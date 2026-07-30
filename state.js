@@ -9,6 +9,7 @@ const State = (() => {
   let seats      = [];   // [{ uin, sessionId, seatNumber }]
   let revalSkips = [];   // [{ uin, revalSessionId, decision, markedBy, markedAt }]
   let examSkips  = [];   // [{ uin, sessionId, markedBy, markedAt }] — last row wins
+  let gazetteManifest = []; // [{ ern, sessionId, seatNo, pageNo, uploadedBy, uploadedAt }]
   let _ktCache   = {};   // built by _buildKTCache(), keyed by uin
   let _loaded    = false;
 
@@ -314,13 +315,14 @@ const State = (() => {
 
   // ── Load all data ─────────────────────────────────────────
   async function loadAll() {
-    [students, sessions, ledger, seats, revalSkips, examSkips] = await Promise.all([
+    [students, sessions, ledger, seats, revalSkips, examSkips, gazetteManifest] = await Promise.all([
       Sheets.getStudents(),
       Sheets.getSessions(),
       Sheets.getLedger(),
       Sheets.getSeats(),
       Sheets.getRevalSkips(),
       Sheets.getExamSkips(),
+      Sheets.getGazetteManifest(),
     ]);
     _buildKTCache();
     _loaded = true;
@@ -2574,6 +2576,18 @@ const State = (() => {
     computeAttemptTag,
     getRevalDecision, setRevalSkip, getUnresolvedRevalStudents,
     getExamSkipDecision, setExamSkip, getExamSkipStudents,
+    getGazetteManifest: (sessionId) => gazetteManifest.filter(r => !sessionId || r.sessionId === sessionId),
+    getGazetteInfoForStudent: (uin, sessionId) => {
+      const student = students.find(s => s.uin === uin);
+      if (!student || !student.prn) return null;
+      const prn = student.prn.trim();
+      const entry = gazetteManifest.find(r => r.ern === prn && (!sessionId || r.sessionId === sessionId));
+      return entry ? { seatNo: entry.seatNo, pageNo: entry.pageNo } : null;
+    },
+    uploadGazetteManifest: async (records) => {
+      await Sheets.uploadGazetteManifest(records);
+      gazetteManifest.push(...records);
+    },
     getKTData:           (uin) => _ktCache[uin] || null,
     getKTCount:          (uin) => _ktCache[uin]?.activeKTCount    ?? 0,
     getHistoricalKTData: (uin) => _ktCache[uin]?.historicalKTComponents ?? [],
