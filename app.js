@@ -7026,8 +7026,7 @@ function _gazetteProcessorInit() {
   if (!sessEl || !brEl || !fileEl) return;
 
   const sessions = sortSessions(State.getSessions().filter(s =>
-    s.status === 'Active' &&
-    s.entryType !== 'Revaluation_Gazette'
+    s.status === 'Active'
   ));
   UI.buildSelect('gaz-proc-session', sessions, '— select session —', 'id', 'name');
   UI.buildSelect('gaz-proc-branch', BRANCHES, '— select branch —');
@@ -7205,13 +7204,17 @@ function _gazProcRenderPreview() {
   }
 
   // Panel B
+  const isReval = session?.entryType === 'Revaluation_Gazette';
   const skipCandidates = missingStudents.filter(m => !m.hasLedgerEntries);
 
   const missingCountEl = document.getElementById('gaz-proc-missing-count');
   if (missingCountEl) missingCountEl.textContent = missingStudents.length;
 
   const skipBtn = document.getElementById('gaz-proc-skip-btn');
-  if (skipBtn) skipBtn.disabled = skipCandidates.length === 0;
+  if (skipBtn) {
+    skipBtn.disabled = skipCandidates.length === 0;
+    skipBtn.textContent = isReval ? 'Mark Reval Skips (No Reval)' : 'Mark Exam Skips';
+  }
 
   const missingList = document.getElementById('gaz-proc-missing-list');
   if (missingList) {
@@ -7231,7 +7234,9 @@ function _gazProcRenderPreview() {
           <td>${UI.esc(student.branch)}</td>
           <td>${hasLedgerEntries
             ? '<span class="badge badge-pending">Has entries — skip only</span>'
-            : '<span class="badge badge-fail">Will be exam-skipped</span>'}</td>
+            : (isReval
+                ? '<span class="badge badge-fail">Will be marked No-Reval</span>'
+                : '<span class="badge badge-fail">Will be exam-skipped</span>')}</td>
         </tr>`;
       }
 
@@ -7307,42 +7312,51 @@ async function _gazProcMarkSkips() {
   const { session, missingStudents } = _gazProcState;
   if (!session) return;
 
+  const isReval = session.entryType === 'Revaluation_Gazette';
   const skipCandidates = missingStudents.filter(m => !m.hasLedgerEntries);
   if (skipCandidates.length === 0) {
     UI.toast('No students to mark as skipped.', 'info');
     return;
   }
 
-  const toSkip = skipCandidates.filter(m =>
-    !State.getExamSkipDecision(m.student.uin, session.id)
-  );
+  const toSkip = isReval
+    ? skipCandidates.filter(m => State.getRevalDecision(m.student.uin, session.id) === 'Unknown')
+    : skipCandidates.filter(m => !State.getExamSkipDecision(m.student.uin, session.id));
 
   if (toSkip.length === 0) {
-    UI.toast('All absent students already marked as skipped.', 'info');
+    UI.toast(isReval ? 'All absent students already marked for revaluation decision.' : 'All absent students already marked as skipped.', 'info');
     return;
   }
 
+  const modalTitle = isReval ? 'Mark Reval Skips (No Reval)' : 'Mark Exam Skips';
+  const actionLabel = isReval ? 'having no revaluation for' : 'having skipped';
+  const confirmText = isReval ? 'Mark No-Reval' : 'Mark Skipped';
+
   UI.showModal(
-    'Mark Exam Skips',
+    modalTitle,
     `Mark <strong>${toSkip.length}</strong> student${toSkip.length > 1 ? 's' : ''} 
-     as having skipped <strong>${UI.esc(session.name)}</strong>?
+     as ${actionLabel} <strong>${UI.esc(session.name)}</strong>?
      <br><small style="color:var(--ink-3);">
        Only students with zero ledger entries for this session are affected.
        ${skipCandidates.length - toSkip.length > 0
-         ? ` ${skipCandidates.length - toSkip.length} already marked — will be skipped.`
+         ? ` ${skipCandidates.length - toSkip.length} already decided — will be skipped.`
          : ''}
      </small>`,
     {
-      confirmLabel: 'Mark Skipped',
+      confirmLabel: confirmText,
       danger: true,
       onConfirm: async () => {
-        UI.showSpinner('Marking exam skips…');
+        UI.showSpinner(isReval ? 'Marking reval skips…' : 'Marking exam skips…');
         try {
           for (const { student } of toSkip) {
-            await State.setExamSkip(student.uin, session.id);
+            if (isReval) {
+              await State.setRevalSkip(student.uin, session.id, 'No');
+            } else {
+              await State.setExamSkip(student.uin, session.id);
+            }
           }
           UI.hideSpinner();
-          UI.toast(`✓ ${toSkip.length} students marked as exam-skipped.`, 'success');
+          UI.toast(`✓ ${toSkip.length} students marked as ${isReval ? 'no-reval' : 'exam-skipped'}.`, 'success');
           _gazProcRenderPreview();
         } catch(err) {
           UI.hideSpinner();
