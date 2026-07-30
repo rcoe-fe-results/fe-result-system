@@ -7053,6 +7053,28 @@ function _gazProcOnFilterChange() {
   _gazProcState = { session: null, branch: null, matchedStudents: [], missingStudents: [] };
 }
 
+// Helper to match student.prn against extracted PDF ERN records flexibly
+function _matchStudentPRN(studentPRN, records) {
+  if (!studentPRN) return null;
+  const rawPRN    = String(studentPRN).trim().toUpperCase();
+  const cleanPRN  = rawPRN.replace(/[^A-Z0-9]/g, '');
+  const digitsPRN = rawPRN.replace(/\D/g, '');
+
+  for (const r of records) {
+    const rawERN    = String(r.ern).trim().toUpperCase();
+    const cleanERN  = rawERN.replace(/[^A-Z0-9]/g, '');
+    const digitsERN = rawERN.replace(/\D/g, '');
+
+    // 1. Exact or cleaned alphanumeric match
+    if (cleanPRN === cleanERN || rawPRN === rawERN) return r;
+    // 2. Pure digits match (if length >= 10)
+    if (digitsPRN.length >= 10 && digitsERN.length >= 10 && digitsPRN === digitsERN) return r;
+    // 3. Substring match (e.g., 0341120240211669 inside MU0341120240211669 or vice versa)
+    if (cleanPRN.length >= 10 && cleanERN.length >= 10 && (cleanERN.includes(cleanPRN) || cleanPRN.includes(cleanERN))) return r;
+  }
+  return null;
+}
+
 async function _gazProcExtractFromPDF(file) {
   if (!window.pdfjsLib) {
     await new Promise((resolve, reject) => {
@@ -7077,41 +7099,82 @@ async function _gazProcExtractFromPDF(file) {
     const content = await page.getTextContent();
     const items   = content.items;
 
-    const texts = items.map(item => ({
-      str: item.str.trim(),
-      x:   item.transform[4],
-      y:   item.transform[5],
-    })).filter(t => t.str.length > 0);
+    // Line reconstruction: Group text items sharing similar vertical y-position (within 3.5pt)
+    const lineBuckets = [];
+    for (const item of items) {
+      const str = (item.str || '').trim();
+      if (!str) continue;
+      const x = item.transform[4];
+      const y = item.transform[5];
 
-    const ernRegex  = /MU\d{15,}/g;
-    const seatRegex = /^\d{7}$/;
-
-    const ernCandidates  = [];
-    const seatCandidates = [];
-
-    for (const t of texts) {
-      const ernMatch = t.str.match(ernRegex);
-      if (ernMatch) {
-        ernCandidates.push({ ern: ernMatch[0], y: t.y, x: t.x });
+      let bucket = lineBuckets.find(b => Math.abs(b.y - y) <= 3.5);
+      if (!bucket) {
+        bucket = { y, items: [] };
+        lineBuckets.push(bucket);
       }
-      if (seatRegex.test(t.str) && t.x < 80) {
-        seatCandidates.push({ seatNo: t.str, y: t.y, x: t.x });
+      bucket.items.push({ str, x, y });
+    }
+
+    // Sort lines top to bottom (y descending in PDF coordinates)
+    lineBuckets.sort((a, b) => b.y - a.y);
+
+    const lineData = lineBuckets.map(b => {
+      b.items.sort((i1, i2) => i1.x - i2.x);
+      const textWithSpaces = b.items.map(i => i.str).join(' ');
+      const textCompact    = b.items.map(i => i.str).join('');
+      const minX           = Math.min(...b.items.map(i => i.x));
+      return { y: b.y, textWithSpaces, textCompact, minX };
+    });
+
+    const ernRegexes = [
+      /MU\d{10,18}/gi,
+      /\b20\d{14,16}\b/g,
+      /\b\d{15,17}\b/g,
+    ];
+    const seatRegex = /\b\d{6,8}\b/g;
+
+    const pageERNs  = [];
+    const pageSeats = [];
+
+    for (const l of lineData) {
+      // Find ERN matches in space-separated and compact text
+      for (const regex of ernRegexes) {
+        const matches1 = l.textWithSpaces.match(regex);
+        if (matches1) {
+          for (const m of matches1) pageERNs.push({ ern: m, y: l.y });
+        }
+        const matches2 = l.textCompact.match(regex);
+        if (matches2) {
+          for (const m of matches2) pageERNs.push({ ern: m, y: l.y });
+        }
+      }
+
+      // Find seat number matches (leftmost column minX < 120)
+      if (l.minX < 120) {
+        const seatMatches = l.textWithSpaces.match(seatRegex);
+        if (seatMatches) {
+          for (const s of seatMatches) pageSeats.push({ seatNo: s, y: l.y });
+        }
       }
     }
 
-    for (const ern of ernCandidates) {
-      const seatsAbove = seatCandidates.filter(s => s.y >= ern.y);
-      if (seatsAbove.length === 0) continue;
-      seatsAbove.sort((a, b) => (a.y - ern.y) - (b.y - ern.y));
-      const nearest = seatsAbove[0];
-      records.push({ ern: ern.ern, seatNo: nearest.seatNo, pageNo: pageNum });
+    // Pair each ERN with the vertically nearest seat number on the page
+    for (const ernObj of pageERNs) {
+      let seatNo = 'N/A';
+      if (pageSeats.length > 0) {
+        const sortedSeats = [...pageSeats].sort((a, b) => Math.abs(a.y - ernObj.y) - Math.abs(b.y - ernObj.y));
+        seatNo = sortedSeats[0].seatNo;
+      }
+      records.push({ ern: ernObj.ern, seatNo, pageNo: pageNum });
     }
   }
 
+  // Deduplicate by clean alphanumeric key
   const seen = new Set();
   return records.filter(r => {
-    if (seen.has(r.ern)) return false;
-    seen.add(r.ern);
+    const key = String(r.ern).replace(/[^A-Z0-9]/gi, '').toUpperCase();
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
     return true;
   });
 }
@@ -7130,21 +7193,16 @@ async function _gazProcParse() {
     const records = await _gazProcExtractFromPDF(file);
     const eligibleStudents = State.getEligibleStudents(session, branch);
 
-    const ernMap = {}; // ern -> { seatNo, pageNo }
-    for (const r of records) {
-      ernMap[r.ern] = { seatNo: r.seatNo, pageNo: r.pageNo };
-    }
-
     const matchedStudents = [];
     const missingStudents = [];
 
     for (const student of eligibleStudents) {
-      const prn = (student.prn || '').trim();
-      if (ernMap[prn]) {
-        const { seatNo, pageNo } = ernMap[prn];
+      const match = _matchStudentPRN(student.prn, records);
+      if (match) {
+        const { seatNo, pageNo, ern } = match;
         const existingSeats = State.getSeatsForSession(sessId);
         const seatExists    = !!existingSeats.find(s => s.uin === student.uin);
-        matchedStudents.push({ student, ern: prn, seatNo, pageNo, seatExists });
+        matchedStudents.push({ student, ern, seatNo, pageNo, seatExists });
       } else {
         const hasLedgerEntries = State.ledger.some(r =>
           r.uin === student.uin && r.examSession === sessId
