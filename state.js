@@ -2469,10 +2469,11 @@ const State = (() => {
       }));
     }
 
-    const freshBatch  = String(deriveFreshBatch(
-      Number(session.name.slice(0, 4)),   // year from name prefix
-      session.month || (session.name.includes('Dec') ? 'December' : 'May')
-    ));
+    const month       = session.month || (session.name.includes('Dec') ? 'December' : 'May');
+    const sem         = session.semester;
+    const freshBatch  = (sem === 1 && month === 'December') || (sem === 2 && month === 'May')
+      ? String(deriveFreshBatch(Number(session.name.slice(0, 4)), month))
+      : null;
     const sem = session.semester;
 
     // All students for this branch
