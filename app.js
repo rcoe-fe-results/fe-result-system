@@ -94,6 +94,11 @@ function _normalizeMarkInput(val) {
 // ═══════════════════════════════════════════════════════════════
 let meMode = 'adhoc'; // 'adhoc' | 'queue'
 
+// ── Progress view: current student cache (used by export) ─
+let _pvCurrentStudent  = null;
+let _pvCurrentAcademics = null;
+let _pvSelectedSessId  = { 1: null, 2: null };
+
 function initMarkEntry() {
   // Toggle buttons
   document.getElementById('me-adhoc-btn').onclick = () => _meSetMode('adhoc');
@@ -2463,7 +2468,8 @@ function _pvShowStudent(uin) {
         <div class="pv-stat"><span class="pv-stat-val">${UI.esc(cgpaStr)}</span><span class="pv-stat-lbl">CGPA</span></div>
         <div class="pv-stat"><span class="pv-stat-val">${UI.esc(credStr)}</span><span class="pv-stat-lbl">Credits</span></div>
         ${feHTML}
-      </div>
+      <button class="btn btn-secondary btn-sm" onclick="_pvExportModal()" style="margin-left:8px;">⬇ Export</button>
+    </div>
     </div>`;
 
   // ── Build per-semester session lists ──────────────────────────
@@ -2504,6 +2510,11 @@ function _pvShowStudent(uin) {
     1: _defaultSession(semSessions[1]),
     2: _defaultSession(semSessions[2]),
   };
+
+  // Cache for export
+  _pvCurrentStudent   = student;
+  _pvCurrentAcademics = academics;
+  _pvSelectedSessId   = { ...selectedSessId };
 
   // ── Render helper: one semester table ─────────────────────────
   function _pvRenderSemTable(sem) {
@@ -6527,6 +6538,347 @@ function _ciaExportCSV() {
   UI.toast(`Exported ${_ciaLastResult.length} rows.`, 'success');
 }
 
+
+// ═══════════════════════════════════════════════════════════════
+// PROGRESS VIEW — EXPORT
+// ═══════════════════════════════════════════════════════════════
+
+function _pvExportModal() {
+  if (!_pvCurrentStudent || !_pvCurrentAcademics) {
+    UI.toast('No student loaded.', 'error'); return;
+  }
+
+  // Read current dropdown selections from DOM (set by session selector in progress view)
+  const sem1El = document.querySelector('.pv-sem-sess-select[data-sem="1"]');
+  const sem2El = document.querySelector('.pv-sem-sess-select[data-sem="2"]');
+  if (sem1El) _pvSelectedSessId[1] = sem1El.value || _pvSelectedSessId[1];
+  if (sem2El) _pvSelectedSessId[2] = sem2El.value || _pvSelectedSessId[2];
+
+  const s = _pvCurrentStudent;
+  UI.showModal(
+    `Export — ${s.name}`,
+    `<p style="font-size:12px;color:var(--ink-3);margin-bottom:14px;">
+      Select what to export for <strong>${UI.esc(s.name)}</strong>
+      (${UI.esc(s.uin)} · ${UI.esc(s.branch)} · Batch ${UI.esc(s.batchYear)})
+    </p>
+    <div style="display:flex;flex-direction:column;gap:10px;">
+      <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;padding:10px 12px;
+                    border:1px solid var(--border);border-radius:var(--radius);background:var(--surface-2);">
+        <input type="radio" name="pv-export-scope" value="history" checked style="margin-top:2px;">
+        <div>
+          <div style="font-weight:600;font-size:13px;">Full Academic History</div>
+          <div style="font-size:11px;color:var(--ink-3);margin-top:2px;">
+            All sessions, all attempts — exactly as the progress view shows
+          </div>
+        </div>
+      </label>
+      <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;padding:10px 12px;
+                    border:1px solid var(--border);border-radius:var(--radius);background:var(--surface-2);">
+        <input type="radio" name="pv-export-scope" value="session" style="margin-top:2px;">
+        <div>
+          <div style="font-weight:600;font-size:13px;">Selected Session(s) Only</div>
+          <div style="font-size:11px;color:var(--ink-3);margin-top:2px;">
+            Sem I: <strong>${UI.esc(_pvSessLabel(1))}</strong><br>
+            Sem II: <strong>${UI.esc(_pvSessLabel(2))}</strong>
+          </div>
+        </div>
+      </label>
+      <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;padding:10px 12px;
+                    border:1px solid var(--border);border-radius:var(--radius);background:var(--surface-2);">
+        <input type="radio" name="pv-export-scope" value="status" style="margin-top:2px;">
+        <div>
+          <div style="font-weight:600;font-size:13px;">Current Status (Latest per Subject)</div>
+          <div style="font-size:11px;color:var(--ink-3);margin-top:2px;">
+            One row per subject — latest result wins across all attempts. Best for transcripts.
+          </div>
+        </div>
+      </label>
+    </div>`,
+    {
+      confirmLabel: 'Export Excel',
+      onConfirm: () => {
+        const scope = document.querySelector('input[name="pv-export-scope"]:checked')?.value || 'history';
+        _pvExport(scope);
+      }
+    }
+  );
+}
+
+function _pvSessLabel(sem) {
+  const id   = _pvSelectedSessId[sem];
+  if (!id) return '— none selected —';
+  const sess = State.getSession(id);
+  return sess ? sess.name : '— none —';
+}
+
+// ── Shared: build subject table rows from a sessionResult entry ──
+function _pvBuildSubjectRows(subjectEntries, student) {
+  const rows = [];
+  for (const subjEntry of subjectEntries) {
+    const r          = subjEntry.r;
+    const dr         = subjEntry.dr;
+    const carriedMap = subjEntry.carriedMap || {};
+    const mm         = subjEntry.mergedMarks;
+
+    const compFields = {
+      IAT:  mm?.IAT  ?? r.iatMarks  ?? '',
+      ESE:  mm?.ESE  ?? r.eseMarks  ?? '',
+      TW:   mm?.TW   ?? r.twMarks   ?? '',
+      Oral: mm?.Oral ?? r.oralMarks ?? '',
+    };
+
+    const carried = (comp) => carriedMap[comp] ? '+' : '';
+
+    rows.push([
+      r.subjectCode,
+      r.subjectName,
+      r.subjectType,
+      compFields.IAT  !== '' ? String(compFields.IAT)  + carried('IAT')  : '—',
+      compFields.ESE  !== '' ? String(compFields.ESE)  + carried('ESE')  : '—',
+      compFields.TW   !== '' ? String(compFields.TW)   + carried('TW')   : '—',
+      compFields.Oral !== '' ? String(compFields.Oral) + carried('Oral') : '—',
+      dr && !dr.pending ? dr.total      : '—',
+      dr && !dr.pending ? dr.pct.toFixed(1) + '%' : '—',
+      dr && !dr.pending ? dr.grade      : '—',
+      dr && !dr.pending ? dr.gradePoint : '—',
+      dr && !dr.pending ? dr.creditsEarned : '—',
+      dr && !dr.pending ? dr.GxC.toFixed(1) : '—',
+      dr && !dr.pending ? dr.result     : (dr?.pending ? 'Pending' : '—'),
+    ]);
+  }
+  return rows;
+}
+
+// ── Shared: student header block rows ──────────────────────────
+function _pvStudentHeaderRows(student, academics) {
+  return [
+    ['FYE Result System — Rizvi College of Engineering'],
+    [],
+    ['Name',       student.name,      'UIN',    student.uin],
+    ['PRN/ERN',    student.prn || '—','Branch', student.branch],
+    ['Division',   student.division,  'Batch',  student.batchYear],
+    ['Gender',     student.gender || '—', 'CGPA', academics?.cgpa != null ? academics.cgpa.toFixed(2) : '—'],
+    ['Total Credits', academics
+      ? `${academics.totalCredits.earned} / ${academics.totalCredits.max}`
+      : '—',
+      'FE Completed', academics?.feCompleted?.done
+        ? `Yes — ${academics.feCompleted.session || ''}`
+        : 'No'
+    ],
+    [],
+  ];
+}
+
+// ── Shared: subject table header row ──────────────────────────
+const _pvSubjTableHeader = [
+  'Subject Code', 'Subject Name', 'Type',
+  'IAT', 'ESE', 'TW', 'Oral',
+  'Total', '%', 'Grade', 'GP', 'Credits', 'G×C', 'Result'
+];
+
+// ── Shared: session block header rows ─────────────────────────
+function _pvSessionHeaderRows(sess, sgpa, pendingCount) {
+  const typeLabel = sess.entryType === 'Revaluation_Gazette'
+    ? 'Revaluation Gazette'
+    : 'Uni Portal Gazette';
+  return [
+    [
+      `Session: ${sess.name}`,
+      '', '', '',
+      `Type: ${typeLabel}`,
+      '', '', '',
+      `Sem: ${sess.semester}`,
+      '', '', '',
+      `SGPA: ${sgpa != null ? sgpa.toFixed(2) : '—'}`,
+      pendingCount > 0 ? `(${pendingCount} pending)` : '',
+    ],
+  ];
+}
+
+// ── Shared: apply column widths ────────────────────────────────
+function _pvApplyColWidths(ws) {
+  ws['!cols'] = [
+    { wch: 10 }, { wch: 34 }, { wch: 16 },
+    { wch: 7 },  { wch: 7 },  { wch: 7 },  { wch: 7 },
+    { wch: 7 },  { wch: 8 },  { wch: 7 },  { wch: 5 },
+    { wch: 8 },  { wch: 8 },  { wch: 10 },
+  ];
+}
+
+// ── Scope 1: Full History ──────────────────────────────────────
+function _pvExportHistory() {
+  const student  = _pvCurrentStudent;
+  const academics = _pvCurrentAcademics;
+  const { sessionResults } = academics;
+
+  const data = [
+    ..._pvStudentHeaderRows(student, academics),
+  ];
+
+  for (const sr of sessionResults) {
+    data.push(..._pvSessionHeaderRows(sr.session, sr.sgpa, sr.pendingCount));
+    data.push(_pvSubjTableHeader);
+    data.push(..._pvBuildSubjectRows(sr.subjects, student));
+    data.push([
+      '', '', '', '', '', '', '',
+      '', '', '', '', '', '',
+      `SGPA: ${sr.sgpa != null ? sr.sgpa.toFixed(2) : '—'}`,
+    ]);
+    data.push([]);
+  }
+
+  // Academics summary
+  data.push(['ACADEMIC SUMMARY']);
+  data.push(['', 'Credits Earned', 'Credits Max', 'Consolidated SGPA', 'Completed In']);
+  for (const sem of [1, 2]) {
+    const sc    = academics.semCredits[sem];
+    const cSGPA = academics.consolidatedSGPA[sem];
+    data.push([
+      `Semester ${sem}`,
+      sc.earned, sc.max,
+      cSGPA != null ? cSGPA.toFixed(2) : '—',
+      sc.completedInSession || '—',
+    ]);
+  }
+  data.push(['Overall CGPA', academics.cgpa != null ? academics.cgpa.toFixed(2) : '—']);
+
+  const ws = XLSX.utils.aoa_to_sheet(data);
+  _pvApplyColWidths(ws);
+  return ws;
+}
+
+// ── Scope 2: Selected Sessions ─────────────────────────────────
+function _pvExportSelectedSessions() {
+  const student   = _pvCurrentStudent;
+  const academics = _pvCurrentAcademics;
+  const { sessionResults } = academics;
+
+  const data = [
+    ..._pvStudentHeaderRows(student, academics),
+  ];
+
+  for (const sem of [1, 2]) {
+    const sessId = _pvSelectedSessId[sem];
+    if (!sessId) continue;
+    const sr = sessionResults.find(s => s.session.id === sessId);
+    if (!sr) continue;
+
+    data.push(..._pvSessionHeaderRows(sr.session, sr.sgpa, sr.pendingCount));
+    data.push(_pvSubjTableHeader);
+    data.push(..._pvBuildSubjectRows(sr.subjects, student));
+    data.push([
+      '', '', '', '', '', '', '',
+      '', '', '', '', '', '',
+      `SGPA: ${sr.sgpa != null ? sr.sgpa.toFixed(2) : '—'}`,
+    ]);
+    data.push([]);
+  }
+
+  const ws = XLSX.utils.aoa_to_sheet(data);
+  _pvApplyColWidths(ws);
+  return ws;
+}
+
+// ── Scope 3: Current Status (latest per subject) ───────────────
+function _pvExportCurrentStatus() {
+  const student   = _pvCurrentStudent;
+  const academics = _pvCurrentAcademics;
+  const { sessionResults, semCredits, consolidatedSGPA, cgpa } = academics;
+
+  // Derive latestBySubject from sessionResults
+  // Session score: (year × 12 + month) × 2 + typeBonus
+  function _sessScore(sess) {
+    if (!sess) return 0;
+    const year  = Number((sess.name || '').slice(0, 4));
+    const month = (sess.name || '').includes('May') ? 5 : 12;
+    const bonus = sess.entryType === 'Revaluation_Gazette' ? 1 : 0;
+    return (year * 12 + month) * 2 + bonus;
+  }
+
+  const latestBySubject = {}; // subjectCode → { subjEntry, sess, score }
+
+  for (const sr of sessionResults) {
+    const score = _sessScore(sr.session);
+    for (const subjEntry of sr.subjects) {
+      const code = subjEntry.r.subjectCode;
+      if (!latestBySubject[code] || score > latestBySubject[code].score) {
+        latestBySubject[code] = { subjEntry, sess: sr.session, score, sem: sr.session.semester };
+      }
+    }
+  }
+
+  const data = [
+    ..._pvStudentHeaderRows(student, academics),
+  ];
+
+  for (const sem of [1, 2]) {
+    const semEntries = Object.values(latestBySubject)
+      .filter(e => e.sem === sem);
+
+    if (semEntries.length === 0) continue;
+
+    const sc    = semCredits[sem];
+    const cSGPA = consolidatedSGPA[sem];
+
+    data.push([`SEMESTER ${sem} — Current Status (latest result per subject)`]);
+    data.push(_pvSubjTableHeader);
+    data.push(..._pvBuildSubjectRows(semEntries.map(e => e.subjEntry), student));
+    data.push([
+      '', '', '', '', '', '', '',
+      '', '', '', '', '', '',
+      `SGPA: ${cSGPA != null ? cSGPA.toFixed(2) : (sc.earned < sc.max ? 'Incomplete' : '—')}`,
+    ]);
+    data.push([
+      `Credits: ${sc.earned} / ${sc.max}`,
+      sc.earned >= sc.max && sc.max > 0
+        ? `✓ Completed — ${sc.completedInSession || ''}`
+        : `${sc.max - sc.earned} credits pending`,
+    ]);
+    data.push([]);
+  }
+
+  data.push(['Overall CGPA', cgpa != null ? cgpa.toFixed(2) : '—']);
+  data.push(['FE Completed',
+    academics.feCompleted.done
+      ? `Yes — ${academics.feCompleted.session || ''}`
+      : 'No'
+  ]);
+
+  const ws = XLSX.utils.aoa_to_sheet(data);
+  _pvApplyColWidths(ws);
+  return ws;
+}
+
+// ── Main export dispatcher ─────────────────────────────────────
+function _pvExport(scope) {
+  const student = _pvCurrentStudent;
+  if (!student || !_pvCurrentAcademics) {
+    UI.toast('No student data available.', 'error'); return;
+  }
+
+  let ws;
+  const scopeLabel = scope === 'history' ? 'FullHistory'
+                   : scope === 'session' ? 'SelectedSession'
+                   : 'CurrentStatus';
+
+  try {
+    if (scope === 'history') ws = _pvExportHistory();
+    else if (scope === 'session') ws = _pvExportSelectedSessions();
+    else ws = _pvExportCurrentStatus();
+  } catch(e) {
+    UI.toast('Export error: ' + e.message, 'error', 8000);
+    console.error('[_pvExport]', e);
+    return;
+  }
+
+  const wb       = XLSX.utils.book_new();
+  const sheetName = `${student.name.slice(0, 20)} — ${scopeLabel}`.slice(0, 31);
+  XLSX.utils.book_append_sheet(wb, ws, sheetName);
+
+  const filename = `${student.uin}_${student.name.replace(/\s+/g,'_')}_${scopeLabel}.xlsx`;
+  XLSX.writeFile(wb, filename);
+  UI.toast(`✓ Exported: ${filename}`, 'success');
+}
 
 // ═══════════════════════════════════════════════════════════════
 // Utilities
