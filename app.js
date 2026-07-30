@@ -5068,18 +5068,19 @@ function _aktdRun() {
     const lastSession = effectiveRow._sess?.name || effectiveRow.examSession;
 
     rows.push({
-      uin:         student.uin,
-      prn:         student.prn,
-      name:        student.name,
-      branch:      student.branch,
-      division:    student.division,
-      batchYear:   student.batchYear,
-      gender:      student.gender || '',
+      uin:           student.uin,
+      prn:           student.prn,
+      name:          student.name,
+      branch:        student.branch,
+      division:      student.division,
+      batchYear:     student.batchYear,
+      gender:        student.gender || '',
       attemptCount,
       hasUnsuccessfulReval,
       lastSession,
+      lastSessionId: effectiveRow._sess?.id || null,
       compMarks,
-      result:      dr.result,
+      result:        dr.result,
     });
   }
 
