@@ -2469,10 +2469,9 @@ const State = (() => {
       }));
     }
 
-    const month       = session.month || (session.name.includes('Dec') ? 'December' : 'May');
-    const sem         = session.semester;
-    const freshBatch  = (sem === 1 && month === 'December') || (sem === 2 && month === 'May')
-      ? String(deriveFreshBatch(Number(session.name.slice(0, 4)), month))
+    const freshMonth  = session.month || (session.name.includes('Dec') ? 'December' : 'May');
+    const freshBatch  = (session.semester === 1 && freshMonth === 'December') || (session.semester === 2 && freshMonth === 'May')
+      ? String(deriveFreshBatch(Number(session.name.slice(0, 4)), freshMonth))
       : null;
     const sem = session.semester;
 
