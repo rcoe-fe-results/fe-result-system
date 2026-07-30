@@ -1266,6 +1266,7 @@ function _meInitRoster() {
     document.getElementById('me-roster-pill-pending').textContent = `🔴 Pending: ${counts.pending}`;
     document.getElementById('me-roster-pill-partial').textContent  = `🟡 Partial: ${counts.partial}`;
     document.getElementById('me-roster-pill-done').textContent     = `🟢 Done: ${counts.done}`;
+    document.getElementById('me-roster-pill-skipped').textContent  = `⊘ Skipped/Opted-out: ${counts.skipped}`;
     document.getElementById('me-roster-session-label').textContent = session.name;
     _meRosterRenderTable(rows, session, seatLookup);
     return;
@@ -1365,6 +1366,27 @@ function _meRosterBuildMergedMarks(studentLedgerRows, subj, currentSessionId, se
 // }
 function _meRosterBuildStudentStatus(student, session) {
   const sem      = session.semester;
+  // Exam skip — student intentionally did not sit this session
+  if (State.getExamSkipDecision(student.uin, session.id)) {
+    return {
+      status: 'skipped', result: null,
+      pendingSubjects: [], doneSubjects: [],
+      lastSession: null, isKT: false,
+      totalExpected: 0,
+    };
+  }
+
+  // Reval opt-out — student explicitly declined revaluation
+  if (session.entryType === 'Revaluation_Gazette' &&
+      State.getRevalDecision(student.uin, session.id) === 'No') {
+    return {
+      status: 'opted-out', result: null,
+      pendingSubjects: [], doneSubjects: [],
+      lastSession: null, isKT: false,
+      totalExpected: 0,
+    };
+  }
+
   const subjects = getSubjectsForSem(sem, student.branch, session);
 
   // All ledger rows for this student
@@ -1513,7 +1535,7 @@ function _meRosterLoad() {
       const seatLookup  = {};
       for (const s of seatEntries) seatLookup[s.uin] = s.seatNumber;
 
-      const statusOrder  = { pending: 0, partial: 1, done: 2 };
+      const statusOrder  = { pending: 0, partial: 1, done: 2, skipped: 3, 'opted-out': 3 };
       
       rows.sort((a, b) => {
         const sa = seatLookup[a.student.uin] || '';
@@ -1547,8 +1569,11 @@ function _meRosterLoad() {
       });
 
       // Count per status
-      const counts = { pending: 0, partial: 0, done: 0 };
-      rows.forEach(r => counts[r.status]++);
+      const counts = { pending: 0, partial: 0, done: 0, skipped: 0 };
+      rows.forEach(r => {
+        if (r.status === 'skipped' || r.status === 'opted-out') counts.skipped++;
+        else counts[r.status] = (counts[r.status] || 0) + 1;
+      });
 
       // Pills
       const pillsEl = document.getElementById('me-roster-pills');
@@ -1557,6 +1582,7 @@ function _meRosterLoad() {
       document.getElementById('me-roster-pill-pending').textContent = `🔴 Pending: ${counts.pending}`;
       document.getElementById('me-roster-pill-partial').textContent = `🟡 Partial: ${counts.partial}`;
       document.getElementById('me-roster-pill-done').textContent    = `🟢 Done: ${counts.done}`;
+      document.getElementById('me-roster-pill-skipped').textContent = `⊘ Skipped/Opted-out: ${counts.skipped}`;
       document.getElementById('me-roster-session-label').textContent = session.name;
 
       // Save roster state for persistence
@@ -1616,7 +1642,11 @@ function _meRosterRenderTable(rows, session, seatLookup) {
       ? '<span class="badge badge-pass">✓ Done</span>'
       : status === 'partial'
         ? '<span class="badge badge-grace">⚡ Partial</span>'
-        : '<span class="badge badge-fail">⏳ Pending</span>';
+        : status === 'skipped'
+          ? '<span class="badge badge-pending">⊘ Skipped Exam</span>'
+          : status === 'opted-out'
+            ? '<span class="badge badge-reval">✗ Opted Out of Reval</span>'
+            : '<span class="badge badge-fail">⏳ Pending</span>';
 
     // result column dropped
 
@@ -1647,14 +1677,17 @@ function _meRosterRenderTable(rows, session, seatLookup) {
     const actionCell = status === 'done'
       ? `<button class="btn btn-secondary btn-sm"
            onclick="_pvShowStudentFromRoster('${UI.esc(student.uin)}')">View →</button>`
-      : `<button class="btn btn-primary btn-sm"
-           onclick="_meRosterOpenAdhoc('${UI.esc(student.uin)}', '${UI.esc(session.id)}')">Enter Marks →</button>`;
+      : (status === 'skipped' || status === 'opted-out')
+        ? `<button class="btn btn-secondary btn-sm"
+             onclick="_pvShowStudentFromRoster('${UI.esc(student.uin)}')">View →</button>`
+        : `<button class="btn btn-primary btn-sm"
+             onclick="_meRosterOpenAdhoc('${UI.esc(student.uin)}', '${UI.esc(session.id)}')">Enter Marks →</button>`;
 
-    const rowCls = result === 'unsuccessful'
-      ? 'roster-row-unsuccessful'
-      : result === 'successful'
-        ? 'roster-row-successful'
-        : `roster-row-${status}`;
+    const rowCls = status === 'skipped'    ? 'roster-row-skipped'
+                 : status === 'opted-out'  ? 'roster-row-opted-out'
+                 : result === 'unsuccessful' ? 'roster-row-unsuccessful'
+                 : result === 'successful'   ? 'roster-row-successful'
+                 : `roster-row-${status}`;
 
     html += `<tr class="${rowCls}">
       <td style="font-family:'DM Mono',monospace; font-weight:600; color:var(--brand); text-align:center;">
