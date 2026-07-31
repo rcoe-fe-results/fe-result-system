@@ -2080,7 +2080,7 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
             </div>
 
             <!-- Panel B: Not in PDF -->
-            <div>
+            <div style="margin-bottom:20px;">
               <div style="font-size:13px;font-weight:700;color:var(--ink-1);margin-bottom:10px;
                           display:flex;align-items:center;justify-content:space-between;">
                 <span>⚠ Not in PDF — <span id="gaz-proc-missing-count">0</span> eligible students</span>
@@ -2089,6 +2089,19 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
                 </button>
               </div>
               <div id="gaz-proc-missing-list" style="max-height:280px;overflow-y:auto;
+                border:1px solid var(--border);border-radius:var(--radius);"></div>
+            </div>
+
+            <!-- Panel C: In PDF but excluded by eligibility rules -->
+            <div id="gaz-proc-unexpected-panel" class="hidden">
+              <div style="font-size:13px;font-weight:700;color:var(--warning);margin-bottom:10px;
+                          display:flex;align-items:center;justify-content:space-between;">
+                <span>🔍 Found in PDF, but excluded by eligibility rules — <span id="gaz-proc-unexpected-count">0</span> students</span>
+                <button id="gaz-proc-save-unexpected-btn" class="btn btn-secondary btn-sm">
+                  Save Seats for Flagged Students
+                </button>
+              </div>
+              <div id="gaz-proc-unexpected-list" style="max-height:280px;overflow-y:auto;
                 border:1px solid var(--border);border-radius:var(--radius);"></div>
             </div>
 

@@ -7009,10 +7009,11 @@ function _debounce(fn, ms) {
 // ═══════════════════════════════════════════════════════════════
 
 let _gazProcState = {
-  session:         null,
-  branch:          null,
-  matchedStudents: [], // [{ student, ern, seatNo, pageNo, seatExists }]
-  missingStudents: [], // [{ student, hasLedgerEntries }]
+  session:            null,
+  branch:             null,
+  matchedStudents:    [], // [{ student, ern, seatNo, pageNo, seatExists }]
+  missingStudents:    [], // [{ student, hasLedgerEntries }]
+  unexpectedStudents: [], // [{ student, ern, seatNo, pageNo, seatExists }]
 };
 
 function _gazetteProcessorInit() {
@@ -7020,8 +7021,9 @@ function _gazetteProcessorInit() {
   const brEl   = document.getElementById('gaz-proc-branch');
   const fileEl = document.getElementById('gaz-proc-file');
   const parseBtn = document.getElementById('gaz-proc-parse-btn');
-  const saveBtn  = document.getElementById('gaz-proc-save-seats-btn');
-  const skipBtn  = document.getElementById('gaz-proc-skip-btn');
+  const saveBtn   = document.getElementById('gaz-proc-save-seats-btn');
+  const skipBtn   = document.getElementById('gaz-proc-skip-btn');
+  const unexpBtn  = document.getElementById('gaz-proc-save-unexpected-btn');
 
   if (!sessEl || !brEl || !fileEl) return;
 
@@ -7037,6 +7039,7 @@ function _gazetteProcessorInit() {
   if (parseBtn) parseBtn.onclick = _gazProcParse;
   if (saveBtn)  saveBtn.onclick  = _gazProcSaveSeats;
   if (skipBtn)  skipBtn.onclick  = _gazProcMarkSkips;
+  if (unexpBtn) unexpBtn.onclick = _gazProcSaveUnexpectedSeats;
 }
 
 function _gazProcOnFilterChange() {
@@ -7050,7 +7053,7 @@ function _gazProcOnFilterChange() {
 
   document.getElementById('gaz-proc-preview')?.classList.add('hidden');
   document.getElementById('gaz-proc-report')?.classList.add('hidden');
-  _gazProcState = { session: null, branch: null, matchedStudents: [], missingStudents: [] };
+  _gazProcState = { session: null, branch: null, matchedStudents: [], missingStudents: [], unexpectedStudents: [] };
 }
 
 // Helper to match student.prn against extracted PDF ERN records flexibly
@@ -7192,9 +7195,12 @@ async function _gazProcParse() {
   try {
     const records = await _gazProcExtractFromPDF(file);
     const eligibleStudents = State.getEligibleStudents(session, branch);
+    const eligibleUINs     = new Set(eligibleStudents.map(s => s.uin));
+    const allBranchStudents = State.getStudents({ branch });
 
-    const matchedStudents = [];
-    const missingStudents = [];
+    const matchedStudents    = [];
+    const missingStudents    = [];
+    const unexpectedStudents = [];
 
     for (const student of eligibleStudents) {
       const match = _matchStudentPRN(student.prn, records);
@@ -7211,7 +7217,19 @@ async function _gazProcParse() {
       }
     }
 
-    _gazProcState = { session, branch, matchedStudents, missingStudents };
+    // Check for students in STUDENT_MASTER for this branch who are IN the PDF but were excluded by eligibility rules
+    for (const student of allBranchStudents) {
+      if (eligibleUINs.has(student.uin)) continue;
+      const match = _matchStudentPRN(student.prn, records);
+      if (match) {
+        const { seatNo, pageNo, ern } = match;
+        const existingSeats = State.getSeatsForSession(sessId);
+        const seatExists    = !!existingSeats.find(s => s.uin === student.uin);
+        unexpectedStudents.push({ student, ern, seatNo, pageNo, seatExists });
+      }
+    }
+
+    _gazProcState = { session, branch, matchedStudents, missingStudents, unexpectedStudents };
     UI.hideSpinner();
     _gazProcRenderPreview();
 
@@ -7303,6 +7321,44 @@ function _gazProcRenderPreview() {
     }
   }
 
+  // Panel C — Unexpected matches (Found in PDF but excluded by rules)
+  const unexpectedPanel = document.getElementById('gaz-proc-unexpected-panel');
+  const unexpectedCountEl = document.getElementById('gaz-proc-unexpected-count');
+  const unexpectedList = document.getElementById('gaz-proc-unexpected-list');
+
+  if (unexpectedStudents && unexpectedStudents.length > 0) {
+    if (unexpectedCountEl) unexpectedCountEl.textContent = unexpectedStudents.length;
+    if (unexpectedList) {
+      unexpectedList.innerHTML = `
+        <table class="audit-table" style="width:100%;">
+          <thead><tr>
+            <th>Seat No</th><th>Page</th><th>UIN / ERN</th><th>Name</th><th>Batch</th><th>Status</th>
+          </tr></thead>
+          <tbody>
+            ${unexpectedStudents.map(({ student, ern, seatNo, pageNo, seatExists }) => `
+              <tr style="background:rgba(245,158,11,0.05);">
+                <td style="font-family:'DM Mono',monospace;font-weight:600;color:var(--brand);">
+                  ${UI.esc(seatNo)}
+                </td>
+                <td><span class="badge badge-regular" style="font-size:10px;">Page ${pageNo}</span></td>
+                <td>
+                  <span class="subj-code-small">${UI.esc(student.uin)}</span><br>
+                  <small style="color:var(--ink-3);">${UI.esc(ern)}</small>
+                </td>
+                <td>${UI.esc(student.name)}</td>
+                <td>Batch ${UI.esc(student.batchYear)}</td>
+                <td>${seatExists
+                  ? '<span class="badge badge-pending">Already saved</span>'
+                  : '<span class="badge badge-fail">Flagged for review</span>'}</td>
+              </tr>`).join('')}
+          </tbody>
+        </table>`;
+    }
+    unexpectedPanel?.classList.remove('hidden');
+  } else {
+    unexpectedPanel?.classList.add('hidden');
+  }
+
   document.getElementById('gaz-proc-preview')?.classList.remove('hidden');
   document.getElementById('gaz-proc-report')?.classList.add('hidden');
 }
@@ -7357,6 +7413,61 @@ async function _gazProcSaveSeats() {
           }));
           _gazProcRenderPreview();
           _gazProcShowSeatReport();
+        } catch(err) {
+          UI.hideSpinner();
+          UI.toast('Error saving seats: ' + err.message, 'error', 8000);
+        }
+      }
+    }
+  );
+}
+
+async function _gazProcSaveUnexpectedSeats() {
+  const { session, unexpectedStudents } = _gazProcState;
+  if (!session || !unexpectedStudents || unexpectedStudents.length === 0) return;
+
+  const newSeats = unexpectedStudents.filter(m => !m.seatExists);
+
+  if (newSeats.length === 0) {
+    UI.toast('All seat numbers for flagged students are already saved.', 'info');
+    return;
+  }
+
+  UI.showModal(
+    'Save Seats for Flagged Students',
+    `Save <strong>${newSeats.length}</strong> seat number${newSeats.length > 1 ? 's' : ''} 
+     and manifest records for students flagged by eligibility rules in session <strong>${UI.esc(session.name)}</strong>?`,
+    {
+      confirmLabel: 'Save Seats',
+      onConfirm: async () => {
+        UI.showSpinner('Saving seats for flagged students…');
+        try {
+          const seatList = newSeats.map(({ student, seatNo }) => ({
+            uin:        student.uin,
+            sessionId:  session.id,
+            seatNumber: seatNo,
+          }));
+
+          const userEmail = Auth.getUser()?.email || '';
+          const manifestRecords = unexpectedStudents.map(({ ern, seatNo, pageNo }) => ({
+            ern,
+            sessionId: session.id,
+            seatNo,
+            pageNo,
+            uploadedBy: userEmail,
+          }));
+
+          await State.uploadSeats(seatList);
+          await State.uploadGazetteManifest(manifestRecords);
+
+          UI.hideSpinner();
+          UI.toast(`✓ Saved ${newSeats.length} seat numbers for flagged students.`, 'success');
+
+          _gazProcState.unexpectedStudents = _gazProcState.unexpectedStudents.map(m => ({
+            ...m,
+            seatExists: true,
+          }));
+          _gazProcRenderPreview();
         } catch(err) {
           UI.hideSpinner();
           UI.toast('Error saving seats: ' + err.message, 'error', 8000);
