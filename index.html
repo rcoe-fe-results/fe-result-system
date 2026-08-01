@@ -1096,6 +1096,44 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
   color:var(--kt); font-size:12px; font-weight:500;
   padding:7px 12px; border-radius:var(--radius); margin-bottom:10px;
 }
+
+/* ─── Gazette PDF Snippet Panel ─────────────────────────── */
+.pdf-snippet-panel {
+  margin-bottom: 14px;
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.pdf-snippet-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 7px 12px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+  font-size: 11px; font-weight: 600; color: var(--ink-3);
+  text-transform: uppercase; letter-spacing: .04em;
+}
+.pdf-snippet-toggle {
+  background: none; border: none; cursor: pointer;
+  font-size: 11px; color: var(--ink-3); font-family: inherit;
+  padding: 2px 6px; border-radius: 4px;
+}
+.pdf-snippet-toggle:hover { background: var(--border); color: var(--ink); }
+.pdf-snippet-body {
+  overflow-x: auto;
+  padding: 8px;
+  text-align: center;
+}
+.pdf-snippet-body canvas {
+  display: block;
+  margin: 0 auto;
+  border-radius: 4px;
+}
+.pdf-snippet-loading {
+  padding: 16px; text-align: center;
+  font-size: 12px; color: var(--ink-4); font-style: italic;
+}
+.pdf-snippet-hidden { display: none !important; }
 .bc-session-hint {
   font-size:11px; color:var(--ink-4); font-style:italic; margin-top:4px;
 }
@@ -1183,6 +1221,16 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
         <div id="me-adhoc-student-panel" class="hidden" style="margin-top:16px;">
           <div id="me-adhoc-student-info" style="margin-bottom:14px;"></div>
           <div id="me-adhoc-session-picker" style="margin-bottom:14px;"></div>
+          <div id="me-adhoc-pdf-snippet" class="pdf-snippet-panel pdf-snippet-hidden">
+            <div class="pdf-snippet-header">
+              <span>📄 Gazette Reference</span>
+              <button class="pdf-snippet-toggle" id="me-adhoc-pdf-toggle">▲ Hide</button>
+            </div>
+            <div class="pdf-snippet-body" id="me-adhoc-pdf-body">
+              <div class="pdf-snippet-loading" id="me-adhoc-pdf-loading">Loading gazette…</div>
+              <canvas id="me-adhoc-pdf-canvas" style="display:none;"></canvas>
+            </div>
+          </div>
           <div id="me-adhoc-grid"></div>
           <div style="margin-top:14px; display:flex; justify-content:flex-end;">
             <button id="me-adhoc-submit-btn" class="btn btn-primary">Save marks →</button>
@@ -1231,6 +1279,15 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
         <!-- Student card -->
         <div id="me-queue-card" class="hidden" style="margin-top:12px;">
           <div id="me-queue-student-header" style="margin-bottom:14px;"></div>
+          <div id="me-queue-pdf-snippet" class="pdf-snippet-panel pdf-snippet-hidden">
+            <div class="pdf-snippet-header">
+              <span>📄 Gazette Reference</span>
+            </div>
+            <div class="pdf-snippet-body">
+              <div class="pdf-snippet-loading" id="me-queue-pdf-loading">Loading gazette…</div>
+              <canvas id="me-queue-pdf-canvas" style="display:none;"></canvas>
+            </div>
+          </div>
           <div id="me-queue-grid"></div>
           <div style="margin-top:16px; display:flex; gap:10px; justify-content:flex-end; align-items:center;">
             <span style="font-size:12px; color:var(--ink-3);">

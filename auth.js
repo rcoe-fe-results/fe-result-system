@@ -18,7 +18,7 @@ const Auth = (() => {
     // granted scopes so it doesn't re-prompt on every login.
     const tokenClient = google.accounts.oauth2.initTokenClient({
       client_id: CONFIG.CLIENT_ID,
-      scope: 'openid email profile ' + CONFIG.SCOPES,
+      scope: 'openid email profile https://www.googleapis.com/auth/drive.readonly ' + CONFIG.SCOPES,
       include_granted_scopes: true,
       callback: _handleToken,
       error_callback: (err) => {

@@ -248,6 +248,257 @@ if (semCredits && semCredits.max > 0 && semCredits.earned >= semCredits.max) ret
 
 let meAdhocState = { student: null, session: null };
 
+// ═══════════════════════════════════════════════════════════════
+// GAZETTE PDF SNIPPET — cache + fetch + render
+// ═══════════════════════════════════════════════════════════════
+
+// Cache: key = sessionId + '_' + branch → { parsedPages, pdfDoc }
+// parsedPages: array of pages, each = array of { str, x, y, w, h }
+// pdfDoc: pdfjsLib PDF document object (kept for rendering)
+const _pdfSnippetCache = {};
+const _pdfSnippetNotFound = new Set(); // keys where Drive lookup already failed
+
+async function _pdfEnsureLoaded() {
+  if (!window.pdfjsLib) {
+    await new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+      script.onload = resolve;
+      script.onerror = reject;
+      document.head.appendChild(script);
+    });
+    window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+      'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  }
+}
+
+// Fetch and parse PDF into cache for a given session + branch
+// Returns true if successful, false if not found or error
+async function _pdfFetchAndParse(session, branch) {
+  const cacheKey = session.id + '_' + branch;
+  if (_pdfSnippetCache[cacheKey]) return true;
+  if (_pdfSnippetNotFound.has(cacheKey)) return false;
+
+  const filename = session.name + '_' + branch + '.pdf';
+  const token = Auth.getToken();
+  if (!token) return false;
+
+  try {
+    await _pdfEnsureLoaded();
+
+    // Search Drive folder for the file
+    const folderId = CONFIG.DRIVE_FOLDER_ID;
+    const searchUrl = `https://www.googleapis.com/drive/v3/files?q=name%3D'${encodeURIComponent(filename)}'%20and%20'${encodeURIComponent(folderId)}'%20in%20parents%20and%20trashed%3Dfalse&fields=files(id%2Cname)`;
+    const searchResp = await fetch(searchUrl, {
+      headers: { 'Authorization': 'Bearer ' + token }
+    });
+    if (!searchResp.ok) { _pdfSnippetNotFound.add(cacheKey); return false; }
+    const searchData = await searchResp.json();
+    if (!searchData.files || searchData.files.length === 0) {
+      _pdfSnippetNotFound.add(cacheKey); return false;
+    }
+
+    const fileId = searchData.files[0].id;
+    const fileResp = await fetch(
+      `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`,
+      { headers: { 'Authorization': 'Bearer ' + token } }
+    );
+    if (!fileResp.ok) { _pdfSnippetNotFound.add(cacheKey); return false; }
+
+    const arrayBuffer = await fileResp.arrayBuffer();
+    const pdfDoc = await window.pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+    const numPages = pdfDoc.numPages;
+
+    const parsedPages = [];
+    for (let p = 1; p <= numPages; p++) {
+      const page = await pdfDoc.getPage(p);
+      const content = await page.getTextContent();
+      const items = content.items
+        .filter(i => i.str && i.str.trim())
+        .map(i => ({
+          str: i.str,
+          x:   i.transform[4],
+          y:   i.transform[5],
+          w:   i.width  || 0,
+          h:   i.height || 0,
+        }));
+      parsedPages.push({ items, viewport: page.getViewport({ scale: 1 }) });
+    }
+
+    _pdfSnippetCache[cacheKey] = { parsedPages, pdfDoc };
+    return true;
+
+  } catch(e) {
+    console.warn('[_pdfFetchAndParse]', e.message);
+    _pdfSnippetNotFound.add(cacheKey);
+    return false;
+  }
+}
+
+// Find the student's ERN in parsedPages, return crop bounds
+// Returns { pageIndex, cropTop, cropBottom } or null
+function _pdfFindStudentCrop(parsedPages, prn) {
+  if (!prn) return null;
+
+  const SEPARATOR_RE = /^[-\s]{5,}$/;
+  const PADDING = 6;
+
+  for (let pi = 0; pi < parsedPages.length; pi++) {
+    const { items, viewport } = parsedPages[pi];
+    const pageH = viewport.height;
+
+    // Find ERN match using same flexible logic as gazette processor
+    let ernItem = null;
+    for (const item of items) {
+      const rawPRN    = String(prn).trim().toUpperCase();
+      const cleanPRN  = rawPRN.replace(/[^A-Z0-9]/g, '');
+      const digitsPRN = rawPRN.replace(/\D/g, '');
+      const rawERN    = item.str.trim().toUpperCase();
+      const cleanERN  = rawERN.replace(/[^A-Z0-9]/g, '');
+      const digitsERN = rawERN.replace(/\D/g, '');
+
+      if (
+        cleanPRN === cleanERN ||
+        rawPRN   === rawERN   ||
+        (digitsPRN.length >= 10 && digitsERN.length >= 10 && digitsPRN === digitsERN) ||
+        (cleanPRN.length  >= 10 && cleanERN.length  >= 10 &&
+          (cleanERN.includes(cleanPRN) || cleanPRN.includes(cleanERN)))
+      ) {
+        ernItem = item;
+        break;
+      }
+    }
+
+    if (!ernItem) continue;
+
+    // PDF y-coordinates: 0 = bottom of page, pageH = top
+    // pdfjsLib text items use PDF coordinate space
+    const ernY = ernItem.y;
+
+    // Find separator above (highest y below ernY boundary going upward)
+    // In PDF coords, "above" visually = higher y value
+    let sepAboveY = pageH; // default to page top
+    for (const item of items) {
+      if (SEPARATOR_RE.test(item.str) && item.y > ernY && item.y < sepAboveY) {
+        sepAboveY = item.y;
+      }
+    }
+
+    // Find separator below (lowest y above ernY boundary going downward)
+    // In PDF coords, "below" visually = lower y value
+    let sepBelowY = 0; // default to page bottom
+    for (const item of items) {
+      if (SEPARATOR_RE.test(item.str) && item.y < ernY && item.y > sepBelowY) {
+        sepBelowY = item.y;
+      }
+    }
+
+    // cropTop and cropBottom in PDF coordinate space (y from bottom)
+    // We'll convert to canvas pixel space during render
+    return {
+      pageIndex:  pi,
+      sepAboveY,  // upper separator y (PDF coords, from bottom)
+      sepBelowY,  // lower separator y (PDF coords, from bottom)
+      pageH,
+      PADDING,
+    };
+  }
+
+  return null; // ERN not found
+}
+
+// Render the cropped snippet to a given canvas element
+async function _pdfRenderSnippet(cacheKey, crop, canvasEl) {
+  const cached = _pdfSnippetCache[cacheKey];
+  if (!cached || !crop) return;
+
+  const SCALE = 2.5;
+  const { pdfDoc } = cached;
+  const page = await pdfDoc.getPage(crop.pageIndex + 1);
+  const viewport = page.getViewport({ scale: SCALE });
+
+  // Offscreen canvas — full page at SCALE
+  const offscreen = document.createElement('canvas');
+  offscreen.width  = viewport.width;
+  offscreen.height = viewport.height;
+  const ctx = offscreen.getContext('2d');
+
+  await page.render({ canvasContext: ctx, viewport }).promise;
+
+  // Convert PDF y-coords (from bottom) to canvas pixel y-coords (from top)
+  // canvas y = (pageH - pdfY) * SCALE
+  const { sepAboveY, sepBelowY, pageH, PADDING } = crop;
+  const cropTopPx    = Math.max(0, (pageH - sepAboveY) * SCALE - PADDING * SCALE);
+  const cropBottomPx = Math.min(viewport.height, (pageH - sepBelowY) * SCALE + PADDING * SCALE);
+  const cropHeightPx = cropBottomPx - cropTopPx;
+
+  // Set visible canvas dimensions
+  canvasEl.width  = viewport.width;
+  canvasEl.height = Math.max(cropHeightPx, 1);
+
+  const visCtx = canvasEl.getContext('2d');
+  visCtx.drawImage(
+    offscreen,
+    0, cropTopPx,              // source x, y
+    viewport.width, cropHeightPx, // source w, h
+    0, 0,                      // dest x, y
+    viewport.width, cropHeightPx  // dest w, h
+  );
+}
+
+// Master function: show snippet for a student in a given panel
+// panelId: 'adhoc' | 'queue'
+async function _pdfShowSnippet(student, session, panelId) {
+  const panelEl   = document.getElementById(`me-${panelId}-pdf-snippet`);
+  const loadingEl = document.getElementById(`me-${panelId}-pdf-loading`);
+  const canvasEl  = document.getElementById(`me-${panelId}-pdf-canvas`);
+  if (!panelEl || !loadingEl || !canvasEl) return;
+
+  // Hide canvas, show loading
+  canvasEl.style.display  = 'none';
+  loadingEl.style.display = '';
+  panelEl.classList.remove('pdf-snippet-hidden');
+
+  const branch   = student.branch;
+  const cacheKey = session.id + '_' + branch;
+  const prn      = student.prn;
+
+  try {
+    const ok = await _pdfFetchAndParse(session, branch);
+    if (!ok) { panelEl.classList.add('pdf-snippet-hidden'); return; }
+
+    const cached = _pdfSnippetCache[cacheKey];
+    const crop   = _pdfFindStudentCrop(cached.parsedPages, prn);
+    if (!crop)   { panelEl.classList.add('pdf-snippet-hidden'); return; }
+
+    await _pdfRenderSnippet(cacheKey, crop, canvasEl);
+
+    loadingEl.style.display = 'none';
+    canvasEl.style.display  = 'block';
+
+    // Ad-hoc: wire toggle button
+    if (panelId === 'adhoc') {
+      const toggleBtn = document.getElementById('me-adhoc-pdf-toggle');
+      const bodyEl    = document.getElementById('me-adhoc-pdf-body');
+      if (toggleBtn && bodyEl) {
+        toggleBtn.onclick = () => {
+          const collapsed = bodyEl.style.display === 'none';
+          bodyEl.style.display  = collapsed ? '' : 'none';
+          toggleBtn.textContent = collapsed ? '▲ Hide' : '▼ Show';
+        };
+      }
+    }
+  } catch(e) {
+    console.warn('[_pdfShowSnippet]', e.message);
+    panelEl.classList.add('pdf-snippet-hidden');
+  }
+}
+
+// Prefetch PDF for queue mode (called at queue load time)
+async function _pdfPrefetchForQueue(session, branch) {
+  await _pdfFetchAndParse(session, branch);
+}
+
 function _meAdhocSelectStudent(uin, matchedSeat) {
   const student = State.getStudent(uin);
   if (!student) return;
@@ -681,6 +932,9 @@ function _meAdhocRenderGrid() {
     _meBuildSubjectGrid(student, session, 'adhoc');
 
   _meWireGrid('me-adhoc-grid');
+
+  // Show gazette snippet
+  _pdfShowSnippet(student, session, 'adhoc');
 }
 
 // Returns per-component pass status for a student+subject across all sessions of a semester
@@ -1055,6 +1309,10 @@ function _meQueueLoad() {
   meQueueState.seatLookup = seatLookup;
 
   document.getElementById('me-queue-summary').classList.add('hidden');
+
+  // Prefetch gazette PDF in background before first card renders
+  _pdfPrefetchForQueue(session, branch);
+
   _meQueueRenderCard();
 }
 
@@ -1098,6 +1356,9 @@ function _meQueueRenderCard() {
     _meBuildSubjectGrid(student, session, 'queue');
 
   _meWireGrid('me-queue-grid');
+
+  // Show gazette snippet
+  _pdfShowSnippet(student, session, 'queue');
 
   // Focus first editable input
   const firstInput = document.querySelector('#me-queue-grid .mark-input-single:not([disabled])');
