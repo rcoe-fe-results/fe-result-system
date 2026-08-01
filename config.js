@@ -10,7 +10,7 @@ const CONFIG = {
   API_KEY:   'AIzaSyDFKjU7qnGAlc_6L39n31jkjW8knsiaO8E',
   SCOPES:    'https://www.googleapis.com/auth/spreadsheets',
   DOMAIN:    'eng.rizvi.edu.in',
-  DRIVE_FOLDER_ID: 'https://drive.google.com/drive/folders/1r7aIZBLVEwkysNfMpytODpo68iJWfF1r',
+  DRIVE_FOLDER_ID: '1r7aIZBLVEwkysNfMpytODpo68iJWfF1r',
 
   // ── Sheet tab names ───────────────────────────────────────
   TABS: {
