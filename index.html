@@ -1226,7 +1226,12 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
           <div id="me-adhoc-pdf-snippet" class="pdf-snippet-panel pdf-snippet-hidden">
             <div class="pdf-snippet-header">
               <span>📄 Gazette Reference</span>
-              <button class="pdf-snippet-toggle" id="me-adhoc-pdf-toggle">▲ Hide</button>
+              <div style="display:flex; align-items:center; gap:6px;">
+                <button class="pdf-snippet-toggle" id="me-adhoc-pdf-refetch" title="Refetch PDF from Drive">🔄 Refetch</button>
+                <button class="pdf-snippet-toggle" id="me-adhoc-pdf-expand" title="Expand snippet height">+ Expand</button>
+                <button class="pdf-snippet-toggle" id="me-adhoc-pdf-shrink" title="Shrink snippet height">− Shrink</button>
+                <button class="pdf-snippet-toggle" id="me-adhoc-pdf-toggle">▲ Hide</button>
+              </div>
             </div>
             <div class="pdf-snippet-body" id="me-adhoc-pdf-body">
               <div class="pdf-snippet-loading" id="me-adhoc-pdf-loading">Loading gazette…</div>
@@ -1284,8 +1289,14 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
           <div id="me-queue-pdf-snippet" class="pdf-snippet-panel pdf-snippet-hidden">
             <div class="pdf-snippet-header">
               <span>📄 Gazette Reference</span>
+              <div style="display:flex; align-items:center; gap:6px;">
+                <button class="pdf-snippet-toggle" id="me-queue-pdf-refetch" title="Refetch PDF from Drive">🔄 Refetch</button>
+                <button class="pdf-snippet-toggle" id="me-queue-pdf-expand" title="Expand snippet height">+ Expand</button>
+                <button class="pdf-snippet-toggle" id="me-queue-pdf-shrink" title="Shrink snippet height">− Shrink</button>
+                <button class="pdf-snippet-toggle" id="me-queue-pdf-toggle">▲ Hide</button>
+              </div>
             </div>
-            <div class="pdf-snippet-body">
+            <div class="pdf-snippet-body" id="me-queue-pdf-body">
               <div class="pdf-snippet-loading" id="me-queue-pdf-loading">Loading gazette…</div>
               <canvas id="me-queue-pdf-canvas" style="display:none;"></canvas>
             </div>

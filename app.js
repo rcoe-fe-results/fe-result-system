@@ -432,9 +432,13 @@ function _pdfFindStudentCrop(parsedPages, prn, seatNo, studentName) {
     }
   }
 
+const _pdfCropExtraPadding = { adhoc: 0, queue: 0 };
+
   if (!bestMatch) return null;
 
   const { pi, y: matchY, pageH, items } = bestMatch;
+  const extraPad = _pdfCropExtraPadding[panelId] || 0;
+  const PADDING  = 14 + Math.max(-10, extraPad);
 
   let sepAboveY = pageH;
   for (const item of items) {
@@ -444,10 +448,21 @@ function _pdfFindStudentCrop(parsedPages, prn, seatNo, studentName) {
     }
   }
 
+  // Smart Summary Row Detection: find lowest SGPI / Total / Grade summary items below matchY
+  const SUMMARY_RE = /\b(TOTAL|SGPI|CGPI|CREDITS|GRADE|POINTS|RESULT|PASS|FAIL|MARKS)\b/i;
+  let lowestSummaryY = matchY;
+  for (const item of items) {
+    if (item.y < matchY && (matchY - item.y) < 220 && SUMMARY_RE.test(item.str)) {
+      if (item.y < lowestSummaryY) lowestSummaryY = item.y;
+    }
+  }
+
+  // Look for divider lines below the summary row
+  const targetMinY = Math.min(matchY - 30, lowestSummaryY - 15);
   let sepBelowY = 0;
   for (const item of items) {
     const isDivider = SEPARATOR_RE.test(item.str) || item.str.includes('---') || item.str.includes('___') || item.str.includes('===');
-    if (isDivider && item.y < matchY && item.y > sepBelowY) {
+    if (isDivider && item.y < targetMinY && item.y > sepBelowY) {
       sepBelowY = item.y;
     }
   }
@@ -455,8 +470,8 @@ function _pdfFindStudentCrop(parsedPages, prn, seatNo, studentName) {
   if (sepAboveY === pageH || (sepAboveY - matchY) > 200) {
     sepAboveY = Math.min(pageH, matchY + 120);
   }
-  if (sepBelowY === 0 || (matchY - sepBelowY) > 200) {
-    sepBelowY = Math.max(0, matchY - 60);
+  if (sepBelowY === 0 || (matchY - sepBelowY) > 220) {
+    sepBelowY = Math.max(0, lowestSummaryY - 40, matchY - 150);
   }
 
   return {
@@ -487,7 +502,6 @@ async function _pdfRenderSnippet(cacheKey, crop, canvasEl) {
   await page.render({ canvasContext: ctx, viewport }).promise;
 
   // Convert PDF y-coords (from bottom) to canvas pixel y-coords (from top)
-  // canvas y = (pageH - pdfY) * SCALE
   const { sepAboveY, sepBelowY, pageH, PADDING } = crop;
   const cropTopPx    = Math.max(0, (pageH - sepAboveY) * SCALE - PADDING * SCALE);
   const cropBottomPx = Math.min(viewport.height, (pageH - sepBelowY) * SCALE + PADDING * SCALE);
@@ -500,22 +514,24 @@ async function _pdfRenderSnippet(cacheKey, crop, canvasEl) {
   const visCtx = canvasEl.getContext('2d');
   visCtx.drawImage(
     offscreen,
-    0, cropTopPx,              // source x, y
+    0, cropTopPx,                 // source x, y
     viewport.width, cropHeightPx, // source w, h
-    0, 0,                      // dest x, y
+    0, 0,                         // dest x, y
     viewport.width, cropHeightPx  // dest w, h
   );
 }
 
 // Master function: show snippet for a student in a given panel
 // panelId: 'adhoc' | 'queue'
-async function _pdfShowSnippet(student, session, panelId) {
+async function _pdfShowSnippet(student, session, panelId, forceRefetch = false) {
   const panelEl   = document.getElementById(`me-${panelId}-pdf-snippet`);
   const loadingEl = document.getElementById(`me-${panelId}-pdf-loading`);
   const canvasEl  = document.getElementById(`me-${panelId}-pdf-canvas`);
   if (!panelEl || !loadingEl || !canvasEl) return;
 
-  // Hide canvas, show loading
+  // Clear previous canvas drawing immediately to avoid showing stale student snippet
+  const ctx = canvasEl.getContext('2d');
+  if (ctx) ctx.clearRect(0, 0, canvasEl.width, canvasEl.height);
   canvasEl.style.display  = 'none';
   loadingEl.style.display = '';
   panelEl.classList.remove('pdf-snippet-hidden');
@@ -526,12 +542,17 @@ async function _pdfShowSnippet(student, session, panelId) {
   const seatNo   = student.seatNo || (typeof State !== 'undefined' && State.getSeatNumber ? State.getSeatNumber(student.uin, session.id) : '') || '';
   const name     = student.name || student.studentName || '';
 
+  if (forceRefetch) {
+    delete _pdfSnippetCache[cacheKey];
+    _pdfSnippetNotFound.delete(cacheKey);
+  }
+
   try {
     const ok = await _pdfFetchAndParse(session, branch);
     if (!ok) { panelEl.classList.add('pdf-snippet-hidden'); return; }
 
     const cached = _pdfSnippetCache[cacheKey];
-    const crop   = _pdfFindStudentCrop(cached.parsedPages, prn, seatNo, name);
+    const crop   = _pdfFindStudentCrop(cached.parsedPages, prn, seatNo, name, panelId);
     if (!crop)   { panelEl.classList.add('pdf-snippet-hidden'); return; }
 
     await _pdfRenderSnippet(cacheKey, crop, canvasEl);
@@ -539,21 +560,48 @@ async function _pdfShowSnippet(student, session, panelId) {
     loadingEl.style.display = 'none';
     canvasEl.style.display  = 'block';
 
-    // Ad-hoc: wire toggle button
-    if (panelId === 'adhoc') {
-      const toggleBtn = document.getElementById('me-adhoc-pdf-toggle');
-      const bodyEl    = document.getElementById('me-adhoc-pdf-body');
-      if (toggleBtn && bodyEl) {
-        toggleBtn.onclick = () => {
-          const collapsed = bodyEl.style.display === 'none';
-          bodyEl.style.display  = collapsed ? '' : 'none';
-          toggleBtn.textContent = collapsed ? '▲ Hide' : '▼ Show';
-        };
-      }
-    }
+    _pdfWireSnippetControls(student, session, panelId);
   } catch(e) {
     console.warn('[_pdfShowSnippet]', e.message);
     panelEl.classList.add('pdf-snippet-hidden');
+  }
+}
+
+// Wire header buttons (Refetch, Expand, Shrink, Toggle) for a snippet panel
+function _pdfWireSnippetControls(student, session, panelId) {
+  const refetchBtn = document.getElementById(`me-${panelId}-pdf-refetch`);
+  const expandBtn  = document.getElementById(`me-${panelId}-pdf-expand`);
+  const shrinkBtn  = document.getElementById(`me-${panelId}-pdf-shrink`);
+  const toggleBtn  = document.getElementById(`me-${panelId}-pdf-toggle`);
+  const bodyEl     = document.getElementById(`me-${panelId}-pdf-body`);
+
+  if (refetchBtn) {
+    refetchBtn.onclick = async () => {
+      UI.toast('Refetching gazette from Drive…', 'info');
+      await _pdfShowSnippet(student, session, panelId, true);
+    };
+  }
+
+  if (expandBtn) {
+    expandBtn.onclick = async () => {
+      _pdfCropExtraPadding[panelId] = (_pdfCropExtraPadding[panelId] || 0) + 40;
+      await _pdfShowSnippet(student, session, panelId, false);
+    };
+  }
+
+  if (shrinkBtn) {
+    shrinkBtn.onclick = async () => {
+      _pdfCropExtraPadding[panelId] = Math.max(-20, (_pdfCropExtraPadding[panelId] || 0) - 40);
+      await _pdfShowSnippet(student, session, panelId, false);
+    };
+  }
+
+  if (toggleBtn && bodyEl) {
+    toggleBtn.onclick = () => {
+      const collapsed = bodyEl.style.display === 'none';
+      bodyEl.style.display  = collapsed ? '' : 'none';
+      toggleBtn.textContent = collapsed ? '▲ Hide' : '▼ Show';
+    };
   }
 }
 
