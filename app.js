@@ -6120,6 +6120,8 @@ const typeLabel = s.entryType ? s.entryType.replace(/_/g, ' ') : 'Uni Portal Gaz
         } else if (audit && audit.status === 'DISCREPANCY_FLAGGED') {
           const count = audit.details?.unexpectedStudents?.length || 0;
           auditBadge = `<span class="badge badge-fail" title="${UI.esc(audit.message || '')}">🔴 Discrepancy (${count})</span>`;
+        } else if (audit && audit.status === 'AWAITING_PDF') {
+          auditBadge = '<span class="badge badge-regular" title="Gazette PDF not yet parsed / seat numbers not saved">📝 Awaiting PDF</span>';
         }
       }
     } catch(err) {
@@ -7613,6 +7615,9 @@ function _gazProcOnFilterChange() {
       } else if (audit && audit.status === 'DISCREPANCY_FLAGGED') {
         badgeClass = 'badge-fail';
         icon = '🔴';
+      } else if (audit && audit.status === 'AWAITING_PDF') {
+        badgeClass = 'badge-regular';
+        icon = '📝';
       }
       const branchLabel = branch ? ` (${UI.esc(branch)})` : ' (All Branches)';
       const totalSeats = audit?.details?.totalSeats ?? 0;

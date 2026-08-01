@@ -2555,15 +2555,43 @@ const State = (() => {
       if (!session) return { status: 'UNKNOWN', message: 'Session not found', details: { totalSeats: 0, eligibleCount: 0, unexpectedStudents: [], missingStudents: [] } };
 
       const branchStudents = students.filter(s => !branch || s.branch === branch);
-      const sessionSeats = getSeatsForSessionWithFallback(sessionId);
-      const seatUINs = new Set(sessionSeats.map(s => s.uin));
+      const branchUINs = new Set(branchStudents.map(s => s.uin));
 
+      // Get seats specifically saved for THIS session (filtered by branch if specified)
+      const ownSeats = seats.filter(st => st.sessionId === sessionId && (!branch || branchUINs.has(st.uin)));
+      
+      // Fallback seats (for revaluation or prelim linking)
+      const fallbackSeats = getSeatsForSessionWithFallback(sessionId).filter(st => !branch || branchUINs.has(st.uin));
+      const seatUINs = new Set(fallbackSeats.map(s => s.uin));
+
+      // 1. Check if Gazette PDF / Seats have been saved for THIS session
+      if (ownSeats.length === 0) {
+        return {
+          status: 'AWAITING_PDF',
+          message: `Gazette PDF not yet parsed / seat numbers not saved for ${session.name}${branch ? ' (' + branch + ')' : ''}.`,
+          priorHistoryPresent: true,
+          details: {
+            totalSeats: 0,
+            eligibleCount: getEligibleStudents(session, branch).length,
+            unexpectedStudents: [],
+            missingStudents: []
+          }
+        };
+      }
+
+      // 2. Check prior history for semester > 1 or Revaluation Gazette
       const sem = session.semester;
       let priorHistoryPresent = true;
-      if (sem > 1) {
+      if (session.entryType === 'Revaluation_Gazette') {
+        const prelimId = session.linkedPrelimSessionId;
+        const prelimRecords = ledger.filter(r => r.examSession === prelimId && (!branch || branchUINs.has(r.uin)));
+        if (!prelimId || prelimRecords.length === 0) {
+          priorHistoryPresent = false;
+        }
+      } else if (sem > 1) {
         const priorSemRecords = ledger.filter(r => 
           Number(r.semester) === (sem - 1) && 
-          (!branch || branchStudents.some(s => s.uin === r.uin))
+          (!branch || branchUINs.has(r.uin))
         );
         if (priorSemRecords.length === 0) {
           priorHistoryPresent = false;
@@ -2585,14 +2613,14 @@ const State = (() => {
       if (unexpectedStudents.length > 0) {
         if (!priorHistoryPresent) {
           status = 'PENDING_PRIOR_DATA';
-          message = `Session has ${unexpectedStudents.length} student(s) in PDF seats, but prior semester (Sem ${sem - 1}) marks are not yet entered to verify eligibility.`;
+          message = `Session has ${unexpectedStudents.length} student(s) in PDF seats, but prior session/semester marks are not yet entered to verify eligibility.`;
         } else {
           status = 'DISCREPANCY_FLAGGED';
           message = `⚠️ Found ${unexpectedStudents.length} student(s) in PDF seats who are ineligible under rules!`;
         }
       } else if (!priorHistoryPresent) {
         status = 'PENDING_PRIOR_DATA';
-        message = `Awaiting prior semester (Sem ${sem - 1}) marks entry.`;
+        message = `Awaiting prior session/semester marks entry to verify eligibility.`;
       }
 
       return {
@@ -2600,7 +2628,7 @@ const State = (() => {
         message,
         priorHistoryPresent,
         details: {
-          totalSeats: sessionSeats.length,
+          totalSeats: ownSeats.length,
           eligibleCount: eligibleList.length,
           unexpectedStudents,
           missingStudents
