@@ -2549,61 +2549,71 @@ const State = (() => {
 
   // Dynamic State-Driven Session Audit Engine
   function evaluateSessionAudit(sessionId, branch) {
-    const session = getSession(sessionId);
-    if (!session) return { status: 'UNKNOWN', message: 'Session not found', details: {} };
+    try {
+      const session = getSession(sessionId);
+      if (!session) return { status: 'UNKNOWN', message: 'Session not found', details: { totalSeats: 0, eligibleCount: 0, unexpectedStudents: [], missingStudents: [] } };
 
-    const branchStudents = students.filter(s => !branch || s.branch === branch);
-    const sessionSeats = getSeatsForSessionWithFallback(sessionId);
-    const seatUINs = new Set(sessionSeats.map(s => s.uin));
+      const branchStudents = students.filter(s => !branch || s.branch === branch);
+      const sessionSeats = getSeatsForSessionWithFallback(sessionId);
+      const seatUINs = new Set(sessionSeats.map(s => s.uin));
 
-    const sem = session.semester;
-    let priorHistoryPresent = true;
-    if (sem > 1) {
-      const priorSemRecords = ledger.filter(r => 
-        Number(r.semester) === (sem - 1) && 
-        (!branch || branchStudents.some(s => s.uin === r.uin))
+      const sem = session.semester;
+      let priorHistoryPresent = true;
+      if (sem > 1) {
+        const priorSemRecords = ledger.filter(r => 
+          Number(r.semester) === (sem - 1) && 
+          (!branch || branchStudents.some(s => s.uin === r.uin))
+        );
+        if (priorSemRecords.length === 0) {
+          priorHistoryPresent = false;
+        }
+      }
+
+      const eligibleList = getEligibleStudents(session, branch) || [];
+      const unexpectedStudents = eligibleList.filter(s => s && s.isUnexpected);
+
+      // Rule-based eligible students (fresh or KT)
+      const ruleEligibleStudents = eligibleList.filter(s => s && !s.isUnexpected);
+      const missingStudents = ruleEligibleStudents.filter(s => 
+        s && !seatUINs.has(s.uin) && !ledger.some(r => r.uin === s.uin && r.examSession === sessionId)
       );
-      if (priorSemRecords.length === 0) {
-        priorHistoryPresent = false;
-      }
-    }
 
-    const eligibleList = getEligibleStudents(session, branch);
-    const unexpectedStudents = eligibleList.filter(s => s.isUnexpected);
+      let status = 'VERIFIED_CLEAN';
+      let message = 'All students match eligibility rules.';
 
-    // Rule-based eligible students (fresh or KT)
-    const ruleEligibleStudents = eligibleList.filter(s => !s.isUnexpected);
-    const missingStudents = ruleEligibleStudents.filter(s => 
-      !seatUINs.has(s.uin) && !ledger.some(r => r.uin === s.uin && r.examSession === sessionId)
-    );
-
-    let status = 'VERIFIED_CLEAN';
-    let message = 'All students match eligibility rules.';
-
-    if (unexpectedStudents.length > 0) {
-      if (!priorHistoryPresent) {
+      if (unexpectedStudents.length > 0) {
+        if (!priorHistoryPresent) {
+          status = 'PENDING_PRIOR_DATA';
+          message = `Session has ${unexpectedStudents.length} student(s) in PDF seats, but prior semester (Sem ${sem - 1}) marks are not yet entered to verify eligibility.`;
+        } else {
+          status = 'DISCREPANCY_FLAGGED';
+          message = `⚠️ Found ${unexpectedStudents.length} student(s) in PDF seats who are ineligible under rules!`;
+        }
+      } else if (!priorHistoryPresent) {
         status = 'PENDING_PRIOR_DATA';
-        message = `Session has ${unexpectedStudents.length} student(s) in PDF seats, but prior semester (Sem ${sem - 1}) marks are not yet entered to verify eligibility.`;
-      } else {
-        status = 'DISCREPANCY_FLAGGED';
-        message = `⚠️ Found ${unexpectedStudents.length} student(s) in PDF seats who are ineligible under rules!`;
+        message = `Awaiting prior semester (Sem ${sem - 1}) marks entry.`;
       }
-    } else if (!priorHistoryPresent) {
-      status = 'PENDING_PRIOR_DATA';
-      message = `Awaiting prior semester (Sem ${sem - 1}) marks entry.`;
-    }
 
-    return {
-      status,
-      message,
-      priorHistoryPresent,
-      details: {
-        totalSeats: sessionSeats.length,
-        eligibleCount: eligibleList.length,
-        unexpectedStudents,
-        missingStudents
-      }
-    };
+      return {
+        status,
+        message,
+        priorHistoryPresent,
+        details: {
+          totalSeats: sessionSeats.length,
+          eligibleCount: eligibleList.length,
+          unexpectedStudents,
+          missingStudents
+        }
+      };
+    } catch(err) {
+      console.warn('[evaluateSessionAudit] Failed to evaluate audit for session', sessionId, err);
+      return {
+        status: 'UNVERIFIED',
+        message: 'Audit evaluation unavailable: ' + (err.message || String(err)),
+        priorHistoryPresent: false,
+        details: { totalSeats: 0, eligibleCount: 0, unexpectedStudents: [], missingStudents: [] }
+      };
+    }
   }
 
   // ── Divisions ─────────────────────────────────────────────

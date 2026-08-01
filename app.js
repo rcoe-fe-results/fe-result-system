@@ -6110,15 +6110,20 @@ const typeLabel = s.entryType ? s.entryType.replace(/_/g, ' ') : 'Uni Portal Gaz
     }
 
     let auditBadge = '<span class="muted">—</span>';
-    if (State.evaluateSessionAudit) {
-      const audit = State.evaluateSessionAudit(s.id, '');
-      if (audit.status === 'VERIFIED_CLEAN') {
-        auditBadge = '<span class="badge badge-pass" title="All students match eligibility rules">🟢 Verified</span>';
-      } else if (audit.status === 'PENDING_PRIOR_DATA') {
-        auditBadge = `<span class="badge badge-pending" title="${UI.esc(audit.message)}">🟡 Pending History</span>`;
-      } else if (audit.status === 'DISCREPANCY_FLAGGED') {
-        auditBadge = `<span class="badge badge-fail" title="${UI.esc(audit.message)}">🔴 Discrepancy (${audit.details.unexpectedStudents.length})</span>`;
+    try {
+      if (State.evaluateSessionAudit) {
+        const audit = State.evaluateSessionAudit(s.id, '');
+        if (audit && audit.status === 'VERIFIED_CLEAN') {
+          auditBadge = '<span class="badge badge-pass" title="All students match eligibility rules">🟢 Verified</span>';
+        } else if (audit && audit.status === 'PENDING_PRIOR_DATA') {
+          auditBadge = `<span class="badge badge-pending" title="${UI.esc(audit.message || '')}">🟡 Pending History</span>`;
+        } else if (audit && audit.status === 'DISCREPANCY_FLAGGED') {
+          const count = audit.details?.unexpectedStudents?.length || 0;
+          auditBadge = `<span class="badge badge-fail" title="${UI.esc(audit.message || '')}">🔴 Discrepancy (${count})</span>`;
+        }
       }
+    } catch(err) {
+      console.warn('[SessionListAudit] Error rendering audit badge for session', s.id, err);
     }
 
     return `<tr>
@@ -7588,52 +7593,61 @@ function _gazetteProcessorInit() {
 }
 
 function _gazProcOnFilterChange() {
-  const sessId = document.getElementById('gaz-proc-session')?.value;
-  const branch = document.getElementById('gaz-proc-branch')?.value || '';
-  const file   = document.getElementById('gaz-proc-file')?.files[0];
-  const ready  = !!(sessId && branch && file);
-  
-  const parseBtn = document.getElementById('gaz-proc-parse-btn');
-  if (parseBtn) parseBtn.disabled = !ready;
+  try {
+    const sessId = document.getElementById('gaz-proc-session')?.value;
+    const branch = document.getElementById('gaz-proc-branch')?.value || '';
+    const file   = document.getElementById('gaz-proc-file')?.files[0];
+    const ready  = !!(sessId && branch && file);
+    
+    const parseBtn = document.getElementById('gaz-proc-parse-btn');
+    if (parseBtn) parseBtn.disabled = !ready;
 
-  const auditBanner = document.getElementById('gaz-proc-audit-banner');
-  if (sessId && auditBanner && State.evaluateSessionAudit) {
-    const audit = State.evaluateSessionAudit(sessId, branch);
-    let badgeClass = 'badge-pass';
-    let icon = '🟢';
-    if (audit.status === 'PENDING_PRIOR_DATA') {
-      badgeClass = 'badge-pending';
-      icon = '🟡';
-    } else if (audit.status === 'DISCREPANCY_FLAGGED') {
-      badgeClass = 'badge-fail';
-      icon = '🔴';
-    }
-    const branchLabel = branch ? ` (${UI.esc(branch)})` : ' (All Branches)';
-    auditBanner.innerHTML = `
-      <div style="padding:14px 18px; border-radius:var(--radius); border:1px solid var(--border); background:var(--surface-2); display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
-        <div>
-          <div style="font-size:14px; font-weight:700; display:flex; align-items:center; gap:8px;">
-            <span>${icon} Session Audit Status${branchLabel}:</span>
-            <span class="badge ${badgeClass}" style="font-size:12px;">${audit.status}</span>
+    const auditBanner = document.getElementById('gaz-proc-audit-banner');
+    if (sessId && auditBanner && State.evaluateSessionAudit) {
+      const audit = State.evaluateSessionAudit(sessId, branch);
+      let badgeClass = 'badge-pass';
+      let icon = '🟢';
+      if (audit && audit.status === 'PENDING_PRIOR_DATA') {
+        badgeClass = 'badge-pending';
+        icon = '🟡';
+      } else if (audit && audit.status === 'DISCREPANCY_FLAGGED') {
+        badgeClass = 'badge-fail';
+        icon = '🔴';
+      }
+      const branchLabel = branch ? ` (${UI.esc(branch)})` : ' (All Branches)';
+      const totalSeats = audit?.details?.totalSeats ?? 0;
+      const eligibleCount = audit?.details?.eligibleCount ?? 0;
+      const message = audit?.message || '';
+      const status = audit?.status || 'UNKNOWN';
+
+      auditBanner.innerHTML = `
+        <div style="padding:14px 18px; border-radius:var(--radius); border:1px solid var(--border); background:var(--surface-2); display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+          <div>
+            <div style="font-size:14px; font-weight:700; display:flex; align-items:center; gap:8px;">
+              <span>${icon} Session Audit Status${branchLabel}:</span>
+              <span class="badge ${badgeClass}" style="font-size:12px;">${status}</span>
+            </div>
+            <div style="font-size:13px; color:var(--ink-2); margin-top:6px; line-height:1.4;">${UI.esc(message)}</div>
           </div>
-          <div style="font-size:13px; color:var(--ink-2); margin-top:6px; line-height:1.4;">${UI.esc(audit.message)}</div>
+          <div style="font-size:12px; color:var(--ink-3); background:var(--surface-1); padding:8px 12px; border-radius:6px; border:1px solid var(--border);">
+            Seats Saved: <strong>${totalSeats}</strong> | Eligible Roster: <strong>${eligibleCount}</strong>
+          </div>
         </div>
-        <div style="font-size:12px; color:var(--ink-3); background:var(--surface-1); padding:8px 12px; border-radius:6px; border:1px solid var(--border);">
-          Seats Saved: <strong>${audit.details.totalSeats}</strong> | Eligible Roster: <strong>${audit.details.eligibleCount}</strong>
+      `;
+    } else if (auditBanner) {
+      auditBanner.innerHTML = `
+        <div style="padding:12px 16px; border-radius:var(--radius); border:1px solid var(--border); background:var(--surface-2); color:var(--ink-2); font-size:13px; display:flex; align-items:center; gap:8px;">
+          <span>ℹ️ Select a <strong>Session</strong> above to view its live Audit &amp; Eligibility Status.</span>
         </div>
-      </div>
-    `;
-  } else if (auditBanner) {
-    auditBanner.innerHTML = `
-      <div style="padding:12px 16px; border-radius:var(--radius); border:1px solid var(--border); background:var(--surface-2); color:var(--ink-2); font-size:13px; display:flex; align-items:center; gap:8px;">
-        <span>ℹ️ Select a <strong>Session</strong> above to view its live Audit &amp; Eligibility Status.</span>
-      </div>
-    `;
-  }
+      `;
+    }
 
-  document.getElementById('gaz-proc-preview')?.classList.add('hidden');
-  document.getElementById('gaz-proc-report')?.classList.add('hidden');
-  _gazProcState = { session: null, branch: null, matchedStudents: [], missingStudents: [], unexpectedStudents: [] };
+    document.getElementById('gaz-proc-preview')?.classList.add('hidden');
+    document.getElementById('gaz-proc-report')?.classList.add('hidden');
+    _gazProcState = { session: null, branch: null, matchedStudents: [], missingStudents: [], unexpectedStudents: [] };
+  } catch(err) {
+    console.warn('[gazProcOnFilterChange] Failed to render filter change', err);
+  }
 }
 
 // Helper to match student.prn against extracted PDF ERN records flexibly
