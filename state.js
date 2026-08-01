@@ -2453,7 +2453,7 @@ const State = (() => {
   // Flag: 'KT' if student has any active fail/AB in any sem-N subject,
   //       'Regular' otherwise.
   function getEligibleStudents(session, branch) {
-    // For Revaluation Gazette: only students with a record in the linked Preliminary session
+    // For Revaluation Gazette: only students with a record in the linked Preliminary session (or present in PDF seats)
     if (session.entryType === 'Revaluation_Gazette') {
       if (!session.linkedPrelimSessionId) return [];
       const prelimUINs = new Set(
@@ -2461,13 +2461,17 @@ const State = (() => {
           .filter(r => r.examSession === session.linkedPrelimSessionId)
           .map(r => r.uin)
       );
+      const ownSeats = seats.filter(st => st.sessionId === session.id);
+      const ownSeatUINs = new Set(ownSeats.map(s => s.uin));
+
       return students.filter(s =>
-        prelimUINs.has(s.uin) &&
-        (!branch || s.branch === branch)
+        (!branch || s.branch === branch) &&
+        (prelimUINs.has(s.uin) || ownSeatUINs.has(s.uin))
       ).map(s => ({
         ...s,
         attemptFlag: 'Regular',
         ktSubjects: [],
+        isUnexpected: !prelimUINs.has(s.uin) && ownSeatUINs.has(s.uin),
       }));
     }
 
