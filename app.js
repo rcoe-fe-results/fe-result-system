@@ -573,24 +573,41 @@ function _pdfWireSnippetControls(student, session, panelId) {
   const toggleBtn  = document.getElementById(`me-${panelId}-pdf-toggle`);
   const bodyEl     = document.getElementById(`me-${panelId}-pdf-body`);
 
+  const getActiveState = () => {
+    if (panelId === 'adhoc' && typeof meAdhocState !== 'undefined' && meAdhocState.student) {
+      return { activeStudent: meAdhocState.student, activeSession: meAdhocState.session || session };
+    }
+    if (panelId === 'queue' && typeof meQueueState !== 'undefined' && meQueueState.students) {
+      const qStudent = meQueueState.students[meQueueState.currentIdx];
+      return { activeStudent: qStudent || student, activeSession: meQueueState.session || session };
+    }
+    return { activeStudent: student, activeSession: session };
+  };
+
   if (refetchBtn) {
     refetchBtn.onclick = async () => {
+      const { activeStudent, activeSession } = getActiveState();
+      if (!activeStudent || !activeSession) return;
       UI.toast('Refetching gazette from Drive…', 'info');
-      await _pdfShowSnippet(student, session, panelId, true);
+      await _pdfShowSnippet(activeStudent, activeSession, panelId, true);
     };
   }
 
   if (expandBtn) {
     expandBtn.onclick = async () => {
+      const { activeStudent, activeSession } = getActiveState();
+      if (!activeStudent || !activeSession) return;
       _pdfCropExtraPadding[panelId] = (_pdfCropExtraPadding[panelId] || 0) + 40;
-      await _pdfShowSnippet(student, session, panelId, false);
+      await _pdfShowSnippet(activeStudent, activeSession, panelId, false);
     };
   }
 
   if (shrinkBtn) {
     shrinkBtn.onclick = async () => {
+      const { activeStudent, activeSession } = getActiveState();
+      if (!activeStudent || !activeSession) return;
       _pdfCropExtraPadding[panelId] = Math.max(-20, (_pdfCropExtraPadding[panelId] || 0) - 40);
-      await _pdfShowSnippet(student, session, panelId, false);
+      await _pdfShowSnippet(activeStudent, activeSession, panelId, false);
     };
   }
 
@@ -2129,6 +2146,9 @@ function _meRosterOpenAdhoc(uin, sessionId) {
   document.getElementById('me-adhoc-grid').innerHTML =
     _meBuildSubjectGrid(student, session, 'adhoc');
   _meWireGrid('me-adhoc-grid');
+
+  // Show gazette snippet for this student
+  _pdfShowSnippet(student, session, 'adhoc');
 
   document.getElementById('me-adhoc-student-panel').classList.remove('hidden');
 
