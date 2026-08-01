@@ -2160,7 +2160,7 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
                 <tr>
                   <th>Name</th><th>Semester</th><th>Batch</th>
                   <th>Type</th><th>Linked Preliminary</th>
-                  <th>Electives</th><th>Status</th><th>Created By</th>
+                  <th>Electives</th><th>Status</th><th>Audit Status</th><th>Created By</th>
                 </tr>
               </thead>
               <tbody id="admin-session-tbody"></tbody>
@@ -2201,7 +2201,11 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
           </div>
 
           <!-- Audit Status Banner -->
-          <div id="gaz-proc-audit-banner" class="hidden" style="margin-bottom:16px;"></div>
+          <div id="gaz-proc-audit-banner" style="margin-bottom:16px;">
+            <div style="padding:12px 16px; border-radius:var(--radius); border:1px solid var(--border); background:var(--surface-2); color:var(--ink-2); font-size:13px; display:flex; align-items:center; gap:8px;">
+              <span>ℹ️ Select a <strong>Session</strong> above to view its live Audit &amp; Eligibility Status.</span>
+            </div>
+          </div>
 
           <!-- Preview panel -->
           <div id="gaz-proc-preview" class="hidden">

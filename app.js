@@ -6109,6 +6109,18 @@ const typeLabel = s.entryType ? s.entryType.replace(/_/g, ' ') : 'Uni Portal Gaz
       }
     }
 
+    let auditBadge = '<span class="muted">—</span>';
+    if (State.evaluateSessionAudit) {
+      const audit = State.evaluateSessionAudit(s.id, '');
+      if (audit.status === 'VERIFIED_CLEAN') {
+        auditBadge = '<span class="badge badge-pass" title="All students match eligibility rules">🟢 Verified</span>';
+      } else if (audit.status === 'PENDING_PRIOR_DATA') {
+        auditBadge = `<span class="badge badge-pending" title="${UI.esc(audit.message)}">🟡 Pending History</span>`;
+      } else if (audit.status === 'DISCREPANCY_FLAGGED') {
+        auditBadge = `<span class="badge badge-fail" title="${UI.esc(audit.message)}">🔴 Discrepancy (${audit.details.unexpectedStudents.length})</span>`;
+      }
+    }
+
     return `<tr>
       <td>${UI.esc(s.name)}</td>
       <td>Sem ${UI.esc(String(s.semester))}</td>
@@ -6117,6 +6129,7 @@ const typeLabel = s.entryType ? s.entryType.replace(/_/g, ' ') : 'Uni Portal Gaz
       <td>${linkedInfo}</td>
       <td>${electiveInfo}</td>
       <td><span class="badge ${s.status === 'Active' ? 'badge-pass' : 'badge-pending'}">${UI.esc(s.status)}</span></td>
+      <td>${auditBadge}</td>
       <td class="muted" style="font-size:11px;">${UI.esc(s.createdBy)}</td>
     </tr>`;
   }).join('');
@@ -7569,11 +7582,14 @@ function _gazetteProcessorInit() {
   if (saveBtn)  saveBtn.onclick  = _gazProcSaveSeats;
   if (skipBtn)  skipBtn.onclick  = _gazProcMarkSkips;
   if (unexpBtn) unexpBtn.onclick = _gazProcSaveUnexpectedSeats;
+
+  // Initialize banner state
+  _gazProcOnFilterChange();
 }
 
 function _gazProcOnFilterChange() {
   const sessId = document.getElementById('gaz-proc-session')?.value;
-  const branch = document.getElementById('gaz-proc-branch')?.value;
+  const branch = document.getElementById('gaz-proc-branch')?.value || '';
   const file   = document.getElementById('gaz-proc-file')?.files[0];
   const ready  = !!(sessId && branch && file);
   
@@ -7581,7 +7597,7 @@ function _gazProcOnFilterChange() {
   if (parseBtn) parseBtn.disabled = !ready;
 
   const auditBanner = document.getElementById('gaz-proc-audit-banner');
-  if (sessId && branch && auditBanner && State.evaluateSessionAudit) {
+  if (sessId && auditBanner && State.evaluateSessionAudit) {
     const audit = State.evaluateSessionAudit(sessId, branch);
     let badgeClass = 'badge-pass';
     let icon = '🟢';
@@ -7592,20 +7608,27 @@ function _gazProcOnFilterChange() {
       badgeClass = 'badge-fail';
       icon = '🔴';
     }
+    const branchLabel = branch ? ` (${UI.esc(branch)})` : ' (All Branches)';
     auditBanner.innerHTML = `
-      <div style="padding:12px 16px; border-radius:var(--radius); border:1px solid var(--border); background:var(--surface-2); display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+      <div style="padding:14px 18px; border-radius:var(--radius); border:1px solid var(--border); background:var(--surface-2); display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
         <div>
-          <strong>${icon} Session Audit Status:</strong> <span class="badge ${badgeClass}">${audit.status}</span>
-          <div style="font-size:12px; color:var(--ink-2); margin-top:4px;">${UI.esc(audit.message)}</div>
+          <div style="font-size:14px; font-weight:700; display:flex; align-items:center; gap:8px;">
+            <span>${icon} Session Audit Status${branchLabel}:</span>
+            <span class="badge ${badgeClass}" style="font-size:12px;">${audit.status}</span>
+          </div>
+          <div style="font-size:13px; color:var(--ink-2); margin-top:6px; line-height:1.4;">${UI.esc(audit.message)}</div>
         </div>
-        <div style="font-size:12px; color:var(--ink-3);">
+        <div style="font-size:12px; color:var(--ink-3); background:var(--surface-1); padding:8px 12px; border-radius:6px; border:1px solid var(--border);">
           Seats Saved: <strong>${audit.details.totalSeats}</strong> | Eligible Roster: <strong>${audit.details.eligibleCount}</strong>
         </div>
       </div>
     `;
-    auditBanner.classList.remove('hidden');
   } else if (auditBanner) {
-    auditBanner.classList.add('hidden');
+    auditBanner.innerHTML = `
+      <div style="padding:12px 16px; border-radius:var(--radius); border:1px solid var(--border); background:var(--surface-2); color:var(--ink-2); font-size:13px; display:flex; align-items:center; gap:8px;">
+        <span>ℹ️ Select a <strong>Session</strong> above to view its live Audit &amp; Eligibility Status.</span>
+      </div>
+    `;
   }
 
   document.getElementById('gaz-proc-preview')?.classList.add('hidden');
