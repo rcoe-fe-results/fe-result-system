@@ -257,6 +257,7 @@ let meAdhocState = { student: null, session: null };
 // pdfDoc: pdfjsLib PDF document object (kept for rendering)
 const _pdfSnippetCache = {};
 const _pdfSnippetNotFound = new Set(); // keys where Drive lookup already failed
+const _pdfCropExtraPadding = { adhoc: 0, queue: 0 };
 
 async function _pdfEnsureLoaded() {
   if (!window.pdfjsLib) {
@@ -337,7 +338,7 @@ async function _pdfFetchAndParse(session, branch) {
 
 // Find the student's ERN / Seat No / Name in parsedPages, return crop bounds
 // Returns { pageIndex, sepAboveY, sepBelowY, pageH, PADDING } or null
-function _pdfFindStudentCrop(parsedPages, prn, seatNo, studentName) {
+function _pdfFindStudentCrop(parsedPages, prn, seatNo, studentName, panelId = 'adhoc') {
   if (!prn && !seatNo && !studentName) return null;
 
   const rawPRN    = String(prn || '').trim().toUpperCase();
@@ -354,7 +355,6 @@ function _pdfFindStudentCrop(parsedPages, prn, seatNo, studentName) {
     .filter(t => t.length >= 3);
 
   const SEPARATOR_RE = /^[\s\-_=*]{3,}$/;
-  const PADDING = 6;
 
   let bestMatch = null; // { pi, y, score, pageH, items }
 
@@ -431,8 +431,6 @@ function _pdfFindStudentCrop(parsedPages, prn, seatNo, studentName) {
       }
     }
   }
-
-const _pdfCropExtraPadding = { adhoc: 0, queue: 0 };
 
   if (!bestMatch) return null;
 
