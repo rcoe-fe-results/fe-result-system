@@ -1075,6 +1075,9 @@ function _meAdhocRenderGrid() {
 
   // Show gazette snippet
   _pdfShowSnippet(student, session, 'adhoc');
+
+  // Update live computed summary bar above save button
+  _meUpdateComputedSummaryBar('adhoc');
 }
 
 // Returns per-component pass status for a student+subject across all sessions of a semester
@@ -1316,6 +1319,112 @@ function _meLiveSummary(triggerInput, containerId) {
     <span class="ss-pill ${resCls}">${resIcon}</span>
     ${dr.grace ? '<span class="ss-pill" style="background:var(--grace-bg);color:var(--grace);border-color:var(--grace);">Grace</span>' : ''}
   `;
+
+  // Live update the summary bar above the save button
+  _meUpdateComputedSummaryBar(context);
+}
+
+// ── Live Computed Academic Summary Bar (above Save button) ─────
+function _meUpdateComputedSummaryBar(context) {
+  const containerId = `me-${context}-grid`;
+  const barId       = `me-${context}-computed-bar`;
+  const barEl       = document.getElementById(barId);
+  const gridEl      = document.getElementById(containerId);
+  if (!barEl || !gridEl) return;
+
+  const session = context === 'adhoc' ? meAdhocState.session : meQueueState.session;
+  const student = context === 'adhoc' ? meAdhocState.student
+                                       : (meQueueState.students ? meQueueState.students[meQueueState.currentIdx] : null);
+  if (!session || !student) {
+    barEl.innerHTML = '';
+    return;
+  }
+
+  const subjects = getSubjectsForSem(session.semester, student.branch, session);
+  if (!subjects || subjects.length === 0) {
+    barEl.innerHTML = '';
+    return;
+  }
+
+  let totalObtained = 0;
+  let totalMax      = 0;
+  let totalCreditsEarned = 0;
+  let totalSemCredits    = 0;
+  let totalWeightedGP    = 0;
+  let hasIncomplete      = false;
+  let hasFail            = false;
+
+  const cards = gridEl.querySelectorAll('.subj-card');
+  if (cards.length === 0) {
+    barEl.innerHTML = '';
+    return;
+  }
+
+  cards.forEach(card => {
+    const subjCode = card.dataset.subjcode;
+    const subj     = subjects.find(s => s.code === subjCode);
+    if (!subj) return;
+
+    const marksMap = {};
+    card.querySelectorAll('.mark-input-single').forEach(input => {
+      const comp = input.dataset.comp;
+      const val  = input.value.trim();
+      if (comp && val && val !== '—') marksMap[comp] = val;
+    });
+
+    const dr = computeDisplayResult(subj, marksMap);
+    totalSemCredits += (subj.credits || 0);
+
+    if (dr.pending) {
+      hasIncomplete = true;
+    } else {
+      totalObtained += (dr.total || 0);
+      totalMax      += (dr.totalMax || 0);
+      if (dr.result === 'Pass') {
+        totalCreditsEarned += (dr.creditsEarned || subj.credits || 0);
+      } else {
+        hasFail = true;
+      }
+      totalWeightedGP += (dr.gradePoint || 0) * (subj.credits || 0);
+    }
+  });
+
+  const sgpa = (totalSemCredits > 0 && !hasIncomplete)
+    ? (totalWeightedGP / totalSemCredits).toFixed(2)
+    : null;
+
+  let statusBadge = '';
+  if (hasIncomplete) {
+    statusBadge = '<span class="me-comp-badge inc">⏳ Entering Marks</span>';
+  } else if (hasFail) {
+    statusBadge = '<span class="me-comp-badge fail">✗ Fail / KT</span>';
+  } else {
+    statusBadge = '<span class="me-comp-badge pass">✓ Pass</span>';
+  }
+
+  barEl.innerHTML = `
+    <div class="me-computed-bar">
+      <div class="me-computed-title">
+        <span>📊 Computed Live Summary</span>
+        <small style="color:var(--ink-4); font-weight:400; font-family:'Inter',sans-serif;">(Pre-save preview)</small>
+      </div>
+      <div class="me-computed-stats">
+        <div class="me-comp-stat" title="Total Marks Obtained / Maximum">
+          <small>Total:</small> ${totalObtained} / ${totalMax}
+        </div>
+        <div class="me-comp-stat" title="Credits Earned / Total Semester Credits">
+          <small>Credits:</small> ${totalCreditsEarned} / ${totalSemCredits}
+        </div>
+        <div class="me-comp-stat" title="Total Grade Points (Sum of Grade Point × Credits)">
+          <small>Grade Points:</small> ${totalWeightedGP}
+        </div>
+        <div class="me-comp-stat" style="background:var(--brand-light); color:var(--brand); border-color:#C7D7FF;" title="Computed SGPA (Grade Points / Credits)">
+          <small style="color:var(--brand);">SGPA (Sem ${session.semester}):</small> ${sgpa ? sgpa : '—'}
+        </div>
+        ${statusBadge}
+      </div>
+    </div>
+  `;
 }
 
 function _meValidateGrid(containerId) {
@@ -1499,6 +1608,9 @@ function _meQueueRenderCard() {
 
   // Show gazette snippet
   _pdfShowSnippet(student, session, 'queue');
+
+  // Update live computed summary bar above save button
+  _meUpdateComputedSummaryBar('queue');
 
   // Focus first editable input
   const firstInput = document.querySelector('#me-queue-grid .mark-input-single:not([disabled])');

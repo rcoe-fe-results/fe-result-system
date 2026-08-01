@@ -1099,12 +1099,75 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
 
 /* ─── Gazette PDF Snippet Panel ─────────────────────────── */
 .pdf-snippet-panel {
+  position: sticky;
+  top: 66px;
+  z-index: 90;
   margin-bottom: 14px;
   border: 1px solid var(--border-2);
   border-radius: var(--radius);
-  background: var(--surface-2);
+  background: var(--surface);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.10);
   overflow: hidden;
 }
+
+/* ─── Live Computed Summary Bar ─────────────────────────── */
+.me-computed-bar {
+  margin-top: 16px;
+  margin-bottom: 10px;
+  padding: 10px 14px;
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.me-computed-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--ink-3);
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.me-computed-stats {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.me-comp-stat {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  padding: 4px 10px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.me-comp-stat small {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--ink-3);
+  text-transform: uppercase;
+}
+.me-comp-badge {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 10px;
+  border-radius: 20px;
+  text-transform: uppercase;
+}
+.me-comp-badge.pass { background: var(--pass-bg); color: var(--pass); border: 1px solid #A7F3D0; }
+.me-comp-badge.fail { background: var(--fail-bg); color: var(--fail); border: 1px solid #FECACA; }
+.me-comp-badge.inc  { background: var(--surface); color: var(--ink-3); border: 1px solid var(--border); }
 .pdf-snippet-header {
   display: flex; align-items: center; justify-content: space-between;
   padding: 7px 12px;
@@ -1239,6 +1302,7 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
             </div>
           </div>
           <div id="me-adhoc-grid"></div>
+          <div id="me-adhoc-computed-bar"></div>
           <div style="margin-top:14px; display:flex; justify-content:flex-end;">
             <button id="me-adhoc-submit-btn" class="btn btn-primary">Save marks →</button>
           </div>
@@ -1302,6 +1366,7 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
             </div>
           </div>
           <div id="me-queue-grid"></div>
+          <div id="me-queue-computed-bar"></div>
           <div style="margin-top:16px; display:flex; gap:10px; justify-content:flex-end; align-items:center;">
             <span style="font-size:12px; color:var(--ink-3);">
               Numbers · <strong>AB</strong> · <strong>N*</strong> grace
