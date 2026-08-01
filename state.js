@@ -2558,21 +2558,96 @@ const State = (() => {
       const session = getSession(sessionId);
       if (!session) return { status: 'UNKNOWN', message: 'Session not found', details: { totalSeats: 0, eligibleCount: 0, unexpectedStudents: [], missingStudents: [] } };
 
-      const branchStudents = students.filter(s => !branch || s.branch === branch);
+      const BRANCH_LIST = ['AIDS', 'Civil', 'Computer', 'ECSE', 'Mechanical'];
+
+      // If evaluating all branches combined, run per-branch audits and aggregate
+      if (!branch) {
+        const branchAudits = BRANCH_LIST.map(b => ({
+          branch: b,
+          audit: evaluateSessionAudit(sessionId, b)
+        }));
+
+        const discrepancyBranches  = branchAudits.filter(ba => ba.audit.status === 'DISCREPANCY_FLAGGED');
+        const pendingPriorBranches = branchAudits.filter(ba => ba.audit.status === 'PENDING_PRIOR_DATA');
+        const awaitingPdfBranches   = branchAudits.filter(ba => ba.audit.status === 'AWAITING_PDF');
+        const verifiedBranches      = branchAudits.filter(ba => ba.audit.status === 'VERIFIED_CLEAN');
+
+        let totalSeatsSum = 0;
+        let eligibleCountSum = 0;
+        let allUnexpected = [];
+        let allMissing = [];
+
+        for (const ba of branchAudits) {
+          totalSeatsSum += ba.audit.details?.totalSeats || 0;
+          eligibleCountSum += ba.audit.details?.eligibleCount || 0;
+          allUnexpected.push(...(ba.audit.details?.unexpectedStudents || []));
+          allMissing.push(...(ba.audit.details?.missingStudents || []));
+        }
+
+        if (discrepancyBranches.length > 0) {
+          const bNames = discrepancyBranches.map(ba => ba.branch).join(', ');
+          return {
+            status: 'DISCREPANCY_FLAGGED',
+            message: `⚠️ Eligibility discrepancies found in branch(es): ${bNames}.`,
+            priorHistoryPresent: true,
+            details: { totalSeats: totalSeatsSum, eligibleCount: eligibleCountSum, unexpectedStudents: allUnexpected, missingStudents: allMissing, branchAudits }
+          };
+        }
+
+        if (pendingPriorBranches.length > 0) {
+          const bNames = pendingPriorBranches.map(ba => ba.branch).join(', ');
+          return {
+            status: 'PENDING_PRIOR_DATA',
+            message: `Prior session/semester marks pending for branch(es): ${bNames}.`,
+            priorHistoryPresent: false,
+            details: { totalSeats: totalSeatsSum, eligibleCount: eligibleCountSum, unexpectedStudents: allUnexpected, missingStudents: allMissing, branchAudits }
+          };
+        }
+
+        if (verifiedBranches.length > 0 && awaitingPdfBranches.length > 0) {
+          const vNames = verifiedBranches.map(ba => ba.branch).join(', ');
+          const aNames = awaitingPdfBranches.map(ba => ba.branch).join(', ');
+          return {
+            status: 'PARTIAL_LINKED',
+            message: `${verifiedBranches.length}/5 branches verified (${vNames}). ${awaitingPdfBranches.length} branch(es) awaiting Gazette PDF (${aNames}).`,
+            priorHistoryPresent: true,
+            details: { totalSeats: totalSeatsSum, eligibleCount: eligibleCountSum, verifiedCount: verifiedBranches.length, totalBranches: BRANCH_LIST.length, unexpectedStudents: allUnexpected, missingStudents: allMissing, branchAudits }
+          };
+        }
+
+        if (awaitingPdfBranches.length === BRANCH_LIST.length) {
+          return {
+            status: 'AWAITING_PDF',
+            message: 'Gazette PDF not yet parsed / seat numbers not saved for any branch.',
+            priorHistoryPresent: true,
+            details: { totalSeats: 0, eligibleCount: eligibleCountSum, unexpectedStudents: [], missingStudents: [], branchAudits }
+          };
+        }
+
+        return {
+          status: 'VERIFIED_CLEAN',
+          message: 'All 5 branches verified — all students match eligibility rules.',
+          priorHistoryPresent: true,
+          details: { totalSeats: totalSeatsSum, eligibleCount: eligibleCountSum, unexpectedStudents: allUnexpected, missingStudents: allMissing, branchAudits }
+        };
+      }
+
+      // Single Branch Audit Evaluation
+      const branchStudents = students.filter(s => s.branch === branch);
       const branchUINs = new Set(branchStudents.map(s => s.uin));
 
-      // Get seats specifically saved for THIS session (filtered by branch if specified)
-      const ownSeats = seats.filter(st => st.sessionId === sessionId && (!branch || branchUINs.has(st.uin)));
+      // Get seats specifically saved for THIS session and branch
+      const ownSeats = seats.filter(st => st.sessionId === sessionId && branchUINs.has(st.uin));
       
       // Fallback seats (for revaluation or prelim linking)
-      const fallbackSeats = getSeatsForSessionWithFallback(sessionId).filter(st => !branch || branchUINs.has(st.uin));
+      const fallbackSeats = getSeatsForSessionWithFallback(sessionId).filter(st => branchUINs.has(st.uin));
       const seatUINs = new Set(fallbackSeats.map(s => s.uin));
 
-      // 1. Check if Gazette PDF / Seats have been saved for THIS session
+      // 1. Check if Gazette PDF / Seats have been saved for THIS session and branch
       if (ownSeats.length === 0) {
         return {
           status: 'AWAITING_PDF',
-          message: `Gazette PDF not yet parsed / seat numbers not saved for ${session.name}${branch ? ' (' + branch + ')' : ''}.`,
+          message: `Gazette PDF not yet parsed / seat numbers not saved for ${session.name} (${branch}).`,
           priorHistoryPresent: true,
           details: {
             totalSeats: 0,
@@ -2588,14 +2663,14 @@ const State = (() => {
       let priorHistoryPresent = true;
       if (session.entryType === 'Revaluation_Gazette') {
         const prelimId = session.linkedPrelimSessionId;
-        const prelimRecords = ledger.filter(r => r.examSession === prelimId && (!branch || branchUINs.has(r.uin)));
+        const prelimRecords = ledger.filter(r => r.examSession === prelimId && branchUINs.has(r.uin));
         if (!prelimId || prelimRecords.length === 0) {
           priorHistoryPresent = false;
         }
       } else if (sem > 1) {
         const priorSemRecords = ledger.filter(r => 
           Number(r.semester) === (sem - 1) && 
-          (!branch || branchUINs.has(r.uin))
+          branchUINs.has(r.uin)
         );
         if (priorSemRecords.length === 0) {
           priorHistoryPresent = false;

@@ -6120,8 +6120,12 @@ const typeLabel = s.entryType ? s.entryType.replace(/_/g, ' ') : 'Uni Portal Gaz
         } else if (audit && audit.status === 'DISCREPANCY_FLAGGED') {
           const count = audit.details?.unexpectedStudents?.length || 0;
           auditBadge = `<span class="badge badge-fail" title="${UI.esc(audit.message || '')}">🔴 Discrepancy (${count})</span>`;
+        } else if (audit && audit.status === 'PARTIAL_LINKED') {
+          const vCount = audit.details?.verifiedCount || 0;
+          const tCount = audit.details?.totalBranches || 5;
+          auditBadge = `<span class="badge badge-pending" style="background:rgba(245,158,11,0.15);color:var(--warning);" title="${UI.esc(audit.message || '')}">🟡 Partial (${vCount}/${tCount})</span>`;
         } else if (audit && audit.status === 'AWAITING_PDF') {
-          auditBadge = '<span class="badge badge-regular" title="Gazette PDF not yet parsed / seat numbers not saved">📝 Awaiting PDF</span>';
+          auditBadge = '<span class="badge badge-regular" title="Gazette PDF not yet parsed / seat numbers not saved for any branch">📝 Awaiting PDF</span>';
         }
       }
     } catch(err) {
