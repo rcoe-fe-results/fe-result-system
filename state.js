@@ -2530,6 +2530,7 @@ const State = (() => {
       const semStart = session.semester === 1 ? sem1Start : sem2Start;
       const sessionIsReachable = sessionScore >= semStart;
 
+      const hasKT = !!ktSubjectsByStudent[s.uin] && sessionIsReachable;
       const hasSeatInThisSession = seats.some(st => st.uin === s.uin && st.sessionId === session.id);
 
       if (!isFresh && !hasKT && !hasRecordInThisSession && !hasSeatInThisSession) continue;
