@@ -129,6 +129,10 @@ function _meInitAdhoc() {
   meAdhocState = { student: null, session: null };
   document.getElementById('me-adhoc-student-panel').classList.add('hidden');
   document.getElementById('me-adhoc-session-picker').innerHTML = '';
+  const adhocFooter = document.getElementById('me-adhoc-footer');
+  if (adhocFooter) adhocFooter.classList.add('hidden');
+  const compBar = document.getElementById('me-adhoc-computed-bar');
+  if (compBar) compBar.innerHTML = '';
   _pdfHideSnippetPanel('adhoc');
 
   searchInput.addEventListener('input', _debounce(() => {
@@ -680,6 +684,10 @@ function _meAdhocSelectStudent(uin, matchedSeat) {
   document.getElementById('me-adhoc-student-panel').classList.remove('hidden');
   document.getElementById('me-adhoc-grid').innerHTML = '';
   document.getElementById('me-adhoc-student-info').innerHTML = _meStudentInfoHtml(student, null);
+  const adhocFooter = document.getElementById('me-adhoc-footer');
+  if (adhocFooter) adhocFooter.classList.add('hidden');
+  const compBar = document.getElementById('me-adhoc-computed-bar');
+  if (compBar) compBar.innerHTML = '';
 }
 
 function _meAdhocShowAutoSession(session, seatNum) {
@@ -1076,7 +1084,9 @@ function _meAdhocRenderGrid() {
   // Show gazette snippet
   _pdfShowSnippet(student, session, 'adhoc');
 
-  // Update live computed summary bar above save button
+  // Un-hide save footer & update live computed summary bar
+  const adhocFooter = document.getElementById('me-adhoc-footer');
+  if (adhocFooter) adhocFooter.classList.remove('hidden');
   _meUpdateComputedSummaryBar('adhoc');
 }
 
