@@ -129,6 +129,7 @@ function _meInitAdhoc() {
   meAdhocState = { student: null, session: null };
   document.getElementById('me-adhoc-student-panel').classList.add('hidden');
   document.getElementById('me-adhoc-session-picker').innerHTML = '';
+  _pdfHideSnippetPanel('adhoc');
 
   searchInput.addEventListener('input', _debounce(() => {
     const q = searchInput.value.trim();
@@ -620,6 +621,18 @@ function _pdfWireSnippetControls(student, session, panelId) {
   }
 }
 
+// Hide snippet panel and clear canvas for a given panelId ('adhoc' | 'queue')
+function _pdfHideSnippetPanel(panelId) {
+  const panelEl  = document.getElementById(`me-${panelId}-pdf-snippet`);
+  const canvasEl = document.getElementById(`me-${panelId}-pdf-canvas`);
+  if (panelEl) panelEl.classList.add('pdf-snippet-hidden');
+  if (canvasEl) {
+    const ctx = canvasEl.getContext('2d');
+    if (ctx) ctx.clearRect(0, 0, canvasEl.width, canvasEl.height);
+    canvasEl.style.display = 'none';
+  }
+}
+
 // Prefetch PDF for queue mode (called at queue load time)
 async function _pdfPrefetchForQueue(session, branch) {
   await _pdfFetchAndParse(session, branch);
@@ -628,6 +641,7 @@ async function _pdfPrefetchForQueue(session, branch) {
 function _meAdhocSelectStudent(uin, matchedSeat) {
   const student = State.getStudent(uin);
   if (!student) return;
+  _pdfHideSnippetPanel('adhoc');
   meAdhocState.student = student;
   document.getElementById('me-adhoc-results').innerHTML = '';
   document.getElementById('me-adhoc-search').value = student.name;
