@@ -1603,6 +1603,9 @@ function _meQueueRenderCard() {
           ${isKT
             ? '<span class="badge badge-kt" style="margin-left:8px;">KT</span>'
             : '<span class="badge badge-regular" style="margin-left:8px;">Regular</span>'}
+          ${student.isUnexpected
+            ? '<span class="badge badge-pending" style="margin-left:8px;background:rgba(245,158,11,0.15);color:var(--warning);" title="Found in PDF seats, awaiting/unverified by eligibility rules">⚠️ Flagged (Unverified)</span>'
+            : ''}
         </div>
         <div class="sc-meta">UIN: ${UI.esc(student.uin)} · PRN/ERN: ${UI.esc(student.prn || '—')} · Batch ${UI.esc(student.batchYear)}</div>
       </div>
@@ -7576,6 +7579,34 @@ function _gazProcOnFilterChange() {
   
   const parseBtn = document.getElementById('gaz-proc-parse-btn');
   if (parseBtn) parseBtn.disabled = !ready;
+
+  const auditBanner = document.getElementById('gaz-proc-audit-banner');
+  if (sessId && branch && auditBanner && State.evaluateSessionAudit) {
+    const audit = State.evaluateSessionAudit(sessId, branch);
+    let badgeClass = 'badge-pass';
+    let icon = '🟢';
+    if (audit.status === 'PENDING_PRIOR_DATA') {
+      badgeClass = 'badge-pending';
+      icon = '🟡';
+    } else if (audit.status === 'DISCREPANCY_FLAGGED') {
+      badgeClass = 'badge-fail';
+      icon = '🔴';
+    }
+    auditBanner.innerHTML = `
+      <div style="padding:12px 16px; border-radius:var(--radius); border:1px solid var(--border); background:var(--surface-2); display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+        <div>
+          <strong>${icon} Session Audit Status:</strong> <span class="badge ${badgeClass}">${audit.status}</span>
+          <div style="font-size:12px; color:var(--ink-2); margin-top:4px;">${UI.esc(audit.message)}</div>
+        </div>
+        <div style="font-size:12px; color:var(--ink-3);">
+          Seats Saved: <strong>${audit.details.totalSeats}</strong> | Eligible Roster: <strong>${audit.details.eligibleCount}</strong>
+        </div>
+      </div>
+    `;
+    auditBanner.classList.remove('hidden');
+  } else if (auditBanner) {
+    auditBanner.classList.add('hidden');
+  }
 
   document.getElementById('gaz-proc-preview')?.classList.add('hidden');
   document.getElementById('gaz-proc-report')?.classList.add('hidden');

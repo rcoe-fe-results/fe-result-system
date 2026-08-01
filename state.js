@@ -2530,18 +2530,80 @@ const State = (() => {
       const semStart = session.semester === 1 ? sem1Start : sem2Start;
       const sessionIsReachable = sessionScore >= semStart;
 
-      const hasKT = !!ktSubjectsByStudent[s.uin] && sessionIsReachable;
+      const hasSeatInThisSession = seats.some(st => st.uin === s.uin && st.sessionId === session.id);
 
-      if (!isFresh && !hasKT && !hasRecordInThisSession) continue;
+      if (!isFresh && !hasKT && !hasRecordInThisSession && !hasSeatInThisSession) continue;
+
+      const isUnexpected = !isFresh && !hasKT && !hasRecordInThisSession && hasSeatInThisSession;
 
       eligible.set(s.uin, {
         ...s,
         attemptFlag:  hasKT ? 'KT' : 'Regular',
         ktSubjects:   ktSubjectsByStudent[s.uin] || [],
+        isUnexpected,
       });
     }
 
     return [...eligible.values()];
+  }
+
+  // Dynamic State-Driven Session Audit Engine
+  function evaluateSessionAudit(sessionId, branch) {
+    const session = getSession(sessionId);
+    if (!session) return { status: 'UNKNOWN', message: 'Session not found', details: {} };
+
+    const branchStudents = students.filter(s => !branch || s.branch === branch);
+    const sessionSeats = getSeatsForSessionWithFallback(sessionId);
+    const seatUINs = new Set(sessionSeats.map(s => s.uin));
+
+    const sem = session.semester;
+    let priorHistoryPresent = true;
+    if (sem > 1) {
+      const priorSemRecords = ledger.filter(r => 
+        Number(r.semester) === (sem - 1) && 
+        (!branch || branchStudents.some(s => s.uin === r.uin))
+      );
+      if (priorSemRecords.length === 0) {
+        priorHistoryPresent = false;
+      }
+    }
+
+    const eligibleList = getEligibleStudents(session, branch);
+    const unexpectedStudents = eligibleList.filter(s => s.isUnexpected);
+
+    // Rule-based eligible students (fresh or KT)
+    const ruleEligibleStudents = eligibleList.filter(s => !s.isUnexpected);
+    const missingStudents = ruleEligibleStudents.filter(s => 
+      !seatUINs.has(s.uin) && !ledger.some(r => r.uin === s.uin && r.examSession === sessionId)
+    );
+
+    let status = 'VERIFIED_CLEAN';
+    let message = 'All students match eligibility rules.';
+
+    if (unexpectedStudents.length > 0) {
+      if (!priorHistoryPresent) {
+        status = 'PENDING_PRIOR_DATA';
+        message = `Session has ${unexpectedStudents.length} student(s) in PDF seats, but prior semester (Sem ${sem - 1}) marks are not yet entered to verify eligibility.`;
+      } else {
+        status = 'DISCREPANCY_FLAGGED';
+        message = `⚠️ Found ${unexpectedStudents.length} student(s) in PDF seats who are ineligible under rules!`;
+      }
+    } else if (!priorHistoryPresent) {
+      status = 'PENDING_PRIOR_DATA';
+      message = `Awaiting prior semester (Sem ${sem - 1}) marks entry.`;
+    }
+
+    return {
+      status,
+      message,
+      priorHistoryPresent,
+      details: {
+        totalSeats: sessionSeats.length,
+        eligibleCount: eligibleList.length,
+        unexpectedStudents,
+        missingStudents
+      }
+    };
   }
 
   // ── Divisions ─────────────────────────────────────────────
@@ -2566,7 +2628,7 @@ const State = (() => {
     loadAll, reload,
     getStudents, getStudent, searchStudents,
     getSessions, getSession, getSessionsForBatch, addSession, lockSession, linkPrelimSession,
-    getEligibleStudents,
+    getEligibleStudents, evaluateSessionAudit,
     computeStudentAcademics,
     getStudentResults, getActiveKTSubjects, getKTEligibleStudents,
     getLatestEntryForSubject, getLedgerForStudent,
