@@ -6114,18 +6114,18 @@ const typeLabel = s.entryType ? s.entryType.replace(/_/g, ' ') : 'Uni Portal Gaz
       if (State.evaluateSessionAudit) {
         const audit = State.evaluateSessionAudit(s.id, '');
         if (audit && audit.status === 'VERIFIED_CLEAN') {
-          auditBadge = '<span class="badge badge-pass" title="All students match eligibility rules">🟢 Verified</span>';
+          auditBadge = `<span class="badge badge-pass" style="cursor:pointer;" onclick="_adminShowSessionAuditModal('${s.id}')" title="Click to view branch audit details">🟢 Verified</span>`;
         } else if (audit && audit.status === 'PENDING_PRIOR_DATA') {
-          auditBadge = `<span class="badge badge-pending" title="${UI.esc(audit.message || '')}">🟡 Pending History</span>`;
+          auditBadge = `<span class="badge badge-pending" style="cursor:pointer;" onclick="_adminShowSessionAuditModal('${s.id}')" title="${UI.esc(audit.message || '')}">🟡 Pending History</span>`;
         } else if (audit && audit.status === 'DISCREPANCY_FLAGGED') {
           const count = audit.details?.unexpectedStudents?.length || 0;
-          auditBadge = `<span class="badge badge-fail" title="${UI.esc(audit.message || '')}">🔴 Discrepancy (${count})</span>`;
+          auditBadge = `<span class="badge badge-fail" style="cursor:pointer;" onclick="_adminShowSessionAuditModal('${s.id}')" title="${UI.esc(audit.message || '')}">🔴 Discrepancy (${count})</span>`;
         } else if (audit && audit.status === 'PARTIAL_LINKED') {
           const vCount = audit.details?.verifiedCount || 0;
           const tCount = audit.details?.totalBranches || 5;
-          auditBadge = `<span class="badge badge-pending" style="background:rgba(245,158,11,0.15);color:var(--warning);" title="${UI.esc(audit.message || '')}">🟡 Partial (${vCount}/${tCount})</span>`;
+          auditBadge = `<span class="badge badge-pending" style="cursor:pointer;background:rgba(245,158,11,0.15);color:var(--warning);" onclick="_adminShowSessionAuditModal('${s.id}')" title="${UI.esc(audit.message || '')}">🟡 Partial (${vCount}/${tCount})</span>`;
         } else if (audit && audit.status === 'AWAITING_PDF') {
-          auditBadge = '<span class="badge badge-regular" title="Gazette PDF not yet parsed / seat numbers not saved for any branch">📝 Awaiting PDF</span>';
+          auditBadge = `<span class="badge badge-regular" style="cursor:pointer;" onclick="_adminShowSessionAuditModal('${s.id}')" title="Click to view branch status">📝 Awaiting PDF</span>`;
         }
       }
     } catch(err) {
@@ -6144,6 +6144,86 @@ const typeLabel = s.entryType ? s.entryType.replace(/_/g, ' ') : 'Uni Portal Gaz
       <td class="muted" style="font-size:11px;">${UI.esc(s.createdBy)}</td>
     </tr>`;
   }).join('');
+}
+
+function _adminShowSessionAuditModal(sessionId) {
+  const session = State.getSession(sessionId);
+  if (!session) return;
+
+  const audit = State.evaluateSessionAudit(sessionId, '');
+  const branchAudits = audit?.details?.branchAudits || [];
+  const unexpected = audit?.details?.unexpectedStudents || [];
+
+  let html = `
+    <div style="margin-bottom:16px;">
+      <div style="font-size:13px; color:var(--ink-2); margin-bottom:12px; line-height:1.5;">${UI.esc(audit.message || '')}</div>
+      <div style="font-weight:700; font-size:11px; text-transform:uppercase; color:var(--ink-3); margin-bottom:8px;">Branch Audit Statuses (Click to Select):</div>
+      <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:16px;">
+  `;
+
+  for (const ba of branchAudits) {
+    let icon = '🟢';
+    let bg = 'rgba(34,197,94,0.1)';
+    let color = 'var(--pass)';
+    if (ba.audit.status === 'AWAITING_PDF') { icon = '📝'; bg = 'var(--surface-2)'; color = 'var(--ink-2)'; }
+    else if (ba.audit.status === 'PENDING_PRIOR_DATA') { icon = '🟡'; bg = 'rgba(245,158,11,0.1)'; color = 'var(--warning)'; }
+    else if (ba.audit.status === 'DISCREPANCY_FLAGGED') { icon = '🔴'; bg = 'rgba(239,68,68,0.1)'; color = 'var(--fail)'; }
+
+    html += `
+      <div onclick="_gazProcSelectSessionBranch('${sessionId}', '${ba.branch}')" style="cursor:pointer; padding:6px 12px; border-radius:6px; border:1px solid var(--border); background:${bg}; color:${color}; font-size:12px; font-weight:600; display:flex; align-items:center; gap:6px;">
+        <span>${icon} ${UI.esc(ba.branch)}: ${ba.audit.status}</span>
+      </div>
+    `;
+  }
+
+  html += `</div></div>`;
+
+  if (unexpected.length > 0) {
+    html += `
+      <div style="font-weight:700; font-size:13px; color:var(--fail); margin-bottom:8px;">
+        🔴 Flagged Discrepancy Students (${unexpected.length}):
+      </div>
+      <div style="max-height:220px; overflow-y:auto; border:1px solid var(--border); border-radius:var(--radius); margin-bottom:16px;">
+        <table class="audit-table" style="width:100%;">
+          <thead>
+            <tr><th>Seat No</th><th>Branch</th><th>UIN</th><th>Name</th><th>Status / Note</th></tr>
+          </thead>
+          <tbody>
+            ${unexpected.map(s => `
+              <tr style="background:rgba(239,68,68,0.05);">
+                <td style="font-family:'DM Mono',monospace; font-weight:600; color:var(--brand);">${UI.esc(s.seatNo || '—')}</td>
+                <td><span class="badge badge-regular">${UI.esc(s.branch)}</span></td>
+                <td><span class="subj-code-small">${UI.esc(s.uin)}</span></td>
+                <td>${UI.esc(s.name)}</td>
+                <td style="font-size:11px; color:var(--fail);">${UI.esc(s.isUnexpected ? 'In PDF seats, ineligible by rules' : 'Excluded')}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+  } else {
+    html += `<div style="font-size:12px; color:var(--pass); padding:10px 14px; background:rgba(34,197,94,0.08); border-radius:6px; border:1px solid rgba(34,197,94,0.2); margin-bottom:16px;">
+      ✓ No student discrepancies flagged for this session.
+    </div>`;
+  }
+
+  UI.showModal(`Session Audit: ${session.name}`, html, {
+    confirmLabel: 'Open in Gazette Processor →',
+    onConfirm: () => {
+      _gazProcSelectSessionBranch(sessionId, '');
+    }
+  });
+}
+
+function _gazProcSelectSessionBranch(sessionId, branch) {
+  UI.hideModal();
+  const sessEl = document.getElementById('gaz-proc-session');
+  const brEl   = document.getElementById('gaz-proc-branch');
+  if (sessEl) { sessEl.value = sessionId; }
+  if (brEl) { brEl.value = branch || ''; }
+  _gazProcOnFilterChange();
+  document.getElementById('gaz-proc-session')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
 
 async function _adminLockSession() {
@@ -7629,6 +7709,20 @@ function _gazProcOnFilterChange() {
       const message = audit?.message || '';
       const status = audit?.status || 'UNKNOWN';
 
+      let branchChipsHtml = '';
+      if (!branch && audit?.details?.branchAudits) {
+        branchChipsHtml = `<div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:10px;">` +
+          audit.details.branchAudits.map(ba => {
+            let bIcon = '🟢';
+            let bClass = 'badge-pass';
+            if (ba.audit.status === 'AWAITING_PDF') { bIcon = '📝'; bClass = 'badge-regular'; }
+            else if (ba.audit.status === 'PENDING_PRIOR_DATA') { bIcon = '🟡'; bClass = 'badge-pending'; }
+            else if (ba.audit.status === 'DISCREPANCY_FLAGGED') { bIcon = '🔴'; bClass = 'badge-fail'; }
+            return `<span onclick="_gazProcSelectSessionBranch('${sessId}', '${ba.branch}')" style="cursor:pointer;" class="badge ${bClass}" title="Click to filter by ${ba.branch}">${bIcon} ${ba.branch}: ${ba.audit.status}</span>`;
+          }).join('') +
+        `</div>`;
+      }
+
       auditBanner.innerHTML = `
         <div style="padding:14px 18px; border-radius:var(--radius); border:1px solid var(--border); background:var(--surface-2); display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
           <div>
@@ -7637,8 +7731,9 @@ function _gazProcOnFilterChange() {
               <span class="badge ${badgeClass}" style="font-size:12px;">${status}</span>
             </div>
             <div style="font-size:13px; color:var(--ink-2); margin-top:6px; line-height:1.4;">${UI.esc(message)}</div>
+            ${branchChipsHtml}
           </div>
-          <div style="font-size:12px; color:var(--ink-3); background:var(--surface-1); padding:8px 12px; border-radius:6px; border:1px solid var(--border);">
+          <div style="font-size:12px; color:var(--ink-3); background:var(--surface-1); padding:8px 12px; border-radius:6px; border:1px solid var(--border); align-self:flex-start;">
             Seats Saved: <strong>${totalSeats}</strong> | Eligible Roster: <strong>${eligibleCount}</strong>
           </div>
         </div>
