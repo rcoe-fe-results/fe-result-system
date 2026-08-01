@@ -1120,12 +1120,14 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
 }
 .pdf-snippet-toggle:hover { background: var(--border); color: var(--ink); }
 .pdf-snippet-body {
-  overflow-x: auto;
+  overflow: hidden;
   padding: 8px;
   text-align: center;
 }
 .pdf-snippet-body canvas {
   display: block;
+  max-width: 100%;
+  height: auto;
   margin: 0 auto;
   border-radius: 4px;
 }

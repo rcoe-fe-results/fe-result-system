@@ -335,76 +335,137 @@ async function _pdfFetchAndParse(session, branch) {
   }
 }
 
-// Find the student's ERN in parsedPages, return crop bounds
-// Returns { pageIndex, cropTop, cropBottom } or null
-function _pdfFindStudentCrop(parsedPages, prn) {
-  if (!prn) return null;
+// Find the student's ERN / Seat No / Name in parsedPages, return crop bounds
+// Returns { pageIndex, sepAboveY, sepBelowY, pageH, PADDING } or null
+function _pdfFindStudentCrop(parsedPages, prn, seatNo, studentName) {
+  if (!prn && !seatNo && !studentName) return null;
 
-  const SEPARATOR_RE = /^[-\s]{5,}$/;
+  const rawPRN    = String(prn || '').trim().toUpperCase();
+  const cleanPRN  = rawPRN.replace(/[^A-Z0-9]/g, '');
+  const digitsPRN = rawPRN.replace(/\D/g, '');
+
+  const rawSeat   = String(seatNo || '').trim().toUpperCase();
+  const cleanSeat = rawSeat.replace(/[^A-Z0-9]/g, '');
+
+  const nameTokens = String(studentName || '')
+    .toUpperCase()
+    .replace(/[^A-Z0-9\s]/g, '')
+    .split(/\s+/)
+    .filter(t => t.length >= 3);
+
+  const SEPARATOR_RE = /^[\s\-_=*]{3,}$/;
   const PADDING = 6;
+
+  let bestMatch = null; // { pi, y, score, pageH, items }
 
   for (let pi = 0; pi < parsedPages.length; pi++) {
     const { items, viewport } = parsedPages[pi];
     const pageH = viewport.height;
 
-    // Find ERN match using same flexible logic as gazette processor
-    let ernItem = null;
-    for (const item of items) {
-      const rawPRN    = String(prn).trim().toUpperCase();
-      const cleanPRN  = rawPRN.replace(/[^A-Z0-9]/g, '');
-      const digitsPRN = rawPRN.replace(/\D/g, '');
-      const rawERN    = item.str.trim().toUpperCase();
-      const cleanERN  = rawERN.replace(/[^A-Z0-9]/g, '');
-      const digitsERN = rawERN.replace(/\D/g, '');
+    const sortedItems = [...items].sort((a, b) => (b.y - a.y) || (a.x - b.x));
 
-      if (
-        cleanPRN === cleanERN ||
-        rawPRN   === rawERN   ||
-        (digitsPRN.length >= 10 && digitsERN.length >= 10 && digitsPRN === digitsERN) ||
-        (cleanPRN.length  >= 10 && cleanERN.length  >= 10 &&
-          (cleanERN.includes(cleanPRN) || cleanPRN.includes(cleanERN)))
-      ) {
-        ernItem = item;
-        break;
+    for (let i = 0; i < sortedItems.length; i++) {
+      const item = sortedItems[i];
+      const rawItem = item.str.trim().toUpperCase();
+      const cleanItem = rawItem.replace(/[^A-Z0-9]/g, '');
+      const digitsItem = rawItem.replace(/\D/g, '');
+
+      let score = 0;
+
+      // Tier 1: 100% Exact ERN match
+      if (cleanPRN && cleanPRN.length >= 10) {
+        if (cleanItem === cleanPRN || rawItem === rawPRN || (digitsPRN.length >= 10 && digitsItem === digitsPRN)) {
+          score += 100;
+        }
+      }
+
+      // Tier 2: Line-wrapped ERN match (joining current item with next item vertically close)
+      if (score < 100 && cleanPRN && cleanPRN.length >= 10 && digitsPRN.length >= 10) {
+        if (i < sortedItems.length - 1) {
+          const nextItem = sortedItems[i + 1];
+          if (Math.abs(item.y - nextItem.y) < 18) {
+            const combinedDigits = digitsItem + nextItem.str.replace(/\D/g, '');
+            if (combinedDigits === digitsPRN) {
+              score += 90;
+            }
+          }
+        }
+      }
+
+      // Tier 3: 100% Seat Number match
+      if (cleanSeat && cleanSeat.length >= 4) {
+        if (cleanItem === cleanSeat || rawItem === rawSeat || digitsItem === cleanSeat) {
+          score += 60;
+        }
+      }
+
+      // Tier 4: Student Name Token Match
+      if (nameTokens.length > 0) {
+        let matchedNameCount = 0;
+        for (const token of nameTokens) {
+          if (rawItem.includes(token)) matchedNameCount++;
+        }
+        if (matchedNameCount >= 2) score += 40;
+        else if (matchedNameCount === 1) score += 20;
+      }
+
+      // Check adjacent item text on same line for seat or name boost if ERN was partial
+      if (score > 0 && score < 100) {
+        for (let j = Math.max(0, i - 5); j <= Math.min(sortedItems.length - 1, i + 5); j++) {
+          if (i === j) continue;
+          const neighbor = sortedItems[j];
+          if (Math.abs(neighbor.y - item.y) < 12) {
+            const cleanN = neighbor.str.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+            if (cleanSeat && cleanSeat.length >= 4 && cleanN === cleanSeat) {
+              score += 35;
+            }
+            if (cleanPRN && cleanPRN.length >= 10 && cleanN === cleanPRN) {
+              score += 40;
+            }
+          }
+        }
+      }
+
+      if (score >= 60 && (!bestMatch || score > bestMatch.score)) {
+        bestMatch = { pi, y: item.y, score, pageH, items };
       }
     }
-
-    if (!ernItem) continue;
-
-    // PDF y-coordinates: 0 = bottom of page, pageH = top
-    // pdfjsLib text items use PDF coordinate space
-    const ernY = ernItem.y;
-
-    // Find separator above (highest y below ernY boundary going upward)
-    // In PDF coords, "above" visually = higher y value
-    let sepAboveY = pageH; // default to page top
-    for (const item of items) {
-      if (SEPARATOR_RE.test(item.str) && item.y > ernY && item.y < sepAboveY) {
-        sepAboveY = item.y;
-      }
-    }
-
-    // Find separator below (lowest y above ernY boundary going downward)
-    // In PDF coords, "below" visually = lower y value
-    let sepBelowY = 0; // default to page bottom
-    for (const item of items) {
-      if (SEPARATOR_RE.test(item.str) && item.y < ernY && item.y > sepBelowY) {
-        sepBelowY = item.y;
-      }
-    }
-
-    // cropTop and cropBottom in PDF coordinate space (y from bottom)
-    // We'll convert to canvas pixel space during render
-    return {
-      pageIndex:  pi,
-      sepAboveY,  // upper separator y (PDF coords, from bottom)
-      sepBelowY,  // lower separator y (PDF coords, from bottom)
-      pageH,
-      PADDING,
-    };
   }
 
-  return null; // ERN not found
+  if (!bestMatch) return null;
+
+  const { pi, y: matchY, pageH, items } = bestMatch;
+
+  let sepAboveY = pageH;
+  for (const item of items) {
+    const isDivider = SEPARATOR_RE.test(item.str) || item.str.includes('---') || item.str.includes('___') || item.str.includes('===');
+    if (isDivider && item.y > matchY && item.y < sepAboveY) {
+      sepAboveY = item.y;
+    }
+  }
+
+  let sepBelowY = 0;
+  for (const item of items) {
+    const isDivider = SEPARATOR_RE.test(item.str) || item.str.includes('---') || item.str.includes('___') || item.str.includes('===');
+    if (isDivider && item.y < matchY && item.y > sepBelowY) {
+      sepBelowY = item.y;
+    }
+  }
+
+  if (sepAboveY === pageH || (sepAboveY - matchY) > 200) {
+    sepAboveY = Math.min(pageH, matchY + 120);
+  }
+  if (sepBelowY === 0 || (matchY - sepBelowY) > 200) {
+    sepBelowY = Math.max(0, matchY - 60);
+  }
+
+  return {
+    pageIndex: pi,
+    sepAboveY,
+    sepBelowY,
+    pageH,
+    PADDING,
+  };
 }
 
 // Render the cropped snippet to a given canvas element
@@ -461,14 +522,16 @@ async function _pdfShowSnippet(student, session, panelId) {
 
   const branch   = student.branch;
   const cacheKey = session.id + '_' + branch;
-  const prn      = student.prn;
+  const prn      = student.prn || student.ern || '';
+  const seatNo   = student.seatNo || (typeof State !== 'undefined' && State.getSeatNumber ? State.getSeatNumber(student.uin, session.id) : '') || '';
+  const name     = student.name || student.studentName || '';
 
   try {
     const ok = await _pdfFetchAndParse(session, branch);
     if (!ok) { panelEl.classList.add('pdf-snippet-hidden'); return; }
 
     const cached = _pdfSnippetCache[cacheKey];
-    const crop   = _pdfFindStudentCrop(cached.parsedPages, prn);
+    const crop   = _pdfFindStudentCrop(cached.parsedPages, prn, seatNo, name);
     if (!crop)   { panelEl.classList.add('pdf-snippet-hidden'); return; }
 
     await _pdfRenderSnippet(cacheKey, crop, canvasEl);
