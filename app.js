@@ -7671,15 +7671,70 @@ function _gazetteProcessorInit() {
   _gazProcOnFilterChange();
 }
 
+function _gazProcCheckFilenameMatch(session, branch, fileName) {
+  if (!session || !branch || !fileName) return { matched: true };
+
+  const normFile   = fileName.toLowerCase().replace(/\.pdf$/i, '').replace(/[^a-z0-9]/g, ' ');
+  const normBranch = branch.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+  // 1. Branch check
+  const branchMatched = normFile.split(/\s+/).includes(normBranch) || normFile.includes(normBranch);
+
+  // 2. Session check (token match)
+  const sessionNameNorm = session.name.toLowerCase().replace(/[^a-z0-9]/g, ' ');
+  const sessionTokens   = sessionNameNorm.split(/\s+/).filter(t => t.length > 0);
+  const matchedTokens   = sessionTokens.filter(t => normFile.includes(t));
+
+  const sessionRatio   = sessionTokens.length > 0 ? (matchedTokens.length / sessionTokens.length) : 1;
+  const sessionMatched = sessionRatio >= 0.7;
+
+  if (branchMatched && sessionMatched) {
+    return { matched: true };
+  }
+
+  const reasons = [];
+  if (!branchMatched) {
+    reasons.push(`Selected branch "${branch}" was not found in filename.`);
+  }
+  if (!sessionMatched) {
+    const missingTokens = sessionTokens.filter(t => !normFile.includes(t));
+    reasons.push(`Session details (${missingTokens.map(t => `"${t}"`).join(', ')}) missing from filename.`);
+  }
+
+  return {
+    matched: false,
+    reason: reasons.join(' '),
+    branchMatched,
+    sessionMatched
+  };
+}
+
 function _gazProcOnFilterChange() {
   try {
     const sessId = document.getElementById('gaz-proc-session')?.value;
     const branch = document.getElementById('gaz-proc-branch')?.value || '';
     const file   = document.getElementById('gaz-proc-file')?.files[0];
+    const session = State.getSession(sessId);
     const ready  = !!(sessId && branch && file);
     
     const parseBtn = document.getElementById('gaz-proc-parse-btn');
     if (parseBtn) parseBtn.disabled = !ready;
+
+    // Live inline warning check
+    const fileWarnEl = document.getElementById('gaz-proc-file-warn');
+    if (fileWarnEl) {
+      if (ready && session) {
+        const matchRes = _gazProcCheckFilenameMatch(session, branch, file.name);
+        if (!matchRes.matched) {
+          fileWarnEl.innerHTML = `<span>⚠️ <strong>Filename Warning:</strong> Uploaded file "${UI.esc(file.name)}" does not match selected session "${UI.esc(session.name)}" and branch "${UI.esc(branch)}".</span>`;
+          fileWarnEl.classList.remove('hidden');
+        } else {
+          fileWarnEl.classList.add('hidden');
+        }
+      } else {
+        fileWarnEl.classList.add('hidden');
+      }
+    }
 
     const auditBanner = document.getElementById('gaz-proc-audit-banner');
     if (sessId && auditBanner && State.evaluateSessionAudit) {
@@ -7747,132 +7802,6 @@ function _gazProcOnFilterChange() {
   }
 }
 
-// Helper to match student.prn against extracted PDF ERN records flexibly
-function _matchStudentPRN(studentPRN, records) {
-  if (!studentPRN) return null;
-  const rawPRN    = String(studentPRN).trim().toUpperCase();
-  const cleanPRN  = rawPRN.replace(/[^A-Z0-9]/g, '');
-  const digitsPRN = rawPRN.replace(/\D/g, '');
-
-  for (const r of records) {
-    const rawERN    = String(r.ern).trim().toUpperCase();
-    const cleanERN  = rawERN.replace(/[^A-Z0-9]/g, '');
-    const digitsERN = rawERN.replace(/\D/g, '');
-
-    // 1. Exact or cleaned alphanumeric match
-    if (cleanPRN === cleanERN || rawPRN === rawERN) return r;
-    // 2. Pure digits match (if length >= 10)
-    if (digitsPRN.length >= 10 && digitsERN.length >= 10 && digitsPRN === digitsERN) return r;
-    // 3. Substring match (e.g., 0341120240211669 inside MU0341120240211669 or vice versa)
-    if (cleanPRN.length >= 10 && cleanERN.length >= 10 && (cleanERN.includes(cleanPRN) || cleanPRN.includes(cleanERN))) return r;
-  }
-  return null;
-}
-
-async function _gazProcExtractFromPDF(file) {
-  if (!window.pdfjsLib) {
-    await new Promise((resolve, reject) => {
-      const script = document.createElement('script');
-      script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
-      script.onload = resolve;
-      script.onerror = reject;
-      document.head.appendChild(script);
-    });
-    window.pdfjsLib.GlobalWorkerOptions.workerSrc =
-      'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-  }
-
-  const arrayBuffer = await file.arrayBuffer();
-  const pdf         = await window.pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-  const numPages    = pdf.numPages;
-
-  const records = []; // [{ ern, seatNo, pageNo }]
-
-  for (let pageNum = 1; pageNum <= numPages; pageNum++) {
-    const page    = await pdf.getPage(pageNum);
-    const content = await page.getTextContent();
-    const items   = content.items;
-
-    // Line reconstruction: Group text items sharing similar vertical y-position (within 3.5pt)
-    const lineBuckets = [];
-    for (const item of items) {
-      const str = (item.str || '').trim();
-      if (!str) continue;
-      const x = item.transform[4];
-      const y = item.transform[5];
-
-      let bucket = lineBuckets.find(b => Math.abs(b.y - y) <= 3.5);
-      if (!bucket) {
-        bucket = { y, items: [] };
-        lineBuckets.push(bucket);
-      }
-      bucket.items.push({ str, x, y });
-    }
-
-    // Sort lines top to bottom (y descending in PDF coordinates)
-    lineBuckets.sort((a, b) => b.y - a.y);
-
-    const lineData = lineBuckets.map(b => {
-      b.items.sort((i1, i2) => i1.x - i2.x);
-      const textWithSpaces = b.items.map(i => i.str).join(' ');
-      const textCompact    = b.items.map(i => i.str).join('');
-      const minX           = Math.min(...b.items.map(i => i.x));
-      return { y: b.y, textWithSpaces, textCompact, minX };
-    });
-
-    const ernRegexes = [
-      /MU\d{10,18}/gi,
-      /\b20\d{14,16}\b/g,
-      /\b\d{15,17}\b/g,
-    ];
-    const seatRegex = /\b\d{6,8}\b/g;
-
-    const pageERNs  = [];
-    const pageSeats = [];
-
-    for (const l of lineData) {
-      // Find ERN matches in space-separated and compact text
-      for (const regex of ernRegexes) {
-        const matches1 = l.textWithSpaces.match(regex);
-        if (matches1) {
-          for (const m of matches1) pageERNs.push({ ern: m, y: l.y });
-        }
-        const matches2 = l.textCompact.match(regex);
-        if (matches2) {
-          for (const m of matches2) pageERNs.push({ ern: m, y: l.y });
-        }
-      }
-
-      // Find seat number matches (leftmost column minX < 120)
-      if (l.minX < 120) {
-        const seatMatches = l.textWithSpaces.match(seatRegex);
-        if (seatMatches) {
-          for (const s of seatMatches) pageSeats.push({ seatNo: s, y: l.y });
-        }
-      }
-    }
-
-    // Pair each ERN with the vertically nearest seat number on the page
-    for (const ernObj of pageERNs) {
-      let seatNo = 'N/A';
-      if (pageSeats.length > 0) {
-        const sortedSeats = [...pageSeats].sort((a, b) => Math.abs(a.y - ernObj.y) - Math.abs(b.y - ernObj.y));
-        seatNo = sortedSeats[0].seatNo;
-      }
-      records.push({ ern: ernObj.ern, seatNo, pageNo: pageNum });
-    }
-  }
-
-  // Deduplicate by clean alphanumeric key
-  const seen = new Set();
-  return records.filter(r => {
-    const key = String(r.ern).replace(/[^A-Z0-9]/gi, '').toUpperCase();
-    if (!key || seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-}
-
 async function _gazProcParse() {
   const sessId  = document.getElementById('gaz-proc-session')?.value;
   const branch  = document.getElementById('gaz-proc-branch')?.value;
@@ -7881,6 +7810,36 @@ async function _gazProcParse() {
 
   if (!session || !branch || !file) return;
 
+  const matchRes = _gazProcCheckFilenameMatch(session, branch, file.name);
+  if (!matchRes.matched) {
+    UI.showModal('⚠️ Filename Mismatch Warning', `
+      <div style="font-size:13px; line-height:1.6;">
+        <p style="margin-bottom:12px; color:var(--ink-1);">
+          The uploaded PDF filename does not match the selected <strong>Session</strong> &amp; <strong>Branch</strong>.
+        </p>
+        <div style="background:var(--surface-2); padding:12px 14px; border-radius:6px; border:1px solid var(--border); margin-bottom:14px; font-size:12px; line-height:1.8;">
+          <div><strong>Selected Session:</strong> ${UI.esc(session.name)}</div>
+          <div><strong>Selected Branch:</strong> ${UI.esc(branch)}</div>
+          <div style="color:var(--danger, #dc2626); margin-top:4px;"><strong>Uploaded File:</strong> ${UI.esc(file.name)}</div>
+          <div style="color:var(--ink-3); font-size:11px; margin-top:4px;"><em>Reason: ${UI.esc(matchRes.reason)}</em></div>
+        </div>
+        <p style="font-size:12px; color:var(--ink-2); margin-bottom:0;">
+          Parsing data from an incorrect PDF may lead to unmatched ERNs or missing seat numbers. Do you still want to proceed with extraction?
+        </p>
+      </div>
+    `, {
+      confirmLabel: 'Proceed Anyway',
+      danger: true,
+      onConfirm: () => _gazProcExecuteExtract(session, branch, file)
+    });
+    return;
+  }
+
+  _gazProcExecuteExtract(session, branch, file);
+}
+
+async function _gazProcExecuteExtract(session, branch, file) {
+  const sessId = session.id;
   UI.showSpinner('Parsing Gazette PDF & matching ERNs…');
 
   try {
