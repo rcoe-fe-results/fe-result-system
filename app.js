@@ -2279,15 +2279,8 @@ function _meRosterOpenAdhoc(uin, sessionId) {
   // Show the auto-session indicator (same as seat-based auto-select)
   _meAdhocShowAutoSession(session, null);
 
-  // Show student info + render grid
-  document.getElementById('me-adhoc-student-info').innerHTML =
-    _meStudentInfoHtml(student, session);
-  document.getElementById('me-adhoc-grid').innerHTML =
-    _meBuildSubjectGrid(student, session, 'adhoc');
-  _meWireGrid('me-adhoc-grid');
-
-  // Show gazette snippet for this student
-  _pdfShowSnippet(student, session, 'adhoc');
+  // Show student info + render grid & save footer
+  _meAdhocRenderGrid();
 
   document.getElementById('me-adhoc-student-panel').classList.remove('hidden');
 
