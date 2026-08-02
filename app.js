@@ -7802,6 +7802,152 @@ function _gazProcOnFilterChange() {
   }
 }
 
+// Helper to match student.prn against extracted PDF ERN records flexibly
+function _matchStudentPRN(studentPRN, records) {
+  if (!studentPRN) return null;
+  const rawPRN    = String(studentPRN).trim().toUpperCase();
+  const cleanPRN  = rawPRN.replace(/[^A-Z0-9]/g, '');
+  const digitsPRN = rawPRN.replace(/\D/g, '');
+
+  for (const r of records) {
+    const rawERN    = String(r.ern).trim().toUpperCase();
+    const cleanERN  = rawERN.replace(/[^A-Z0-9]/g, '');
+    const digitsERN = rawERN.replace(/\D/g, '');
+
+    // 1. Exact or cleaned alphanumeric match
+    if (cleanPRN === cleanERN || rawPRN === rawERN) return r;
+    // 2. Pure digits match (if length >= 10)
+    if (digitsPRN.length >= 10 && digitsERN.length >= 10 && digitsPRN === digitsERN) return r;
+    // 3. Substring match for MU prefix (MUST NOT match truncated shorter digit strings)
+    if (cleanPRN.length >= 10 && cleanERN.length >= 10) {
+      if (cleanERN.includes(cleanPRN)) return r; // e.g. cleanERN is "MU2024016402116695" and cleanPRN is "2024016402116695"
+      if (cleanPRN.includes(cleanERN) && digitsERN.length >= digitsPRN.length) return r;
+    }
+  }
+  return null;
+}
+
+async function _gazProcExtractFromPDF(file) {
+  if (!window.pdfjsLib) {
+    await new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+      script.onload = resolve;
+      script.onerror = reject;
+      document.head.appendChild(script);
+    });
+    window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+      'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  }
+
+  const arrayBuffer = await file.arrayBuffer();
+  const pdf         = await window.pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+  const numPages    = pdf.numPages;
+
+  const records = []; // [{ ern, seatNo, pageNo }]
+
+  for (let pageNum = 1; pageNum <= numPages; pageNum++) {
+    const page    = await pdf.getPage(pageNum);
+    const content = await page.getTextContent();
+    const items   = content.items;
+
+    // Line reconstruction: Group text items sharing similar vertical y-position (within 4.5pt)
+    const lineBuckets = [];
+    for (const item of items) {
+      const str = (item.str || '').trim();
+      if (!str) continue;
+      const x = item.transform[4];
+      const y = item.transform[5];
+
+      let bucket = lineBuckets.find(b => Math.abs(b.y - y) <= 4.5);
+      if (!bucket) {
+        bucket = { y, items: [] };
+        lineBuckets.push(bucket);
+      }
+      bucket.items.push({ str, x, y });
+    }
+
+    // Sort lines top to bottom (y descending in PDF coordinates)
+    lineBuckets.sort((a, b) => b.y - a.y);
+
+    const lineData = lineBuckets.map(b => {
+      b.items.sort((i1, i2) => i1.x - i2.x);
+      const textWithSpaces = b.items.map(i => i.str).join(' ');
+      const textCompact    = b.items.map(i => i.str).join('');
+      const minX           = Math.min(...b.items.map(i => i.x));
+      return { y: b.y, textWithSpaces, textCompact, minX, items: b.items };
+    });
+
+    // Check adjacent lines for line-wrapped trailing ERN digits
+    for (let lIdx = 0; lIdx < lineData.length; lIdx++) {
+      const curLine = lineData[lIdx];
+      const partialMatch = curLine.textWithSpaces.match(/(?:MU)?\d{14,15}/gi);
+      if (partialMatch && lIdx < lineData.length - 1) {
+        const nextLine = lineData[lIdx + 1];
+        if (Math.abs(curLine.y - nextLine.y) < 18) {
+          const firstNextStr = (nextLine.items[0]?.str || '').trim();
+          if (/^\d{1,2}\b/.test(firstNextStr)) {
+            const extraDigits = firstNextStr.match(/^\d{1,2}/)[0];
+            curLine.textWithSpaces += extraDigits;
+            curLine.textCompact    += extraDigits;
+          }
+        }
+      }
+    }
+
+    const ernRegexes = [
+      /MU\d{10,18}/gi,
+      /\b20\d{14,16}\b/g,
+      /\b\d{15,17}\b/g,
+    ];
+    const seatRegex = /\b\d{6,8}\b/g;
+
+    const pageERNs  = [];
+    const pageSeats = [];
+
+    for (const l of lineData) {
+      // Find ERN matches in space-separated and compact text
+      for (const regex of ernRegexes) {
+        const matches1 = l.textWithSpaces.match(regex);
+        if (matches1) {
+          for (const m of matches1) pageERNs.push({ ern: m, y: l.y });
+        }
+        const matches2 = l.textCompact.match(regex);
+        if (matches2) {
+          for (const m of matches2) pageERNs.push({ ern: m, y: l.y });
+        }
+      }
+
+      // Find seat number matches (leftmost column minX < 120)
+      if (l.minX < 120) {
+        const seatMatches = l.textWithSpaces.match(seatRegex);
+        if (seatMatches) {
+          for (const s of seatMatches) pageSeats.push({ seatNo: s, y: l.y });
+        }
+      }
+    }
+
+    // Pair each ERN with the vertically nearest seat number on the page
+    for (const ernObj of pageERNs) {
+      let seatNo = 'N/A';
+      if (pageSeats.length > 0) {
+        const sortedSeats = [...pageSeats].sort((a, b) => Math.abs(a.y - ernObj.y) - Math.abs(b.y - ernObj.y));
+        seatNo = sortedSeats[0].seatNo;
+      }
+      records.push({ ern: ernObj.ern, seatNo, pageNo: pageNum });
+    }
+  }
+
+  // Deduplicate by clean alphanumeric key
+  const seen = new Set();
+  return records.filter(r => {
+    const key = String(r.ern).replace(/[^A-Z0-9]/gi, '').toUpperCase();
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 async function _gazProcParse() {
   const sessId  = document.getElementById('gaz-proc-session')?.value;
   const branch  = document.getElementById('gaz-proc-branch')?.value;
