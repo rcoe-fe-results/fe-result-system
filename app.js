@@ -1497,20 +1497,25 @@ async function _meAdhocSubmit(actionTarget = 'progress') {
     UI.toast(`✓ ${count} entries saved for ${student.name}.`, 'success');
 
     if (actionTarget === 'next' && meAdhocState.openedFromRoster && meAdhocState.rosterList.length > 0) {
-      const nextIdx = meAdhocState.rosterIdx + 1;
-      if (nextIdx < meAdhocState.rosterList.length) {
-        const nextUin = meAdhocState.rosterList[nextIdx];
-        const nextStudent = State.getStudent(nextUin);
-        if (nextStudent) {
-          meAdhocState.student = nextStudent;
-          meAdhocState.rosterIdx = nextIdx;
-          document.getElementById('me-adhoc-search').value = nextStudent.name;
+      // Loop forward to find the next student who is still Pending or Partial
+      for (let i = meAdhocState.rosterIdx + 1; i < meAdhocState.rosterList.length; i++) {
+        const candUin     = meAdhocState.rosterList[i];
+        const candStudent = State.getStudent(candUin);
+        if (!candStudent) continue;
+
+        const statusObj = _meRosterBuildStudentStatus(candStudent, session);
+        if (statusObj.status === 'pending' || statusObj.status === 'partial') {
+          meAdhocState.student   = candStudent;
+          meAdhocState.rosterIdx = i;
+          document.getElementById('me-adhoc-search').value = candStudent.name;
           _meAdhocRenderGrid();
           document.getElementById('me-adhoc-student-panel').scrollIntoView({ behavior: 'smooth', block: 'start' });
           return;
         }
       }
-      UI.toast('✓ Finished all students in the roster!', 'info', 4000);
+
+      // No more pending/partial students remain in the roster
+      UI.toast('✓ All pending students in this roster completed!', 'success', 4000);
       _meSetMode('roster');
       _meRosterLoad();
     } else if (actionTarget === 'roster') {
