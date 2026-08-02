@@ -2695,7 +2695,15 @@ const State = (() => {
           message = `Session has ${unexpectedStudents.length} student(s) in PDF seats, but prior session/semester marks are not yet entered to verify eligibility.`;
         } else {
           status = 'DISCREPANCY_FLAGGED';
-          message = `⚠️ Found ${unexpectedStudents.length} student(s) in PDF seats who are ineligible under rules!`;
+          message = `⚠️ Discrepancy: ${unexpectedStudents.length} student(s) found in PDF seats who are ineligible under rules!`;
+        }
+      } else if (missingStudents.length > 0) {
+        if (!priorHistoryPresent) {
+          status = 'PENDING_PRIOR_DATA';
+          message = `Awaiting prior session/semester marks entry to verify eligibility.`;
+        } else {
+          status = 'DISCREPANCY_FLAGGED';
+          message = `⚠️ Discrepancy: ${missingStudents.length} eligible student(s) missing from PDF roster!`;
         }
       } else if (!priorHistoryPresent) {
         status = 'PENDING_PRIOR_DATA';

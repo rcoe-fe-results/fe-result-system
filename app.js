@@ -8124,8 +8124,15 @@ function _gazProcRenderPreview() {
 
   if (unexpectedStudents && unexpectedStudents.length > 0) {
     if (unexpectedCountEl) unexpectedCountEl.textContent = unexpectedStudents.length;
+    let hintHtml = '';
+    if (matchedStudents.length === 0) {
+      hintHtml = `
+        <div style="font-size:12px; color:var(--ink-2); background:rgba(245,158,11,0.08); border:1px solid rgba(245,158,11,0.3); border-radius:6px; padding:8px 12px; margin-bottom:10px;">
+          💡 <strong>Prior Session History Pending:</strong> These ${unexpectedStudents.length} students were extracted from the PDF, but prior session/preliminary marks are awaiting entry by staff. Click <strong>"Save Seats for Flagged Students"</strong> to populate their seat numbers so staff can enter marks. Their eligibility will be verified automatically once prior marks are entered.
+        </div>`;
+    }
     if (unexpectedList) {
-      unexpectedList.innerHTML = `
+      unexpectedList.innerHTML = hintHtml + `
         <table class="audit-table" style="width:100%;">
           <thead><tr>
             <th>Seat No</th><th>Page</th><th>UIN / ERN</th><th>Name</th><th>Batch</th><th>Status</th>
