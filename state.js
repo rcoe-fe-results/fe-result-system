@@ -2682,9 +2682,19 @@ const State = (() => {
 
       // Rule-based eligible students (fresh or KT)
       const ruleEligibleStudents = eligibleList.filter(s => s && !s.isUnexpected);
-      const missingStudents = ruleEligibleStudents.filter(s => 
-        s && !seatUINs.has(s.uin) && !ledger.some(r => r.uin === s.uin && r.examSession === sessionId)
-      );
+      const missingStudents = ruleEligibleStudents.filter(s => {
+        if (!s) return false;
+        if (seatUINs.has(s.uin)) return false;
+        if (ledger.some(r => r.uin === s.uin && r.examSession === sessionId)) return false;
+
+        // Check if student was legitimately marked skipped
+        const isRevalSkipped = session.entryType === 'Revaluation_Gazette' && getRevalDecision(s.uin, sessionId) === 'No';
+        const isExamSkipped  = session.entryType !== 'Revaluation_Gazette' && getExamSkipDecision(s.uin, sessionId);
+
+        if (isRevalSkipped || isExamSkipped) return false;
+
+        return true;
+      });
 
       let status = 'VERIFIED_CLEAN';
       let message = 'All students match eligibility rules.';
