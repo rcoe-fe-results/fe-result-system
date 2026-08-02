@@ -126,7 +126,7 @@ function _meInitAdhoc() {
   const resultsBox  = document.getElementById('me-adhoc-results');
   searchInput.value = '';
   resultsBox.innerHTML = '';
-  meAdhocState = { student: null, session: null };
+  meAdhocState = { student: null, session: null, openedFromRoster: false, rosterList: [], rosterIdx: -1 };
   document.getElementById('me-adhoc-student-panel').classList.add('hidden');
   document.getElementById('me-adhoc-session-picker').innerHTML = '';
   const adhocFooter = document.getElementById('me-adhoc-footer');
@@ -251,7 +251,7 @@ if (semCredits && semCredits.max > 0 && semCredits.earned >= semCredits.max) ret
       return activeKTs.some(r => Number(r.semester) === session.semester);
 }
 
-let meAdhocState = { student: null, session: null };
+let meAdhocState = { student: null, session: null, openedFromRoster: false, rosterList: [], rosterIdx: -1 };
 
 // ═══════════════════════════════════════════════════════════════
 // GAZETTE PDF SNIPPET — cache + fetch + render
@@ -647,6 +647,7 @@ function _meAdhocSelectStudent(uin, matchedSeat) {
   if (!student) return;
   _pdfHideSnippetPanel('adhoc');
   meAdhocState.student = student;
+  meAdhocState.openedFromRoster = false;
   document.getElementById('me-adhoc-results').innerHTML = '';
   document.getElementById('me-adhoc-search').value = student.name;
 
@@ -1087,6 +1088,22 @@ function _meAdhocRenderGrid() {
   // Un-hide save footer & update live computed summary bar
   const adhocFooter = document.getElementById('me-adhoc-footer');
   if (adhocFooter) adhocFooter.classList.remove('hidden');
+
+  const actionBtnsBox = document.getElementById('me-adhoc-action-buttons');
+  if (actionBtnsBox) {
+    if (meAdhocState.openedFromRoster && meAdhocState.rosterList.length > 0) {
+      actionBtnsBox.innerHTML = `
+        <button id="me-adhoc-save-next-btn" class="btn btn-primary" onclick="_meAdhocSubmit('next')">Save &amp; Next in Roster →</button>
+        <button id="me-adhoc-save-roster-btn" class="btn btn-secondary" onclick="_meAdhocSubmit('roster')">Save &amp; Back to Roster</button>
+        <button id="me-adhoc-save-progress-btn" class="btn btn-secondary" onclick="_meAdhocSubmit('progress')">Save &amp; See Progress</button>
+      `;
+    } else {
+      actionBtnsBox.innerHTML = `
+        <button id="me-adhoc-submit-btn" class="btn btn-primary" onclick="_meAdhocSubmit('progress')">Save marks →</button>
+      `;
+    }
+  }
+
   _meUpdateComputedSummaryBar('adhoc');
 }
 
@@ -1455,7 +1472,7 @@ function _meValidateGrid(containerId) {
   return true;
 }
 
-async function _meAdhocSubmit() {
+async function _meAdhocSubmit(actionTarget = 'progress') {
   const { student, session } = meAdhocState;
   if (!student || !session) { UI.toast('Select a student and session.', 'error'); return; }
   if (!_meValidateGrid('me-adhoc-grid')) return;
@@ -1478,9 +1495,32 @@ async function _meAdhocSubmit() {
     const count = await State.submitEntries(session, entries);
     UI.hideSpinner();
     UI.toast(`✓ ${count} entries saved for ${student.name}.`, 'success');
-    // Navigate to Progress View to show updated results
-    document.querySelector('[data-tab="progress"]')?.click();
-    _pvShowStudent(student.uin);
+
+    if (actionTarget === 'next' && meAdhocState.openedFromRoster && meAdhocState.rosterList.length > 0) {
+      const nextIdx = meAdhocState.rosterIdx + 1;
+      if (nextIdx < meAdhocState.rosterList.length) {
+        const nextUin = meAdhocState.rosterList[nextIdx];
+        const nextStudent = State.getStudent(nextUin);
+        if (nextStudent) {
+          meAdhocState.student = nextStudent;
+          meAdhocState.rosterIdx = nextIdx;
+          document.getElementById('me-adhoc-search').value = nextStudent.name;
+          _meAdhocRenderGrid();
+          document.getElementById('me-adhoc-student-panel').scrollIntoView({ behavior: 'smooth', block: 'start' });
+          return;
+        }
+      }
+      UI.toast('✓ Finished all students in the roster!', 'info', 4000);
+      _meSetMode('roster');
+      _meRosterLoad();
+    } else if (actionTarget === 'roster') {
+      _meSetMode('roster');
+      _meRosterLoad();
+    } else {
+      // Default: Navigate to Progress View
+      document.querySelector('[data-tab="progress"]')?.click();
+      _pvShowStudent(student.uin);
+    }
   } catch (err) {
     UI.hideSpinner();
     UI.toast('Error: ' + err.message, 'error', 8000);
@@ -2268,9 +2308,17 @@ function _meRosterOpenAdhoc(uin, sessionId) {
   // Switch to adhoc mode WITHOUT resetting (skipInit: true)
   _meSetMode('adhoc', { skipInit: true });
 
+  const rosterUINs = (typeof meRosterState !== 'undefined' && meRosterState.rows)
+    ? meRosterState.rows.map(r => r.student.uin)
+    : [];
+  const rosterIdx = rosterUINs.indexOf(uin);
+
   // Manually set adhoc state
   meAdhocState.student = student;
   meAdhocState.session = session;
+  meAdhocState.openedFromRoster = rosterIdx !== -1;
+  meAdhocState.rosterList = rosterUINs;
+  meAdhocState.rosterIdx  = rosterIdx;
 
   // Update search box to show student name
   document.getElementById('me-adhoc-search').value = student.name;
