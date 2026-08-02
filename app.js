@@ -71,6 +71,7 @@ const TAB_INIT = {
   'mark-entry':   initMarkEntry,
   'progress':     initProgress,
   'reports':      initReports,
+  'nba':          initNBA,
   'dashboard':    initDashboard,
   'admin':        initAdmin,
 };
@@ -8432,4 +8433,452 @@ function _gazProcShowSeatReport() {
   }
 
   reportEl.classList.remove('hidden');
+}
+
+// ═══════════════════════════════════════════════════════════════
+// TAB — NBA ACCREDITATION (CRITERION 8.3)
+// ═══════════════════════════════════════════════════════════════
+
+function initNBA() {
+  const batchSel = document.getElementById('nba-batch-select');
+  const branchSel = document.getElementById('nba-branch-select');
+  const ruleSel = document.getElementById('nba-rule-select');
+  const statusFilter = document.getElementById('nba-status-filter');
+  const exportBtn = document.getElementById('nba-export-btn');
+
+  if (!batchSel) return;
+
+  // Populate CAY batch select dropdown
+  const batchYears = State.getBatchYears();
+  if (batchYears.length > 0) {
+    batchSel.innerHTML = batchYears.map(y => `<option value="${UI.esc(y)}">${UI.esc(y)}</option>`).join('');
+  } else {
+    batchSel.innerHTML = '<option value="">No batches</option>';
+  }
+
+  // Populate Branch dropdown if not already populated
+  if (branchSel && branchSel.options.length <= 1) {
+    BRANCHES.forEach(b => {
+      const opt = document.createElement('option');
+      opt.value = b;
+      opt.textContent = b;
+      branchSel.appendChild(opt);
+    });
+  }
+
+  // Attach event listeners once
+  if (!batchSel._bound) {
+    batchSel.addEventListener('change', renderNBATab);
+    branchSel?.addEventListener('change', renderNBATab);
+    ruleSel?.addEventListener('change', renderNBATab);
+    statusFilter?.addEventListener('change', _renderNBARosterOnly);
+    exportBtn?.addEventListener('click', exportNBACriterion8_3CSV);
+    batchSel._bound = true;
+  }
+
+  renderNBATab();
+}
+
+function calculateNBA_8_3(batchYear, branchFilter = null, minCreditsThreshold = 32) {
+  if (!batchYear) return { available: false, Z: 0, Y: 0, successRatio: 0, X: 0, API: 0, score: 0, students: [] };
+
+  let allStudents = State.getStudents({ batchYear: String(batchYear) });
+  if (branchFilter) {
+    allStudents = allStudents.filter(s => s.branch === branchFilter);
+  }
+
+  if (!allStudents.length) {
+    return { available: false, Z: 0, Y: 0, successRatio: 0, X: 0, API: 0, score: 0, students: [] };
+  }
+
+  const studentDetails = [];
+  let Z = 0; // Total appeared students
+  let Y = 0; // Total successful/promoted students
+  let sumPromotedGPA = 0;
+  let promotedGPACount = 0;
+
+  for (const student of allStudents) {
+    const academics = State.computeStudentAcademics(student.uin);
+    // Student must have at least one session/ledger entry to count as appeared
+    if (!academics || (!academics.sessionResults || academics.sessionResults.length === 0)) {
+      continue;
+    }
+
+    Z++; // Appeared student
+
+    const earnedCredits = academics.totalCredits ? academics.totalCredits.earned : 0;
+    const maxCredits = academics.totalCredits ? academics.totalCredits.max : 45;
+    const cgpa = academics.cgpa;
+    const isNEP = Number(batchYear) >= 2024;
+
+    // Promotion rule evaluation
+    let isPromoted = false;
+    if (minCreditsThreshold === 45) {
+      isPromoted = (earnedCredits >= maxCredits && maxCredits > 0);
+    } else {
+      // Default: NEP 2020 >= 32 credits for 2024+, or feCompleted for pre-NEP
+      isPromoted = isNEP ? (earnedCredits >= Number(minCreditsThreshold)) : (academics.feCompleted && academics.feCompleted.done);
+    }
+
+    if (isPromoted) {
+      Y++;
+      if (cgpa !== null && !isNaN(cgpa)) {
+        sumPromotedGPA += Number(cgpa);
+        promotedGPACount++;
+      }
+    }
+
+    studentDetails.push({
+      student,
+      academics,
+      earnedCredits,
+      maxCredits,
+      cgpa,
+      isPromoted,
+      sem1SGPA: academics.consolidatedSGPA ? academics.consolidatedSGPA[1] : null,
+      sem2SGPA: academics.consolidatedSGPA ? academics.consolidatedSGPA[2] : null,
+    });
+  }
+
+  if (Z === 0) {
+    return { available: false, Z: 0, Y: 0, successRatio: 0, X: 0, API: 0, score: 0, students: [] };
+  }
+
+  const successRatio = Z > 0 ? (Y / Z) : 0;
+  const X = promotedGPACount > 0 ? Math.round((sumPromotedGPA / promotedGPACount) * 100) / 100 : 0;
+  const API = Math.round((X * successRatio) * 100) / 100;
+  const score = Math.min(10.00, API);
+
+  return {
+    available: true,
+    batchYear: String(batchYear),
+    Z,
+    Y,
+    successRatio: Math.round(successRatio * 10000) / 100, // percentage
+    X,
+    API,
+    score,
+    students: studentDetails
+  };
+}
+
+let _nbaCurrentRoster = [];
+
+function renderNBATab() {
+  const batchSel = document.getElementById('nba-batch-select');
+  const branchSel = document.getElementById('nba-branch-select');
+  const ruleSel = document.getElementById('nba-rule-select');
+
+  const cayBatch = batchSel ? batchSel.value : '';
+  const selectedBranch = branchSel ? branchSel.value : '';
+  const minCredits = ruleSel ? Number(ruleSel.value) : 32;
+
+  if (!cayBatch) {
+    document.getElementById('nba-kpi-container').innerHTML = '<div class="muted">No batch selected or no data available.</div>';
+    document.getElementById('nba-sar-table-output').innerHTML = '';
+    document.getElementById('nba-branch-table-output').innerHTML = '';
+    document.getElementById('nba-roster-output').innerHTML = '';
+    return;
+  }
+
+  const cayYear = Number(cayBatch);
+  const caym1Year = cayYear - 1;
+  const caym2Year = cayYear - 2;
+
+  // Calculate 8.3 for CAY, CAYm1, CAYm2
+  const cayData = calculateNBA_8_3(cayYear, selectedBranch || null, minCredits);
+  const caym1Data = calculateNBA_8_3(caym1Year, selectedBranch || null, minCredits);
+  const caym2Data = calculateNBA_8_3(caym2Year, selectedBranch || null, minCredits);
+
+  // 1. Render KPI Cards for Selected CAY Batch
+  const kpiEl = document.getElementById('nba-kpi-container');
+  if (kpiEl) {
+    kpiEl.innerHTML = `
+      <div class="dash-card" style="padding:14px; border-left: 4px solid var(--accent-color);">
+        <div style="font-size:11px; color:var(--text-muted); font-weight:600; text-transform:uppercase;">Appeared Students (Z)</div>
+        <div style="font-size:24px; font-weight:700; margin-top:4px;">${cayData.Z}</div>
+        <div style="font-size:11px; color:var(--text-muted); margin-top:2px;">Batch ${UI.esc(cayBatch)}</div>
+      </div>
+      <div class="dash-card" style="padding:14px; border-left: 4px solid #10b981;">
+        <div style="font-size:11px; color:var(--text-muted); font-weight:600; text-transform:uppercase;">Promoted to 2nd Year (Y)</div>
+        <div style="font-size:24px; font-weight:700; color:#10b981; margin-top:4px;">${cayData.Y}</div>
+        <div style="font-size:11px; color:var(--text-muted); margin-top:2px;">≥ ${minCredits} Credits</div>
+      </div>
+      <div class="dash-card" style="padding:14px; border-left: 4px solid #3b82f6;">
+        <div style="font-size:11px; color:var(--text-muted); font-weight:600; text-transform:uppercase;">Success Rate (Y / Z)</div>
+        <div style="font-size:24px; font-weight:700; color:#3b82f6; margin-top:4px;">${cayData.successRatio}%</div>
+        <div style="font-size:11px; color:var(--text-muted); margin-top:2px;">${cayData.Y} of ${cayData.Z} Students</div>
+      </div>
+      <div class="dash-card" style="padding:14px; border-left: 4px solid #8b5cf6;">
+        <div style="font-size:11px; color:var(--text-muted); font-weight:600; text-transform:uppercase;">Mean GPA (X)</div>
+        <div style="font-size:24px; font-weight:700; color:#8b5cf6; margin-top:4px;">${cayData.X.toFixed(2)}</div>
+        <div style="font-size:11px; color:var(--text-muted); margin-top:2px;">10-Point CGPA Scale</div>
+      </div>
+      <div class="dash-card" style="padding:14px; border-left: 4px solid #f59e0b;">
+        <div style="font-size:11px; color:var(--text-muted); font-weight:600; text-transform:uppercase;">Academic Perf Index (API)</div>
+        <div style="font-size:24px; font-weight:700; color:#f59e0b; margin-top:4px;">${cayData.API.toFixed(2)}</div>
+        <div style="font-size:11px; color:var(--text-muted); margin-top:2px;">X × (Y / Z)</div>
+      </div>
+      <div class="dash-card" style="padding:14px; border-left: 4px solid #ec4899; background: rgba(236,72,153,0.05);">
+        <div style="font-size:11px; color:var(--text-muted); font-weight:600; text-transform:uppercase;">Criterion 8.3 Score</div>
+        <div style="font-size:24px; font-weight:700; color:#ec4899; margin-top:4px;">${cayData.score.toFixed(2)} <span style="font-size:13px; font-weight:normal;">/ 10.00</span></div>
+        <div style="font-size:11px; color:var(--text-muted); margin-top:2px;">Capped at Max 10</div>
+      </div>
+    `;
+  }
+
+  // 2. Render 3-Year NBA SAR Table 8.3
+  const sarYears = [
+    { label: `CAYm2 (${caym2Year})`, data: caym2Data, year: caym2Year },
+    { label: `CAYm1 (${caym1Year})`, data: caym1Data, year: caym1Year },
+    { label: `CAY (${cayYear})`,     data: cayData,   year: cayYear }
+  ];
+
+  const validYears = sarYears.filter(y => y.data.available);
+  const avgAPI = validYears.length > 0
+    ? Math.round((validYears.reduce((sum, y) => sum + y.data.API, 0) / validYears.length) * 100) / 100
+    : 0;
+  const avgScore = Math.min(10.00, avgAPI);
+
+  let sarHtml = `
+    <table class="report-table" style="width:100%;">
+      <thead>
+        <tr>
+          <th>Academic Year</th>
+          <th>Batch</th>
+          <th>Scheme</th>
+          <th style="text-align:right;">Appeared (Z)</th>
+          <th style="text-align:right;">Promoted (Y)</th>
+          <th style="text-align:right;">Success Ratio (Y/Z)</th>
+          <th style="text-align:right;">Mean GPA (X)</th>
+          <th style="text-align:right;">API (X × Y/Z)</th>
+          <th style="text-align:right;">Marks (Out of 10)</th>
+        </tr>
+      </thead>
+      <tbody>
+  `;
+
+  for (const yr of sarYears) {
+    const d = yr.data;
+    const isNEP = yr.year >= 2024;
+    const schemeBadge = isNEP
+      ? `<span class="badge" style="background:#dcfce7; color:#166534; font-size:11px;">NEP 2020 (≥32 Cr)</span>`
+      : `<span class="badge" style="background:#f3f4f6; color:#374151; font-size:11px;">Pre-NEP (Legacy)</span>`;
+
+    if (!d.available) {
+      sarHtml += `
+        <tr>
+          <td><strong>${UI.esc(yr.label)}</strong></td>
+          <td>Batch ${yr.year}</td>
+          <td>${schemeBadge}</td>
+          <td colspan="6" style="text-align:center; color:var(--text-muted); font-style:italic;">
+            N/A — No Student Ledger Data Available
+          </td>
+        </tr>
+      `;
+    } else {
+      sarHtml += `
+        <tr>
+          <td><strong>${UI.esc(yr.label)}</strong></td>
+          <td>Batch ${yr.year}</td>
+          <td>${schemeBadge}</td>
+          <td style="text-align:right;">${d.Z}</td>
+          <td style="text-align:right; font-weight:600; color:#10b981;">${d.Y}</td>
+          <td style="text-align:right;">${d.successRatio}%</td>
+          <td style="text-align:right;">${d.X.toFixed(2)}</td>
+          <td style="text-align:right; font-weight:700; color:#f59e0b;">${d.API.toFixed(2)}</td>
+          <td style="text-align:right; font-weight:700; color:#ec4899;">${d.score.toFixed(2)}</td>
+        </tr>
+      `;
+    }
+  }
+
+  sarHtml += `
+      </tbody>
+      <tfoot>
+        <tr style="background:var(--card-bg, #f8fafc); font-weight:bold;">
+          <td colspan="7" style="text-align:right;">3-Year Average Academic Performance Index (API):</td>
+          <td style="text-align:right; font-size:15px; color:#f59e0b;">${avgAPI.toFixed(2)}</td>
+          <td style="text-align:right; font-size:15px; color:#ec4899;">${avgScore.toFixed(2)} / 10.00</td>
+        </tr>
+      </tfoot>
+    </table>
+    <div style="font-size:11px; color:var(--text-muted); margin-top:8px;">
+      ℹ️ Note: Evaluated over ${validYears.length} available academic batch(es). NEP 2020 rules (minimum 32 out of 45 credits) applied for Batch 2024+.
+    </div>
+  `;
+
+  document.getElementById('nba-sar-table-output').innerHTML = sarHtml;
+
+  // 3. Render Branch Breakdown for Selected CAY
+  const branches = BRANCHES;
+  let branchHtml = `
+    <table class="report-table" style="width:100%;">
+      <thead>
+        <tr>
+          <th>Branch</th>
+          <th style="text-align:right;">Appeared (Z)</th>
+          <th style="text-align:right;">Promoted (Y)</th>
+          <th style="text-align:right;">Stays Back</th>
+          <th style="text-align:right;">Promotion Rate</th>
+          <th style="text-align:right;">Mean GPA (X)</th>
+          <th style="text-align:right;">API</th>
+          <th style="text-align:right;">Score / 10</th>
+        </tr>
+      </thead>
+      <tbody>
+  `;
+
+  for (const b of branches) {
+    const bData = calculateNBA_8_3(cayYear, b, minCredits);
+    const detained = bData.Z - bData.Y;
+    branchHtml += `
+      <tr>
+        <td><strong>${UI.esc(b)}</strong></td>
+        <td style="text-align:right;">${bData.Z}</td>
+        <td style="text-align:right; color:#10b981; font-weight:600;">${bData.Y}</td>
+        <td style="text-align:right; color:${detained > 0 ? '#ef4444' : 'var(--text-muted)'};">${detained}</td>
+        <td style="text-align:right;">${bData.Z > 0 ? bData.successRatio + '%' : '—'}</td>
+        <td style="text-align:right;">${bData.Z > 0 ? bData.X.toFixed(2) : '—'}</td>
+        <td style="text-align:right; font-weight:600; color:#f59e0b;">${bData.Z > 0 ? bData.API.toFixed(2) : '—'}</td>
+        <td style="text-align:right; font-weight:600; color:#ec4899;">${bData.Z > 0 ? bData.score.toFixed(2) : '—'}</td>
+      </tr>
+    `;
+  }
+
+  branchHtml += `
+      </tbody>
+      <tfoot>
+        <tr style="background:var(--card-bg, #f8fafc); font-weight:bold;">
+          <td>Total / Overall Batch</td>
+          <td style="text-align:right;">${cayData.Z}</td>
+          <td style="text-align:right; color:#10b981;">${cayData.Y}</td>
+          <td style="text-align:right; color:#ef4444;">${cayData.Z - cayData.Y}</td>
+          <td style="text-align:right;">${cayData.successRatio}%</td>
+          <td style="text-align:right;">${cayData.X.toFixed(2)}</td>
+          <td style="text-align:right; color:#f59e0b;">${cayData.API.toFixed(2)}</td>
+          <td style="text-align:right; color:#ec4899;">${cayData.score.toFixed(2)} / 10.00</td>
+        </tr>
+      </tfoot>
+    </table>
+  `;
+
+  document.getElementById('nba-branch-table-output').innerHTML = branchHtml;
+
+  // Store roster data & render roster
+  _nbaCurrentRoster = cayData.students;
+  _renderNBARosterOnly();
+}
+
+function _renderNBARosterOnly() {
+  const container = document.getElementById('nba-roster-output');
+  const filter = document.getElementById('nba-status-filter')?.value || 'all';
+  if (!container) return;
+
+  if (!_nbaCurrentRoster || !_nbaCurrentRoster.length) {
+    container.innerHTML = '<div class="muted" style="padding:12px;">No student records found for the selected batch/filters.</div>';
+    return;
+  }
+
+  let list = _nbaCurrentRoster;
+  if (filter === 'promoted') {
+    list = list.filter(r => r.isPromoted);
+  } else if (filter === 'detained') {
+    list = list.filter(r => !r.isPromoted);
+  }
+
+  let html = `
+    <table class="report-table" style="width:100%; font-size:12px;">
+      <thead>
+        <tr>
+          <th style="width:40px;">#</th>
+          <th>UIN</th>
+          <th>Student Name</th>
+          <th>Branch</th>
+          <th>Div</th>
+          <th style="text-align:center;">Sem 1 SGPA</th>
+          <th style="text-align:center;">Sem 2 SGPA</th>
+          <th style="text-align:center;">1st Year CGPA</th>
+          <th style="text-align:center;">Earned Credits</th>
+          <th style="text-align:center;">2nd Year Status</th>
+          <th style="text-align:center;">Inclusion in Mean (X)</th>
+        </tr>
+      </thead>
+      <tbody>
+  `;
+
+  list.forEach((item, idx) => {
+    const s = item.student;
+    const statusBadge = item.isPromoted
+      ? `<span class="badge" style="background:#dcfce7; color:#166534; font-weight:600;">🟢 Promoted (≥32 Cr)</span>`
+      : `<span class="badge" style="background:#fee2e2; color:#991b1b; font-weight:600;">🔴 Stays Back (<32 Cr)</span>`;
+
+    const includedBadge = item.isPromoted && item.cgpa !== null
+      ? `<span style="color:#10b981; font-weight:bold;">Included</span>`
+      : `<span style="color:var(--text-muted);">Excluded</span>`;
+
+    html += `
+      <tr>
+        <td>${idx + 1}</td>
+        <td><code>${UI.esc(s.uin)}</code></td>
+        <td><strong>${UI.esc(s.name)}</strong></td>
+        <td>${UI.esc(s.branch)}</td>
+        <td>${UI.esc(s.division || '—')}</td>
+        <td style="text-align:center;">${item.sem1SGPA !== null ? item.sem1SGPA.toFixed(2) : '—'}</td>
+        <td style="text-align:center;">${item.sem2SGPA !== null ? item.sem2SGPA.toFixed(2) : '—'}</td>
+        <td style="text-align:center; font-weight:bold;">${item.cgpa !== null ? item.cgpa.toFixed(2) : '—'}</td>
+        <td style="text-align:center; font-weight:600;">${item.earnedCredits} / ${item.maxCredits}</td>
+        <td style="text-align:center;">${statusBadge}</td>
+        <td style="text-align:center;">${includedBadge}</td>
+      </tr>
+    `;
+  });
+
+  html += `
+      </tbody>
+    </table>
+    <div style="font-size:11px; color:var(--text-muted); margin-top:8px;">
+      Showing ${list.length} of ${_nbaCurrentRoster.length} students.
+    </div>
+  `;
+
+  container.innerHTML = html;
+}
+
+function exportNBACriterion8_3CSV() {
+  const batchSel = document.getElementById('nba-batch-select');
+  const cayBatch = batchSel ? batchSel.value : '';
+  if (!cayBatch || !_nbaCurrentRoster || !_nbaCurrentRoster.length) {
+    UI.showModal('Export Notice', 'No data available to export for the selected batch.');
+    return;
+  }
+
+  const rows = [
+    ['UIN', 'Name', 'Branch', 'Division', 'Sem 1 SGPA', 'Sem 2 SGPA', '1st Year CGPA', 'Earned Credits', 'Max Credits', 'Promoted to 2nd Year', 'Inclusion in Mean X']
+  ];
+
+  _nbaCurrentRoster.forEach(r => {
+    rows.push([
+      r.student.uin,
+      r.student.name,
+      r.student.branch,
+      r.student.division || '',
+      r.sem1SGPA !== null ? r.sem1SGPA.toFixed(2) : '',
+      r.sem2SGPA !== null ? r.sem2SGPA.toFixed(2) : '',
+      r.cgpa !== null ? r.cgpa.toFixed(2) : '',
+      r.earnedCredits,
+      r.maxCredits,
+      r.isPromoted ? 'YES' : 'NO',
+      (r.isPromoted && r.cgpa !== null) ? 'YES' : 'NO'
+    ]);
+  });
+
+  const csvContent = 'data:text/csv;charset=utf-8,' + rows.map(e => e.map(val => `"${String(val).replace(/"/g, '""')}"`).join(',')).join('\n');
+  const encodedUri = encodeURI(csvContent);
+  const link = document.createElement('a');
+  link.setAttribute('href', encodedUri);
+  link.setAttribute('download', `NBA_Criterion_8.3_Batch_${cayBatch}.csv`);
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
 }

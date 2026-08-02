@@ -1238,6 +1238,7 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
       <button class="tab-btn" data-tab="mark-entry">Mark Entry</button>
       <button class="tab-btn" data-tab="progress">Progress View</button>
       <button class="tab-btn" data-tab="reports">Reports</button>
+      <button class="tab-btn" data-tab="nba">NBA</button>
       <button class="tab-btn" data-tab="dashboard" data-admin-only>Dashboard</button>
       <button class="tab-btn" data-tab="admin" data-admin-only>Admin</button>
     </nav>
@@ -1880,6 +1881,78 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
         <div id="rpt-bc-output"></div>
       </div>
 
+    </div>
+
+
+    <!-- ─── TAB: NBA ─── -->
+    <div id="tab-nba" class="tab-pane hidden">
+      <div class="card" style="margin-bottom:16px;">
+        <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px;">
+          <div>
+            <div class="card-title" style="margin-bottom:4px;">🏅 NBA Accreditation Analytics — Criterion 8</div>
+            <div style="font-size:13px; color:var(--text-muted);">
+              First Year Academic Performance (Criterion 8.3) — Academic Performance Index (API) Calculation
+            </div>
+          </div>
+          <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+            <div>
+              <label class="form-label" style="font-size:11px; margin-bottom:2px;">CAY Batch</label>
+              <select id="nba-batch-select" class="form-control" style="width:130px;"></select>
+            </div>
+            <div>
+              <label class="form-label" style="font-size:11px; margin-bottom:2px;">Branch</label>
+              <select id="nba-branch-select" class="form-control" style="width:140px;">
+                <option value="">— All Branches —</option>
+              </select>
+            </div>
+            <div>
+              <label class="form-label" style="font-size:11px; margin-bottom:2px;">Promotion Rule</label>
+              <select id="nba-rule-select" class="form-control" style="width:190px;">
+                <option value="32">NEP 2020 (≥ 32/45 Credits)</option>
+                <option value="45">Clear Pass Only (45/45 Credits)</option>
+              </select>
+            </div>
+            <div style="align-self:flex-end;">
+              <button id="nba-export-btn" class="btn btn-secondary" style="height:36px;">
+                📥 Export CSV
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- KPI Scorecards Grid -->
+      <div id="nba-kpi-container" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap:12px; margin-bottom:16px;"></div>
+
+      <!-- 3-Year NBA SAR Summary Table -->
+      <div class="card" style="margin-bottom:16px;">
+        <div class="card-title" style="display:flex; justify-content:space-between; align-items:center;">
+          <span>📋 NBA SAR Table 8.3 — 3-Year Summary Comparison</span>
+          <span style="font-size:11px; font-weight:normal; color:var(--text-muted);">Format as per NBA Tier-II SAR Manual</span>
+        </div>
+        <div id="nba-sar-table-output" style="overflow-x:auto;"></div>
+      </div>
+
+      <!-- Branch Breakdown Table -->
+      <div class="card" style="margin-bottom:16px;">
+        <div class="card-title">🏛️ Department / Branch Breakdown (Selected CAY)</div>
+        <div id="nba-branch-table-output" style="overflow-x:auto;"></div>
+      </div>
+
+      <!-- Student Detail Roster Table -->
+      <div class="card">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-wrap:wrap; gap:8px;">
+          <div class="card-title" style="margin-bottom:0;">🎓 Student Academic Performance Roster</div>
+          <div style="display:flex; gap:8px; align-items:center;">
+            <select id="nba-status-filter" class="form-control" style="width:160px; height:32px; font-size:12px;">
+              <option value="all">All Students</option>
+              <option value="promoted">Promoted / Successful Only</option>
+              <option value="detained">Stays Back / Detained Only</option>
+            </select>
+          </div>
+        </div>
+        <div id="nba-roster-output" style="overflow-x:auto;"></div>
+      </div>
     </div>
 
 
