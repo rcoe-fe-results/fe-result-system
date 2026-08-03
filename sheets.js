@@ -14,11 +14,16 @@ const Sheets = (() => {
 
   // ── Low-level GET ────────────────────────────────────────
   async function getRange(tab, range) {
-    const token = Auth.getToken();
     let url = `${BASE}/${CONFIG.SHEET_ID}/values/${encodeURIComponent(tab + '!' + range)}`;
     let headers = {};
-    if (token) {
-      headers = { 'Authorization': `Bearer ${token}` };
+    if (Auth.isAuthenticated()) {
+      try {
+        const token = await Auth.requestToken();
+        headers = { 'Authorization': `Bearer ${token}` };
+      } catch (e) {
+        console.warn('Failed to obtain Auth token for getRange, falling back to API key:', e);
+        url += `?key=${encodeURIComponent(CONFIG.API_KEY)}`;
+      }
     } else {
       url += `?key=${encodeURIComponent(CONFIG.API_KEY)}`;
     }

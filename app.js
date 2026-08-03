@@ -313,7 +313,12 @@ async function _pdfFetchAndParse(session, branch) {
   if (_pdfSnippetNotFound.has(cacheKey)) return false;
 
   const filename = session.name + '_' + branch + '.pdf';
-  const token = Auth.getToken();
+  let token = null;
+  try {
+    token = await Auth.requestToken();
+  } catch (e) {
+    token = Auth.getToken();
+  }
   if (!token) return false;
 
   try {
