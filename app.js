@@ -10,6 +10,29 @@ window.addEventListener('DOMContentLoaded', () => {
   _bindNav();
 });
 
+window.addEventListener('hashchange', () => {
+  if (Auth.isAuthenticated()) {
+    showTab(_getActiveTab());
+  }
+});
+
+const TAB_INIT = {
+  'mark-entry':   initMarkEntry,
+  'progress':     initProgress,
+  'reports':      initReports,
+  'nba':          initNBA,
+  'dashboard':    initDashboard,
+  'admin':        initAdmin,
+};
+
+function _getActiveTab() {
+  const hash = (window.location.hash || '').replace('#', '').trim();
+  if (hash && TAB_INIT[hash]) return hash;
+  const saved = localStorage.getItem('fe_active_tab');
+  if (saved && TAB_INIT[saved]) return saved;
+  return 'mark-entry';
+}
+
 function _onAuthChange(user) {
   if (!user) {
     _showScreen('login');
@@ -21,18 +44,12 @@ function _onAuthChange(user) {
     UI.hideSpinner();
     _buildNav(user);
     _showScreen('app');
-    
-    const hashTab = window.location.hash ? window.location.hash.replace('#', '') : null;
-    const savedTab = localStorage.getItem('fe_active_tab');
-    const initialTab = (hashTab && TAB_INIT[hashTab]) 
-      ? hashTab 
-      : (savedTab && TAB_INIT[savedTab] ? savedTab : 'mark-entry');
-
-    showTab(initialTab);
+    showTab(_getActiveTab());
   }).catch(err => {
     UI.hideSpinner();
     UI.toast('Failed to load data: ' + err.message, 'error', 8000);
     _showScreen('app');
+    showTab(_getActiveTab());
   });
 }
 
@@ -68,7 +85,7 @@ function _bindNav() {
 }
 
 function showTab(tabId) {
-  if (!TAB_INIT[tabId]) tabId = 'mark-entry';
+  if (!tabId || !TAB_INIT[tabId]) tabId = _getActiveTab();
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tabId));
   document.querySelectorAll('.tab-pane').forEach(p => p.classList.toggle('hidden', p.id !== 'tab-' + tabId));
 
@@ -82,15 +99,6 @@ function showTab(tabId) {
   const init = TAB_INIT[tabId];
   if (init) init();
 }
-
-const TAB_INIT = {
-  'mark-entry':   initMarkEntry,
-  'progress':     initProgress,
-  'reports':      initReports,
-  'nba':          initNBA,
-  'dashboard':    initDashboard,
-  'admin':        initAdmin,
-};
 
 function _bindModalClose() {
   document.getElementById('modal-cancel')?.addEventListener('click', UI.hideModal);
