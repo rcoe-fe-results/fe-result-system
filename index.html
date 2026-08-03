@@ -299,6 +299,69 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
 .sc-name { font-size:16px; font-weight:700; color:var(--brand); }
 .sc-meta { font-size:12px; color:var(--ink-3); margin-top:3px; font-family:'DM Mono',monospace; }
 
+/* ─── Adhoc Single Student Timeline Stepper ─────────────── */
+.adhoc-timeline-card {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  margin-bottom: 14px;
+}
+.adhoc-timeline-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+.adhoc-timeline-steps {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+  scroll-behavior: smooth;
+}
+.timeline-step-pill {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 20px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  user-select: none;
+}
+.timeline-step-pill:hover {
+  border-color: var(--brand);
+  background: var(--brand-light);
+}
+.timeline-step-pill.step-active {
+  border-color: var(--brand);
+  background: var(--brand-light);
+  color: var(--brand);
+  font-weight: 700;
+  box-shadow: 0 0 0 2px rgba(37,99,235,0.15);
+}
+.step-badge {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+.step-badge-cleared { background: var(--pass-bg); color: var(--pass); border: 1px solid #A7F3D0; }
+.step-badge-active  { background: #DBEAFE; color: #1E40AF; border: 1px solid #93C5FD; }
+.step-badge-pending { background: var(--grace-bg); color: var(--kt); border: 1px solid #FCD34D; }
+.step-badge-skipped { background: var(--surface-2); color: var(--ink-4); border: 1px solid var(--border); }
+
+
 /* ─── Progress / Timeline ───────────────────────────────── */
 .session-block    { margin-bottom:20px; }
 .session-header   { display:flex; align-items:center; gap:10px; padding:10px 0; border-bottom:2px solid var(--border); margin-bottom:8px; flex-wrap:wrap; }
@@ -1286,6 +1349,7 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
 
         <div id="me-adhoc-student-panel" class="hidden" style="margin-top:16px;">
           <div id="me-adhoc-student-info" style="margin-bottom:14px;"></div>
+          <div id="me-adhoc-timeline-container" style="margin-bottom:14px;"></div>
           <div id="me-adhoc-session-picker" style="margin-bottom:14px;"></div>
           <div id="me-adhoc-pdf-snippet" class="pdf-snippet-panel pdf-snippet-hidden">
             <div class="pdf-snippet-header">
@@ -1305,8 +1369,14 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
           <div id="me-adhoc-grid"></div>
           <div id="me-adhoc-footer" class="hidden">
             <div id="me-adhoc-computed-bar"></div>
-            <div style="margin-top:14px; display:flex; justify-content:flex-end; gap:10px; flex-wrap:wrap;" id="me-adhoc-action-buttons">
-              <button id="me-adhoc-submit-btn" class="btn btn-primary">Save marks →</button>
+            <div style="margin-top:14px; display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;" id="me-adhoc-action-buttons">
+              <div style="display:flex; gap:8px;">
+                <button id="me-adhoc-prev-btn" class="btn btn-secondary" style="display:none;">← Previous Session</button>
+              </div>
+              <div style="display:flex; gap:8px; align-items:center;">
+                <button id="me-adhoc-skip-btn" class="btn btn-secondary" style="display:none;">Skip Session ⏭</button>
+                <button id="me-adhoc-submit-btn" class="btn btn-primary">Save & Next Session →</button>
+              </div>
             </div>
           </div>
         </div>

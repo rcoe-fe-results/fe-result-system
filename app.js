@@ -151,8 +151,10 @@ function _meInitAdhoc() {
   const resultsBox  = document.getElementById('me-adhoc-results');
   searchInput.value = '';
   resultsBox.innerHTML = '';
-  meAdhocState = { student: null, session: null, openedFromRoster: false, rosterList: [], rosterIdx: -1 };
+  meAdhocState = { student: null, session: null, timeline: [], currentIdx: 0, showPicker: false, openedFromRoster: false, rosterList: [], rosterIdx: -1 };
   document.getElementById('me-adhoc-student-panel').classList.add('hidden');
+  const timelineCont = document.getElementById('me-adhoc-timeline-container');
+  if (timelineCont) timelineCont.innerHTML = '';
   document.getElementById('me-adhoc-session-picker').innerHTML = '';
   const adhocFooter = document.getElementById('me-adhoc-footer');
   if (adhocFooter) adhocFooter.classList.add('hidden');
@@ -276,7 +278,7 @@ if (semCredits && semCredits.max > 0 && semCredits.earned >= semCredits.max) ret
       return activeKTs.some(r => Number(r.semester) === session.semester);
 }
 
-let meAdhocState = { student: null, session: null, openedFromRoster: false, rosterList: [], rosterIdx: -1 };
+let meAdhocState = { student: null, session: null, timeline: [], currentIdx: 0, showPicker: false, openedFromRoster: false, rosterList: [], rosterIdx: -1 };
 
 // ═══════════════════════════════════════════════════════════════
 // GAZETTE PDF SNIPPET — cache + fetch + render
@@ -667,53 +669,229 @@ async function _pdfPrefetchForQueue(session, branch) {
   await _pdfFetchAndParse(session, branch);
 }
 
+// ── CHRONOLOGICAL SINGLE STUDENT QUEUE & TIMELINE ENGINE ────────────────
+function _meAdhocBuildTimeline(student) {
+  const allSessions = sortSessionsChronological(State.getSessions().filter(s =>
+    s.status === 'Active' &&
+    (s.entryType !== 'Revaluation_Gazette' || Auth.isAdmin())
+  ));
+
+  const recordSessionIds = new Set(
+    State.ledger.filter(r => r.uin === student.uin).map(r => r.examSession)
+  );
+
+  const timeline = [];
+
+  for (const s of allSessions) {
+    const seats = State.getSeatsForSessionWithFallback(s.id);
+    const hasSeatList = seats.length > 0;
+    const seatObj = seats.find(st => st.uin === student.uin);
+    const seatNum = seatObj ? seatObj.seatNumber : null;
+
+    const hasLedger = recordSessionIds.has(s.id);
+    const isEligible = _isStudentEligibleForSession(student, s);
+    const isRevalNo = s.entryType === 'Revaluation_Gazette' && State.getRevalDecision(student.uin, s.id) === 'No';
+    const isExamSkip = State.getExamSkipDecision(student.uin, s.id);
+
+    let status = 'pending';
+    if (hasLedger) {
+      const acad = State.computeStudentAcademics(student.uin);
+      const sessResult = acad?.sessionResults?.find(sr => sr.session.id === s.id);
+      const hasFailOrAB = sessResult?.subjects?.some(sub => !sub.pending && (sub.dr.result === 'Fail' || sub.dr.result === 'AB'));
+      status = hasFailOrAB ? 'pending' : 'cleared';
+    } else if (isRevalNo || isExamSkip || (hasSeatList && !seatObj)) {
+      status = 'skipped';
+    } else if (isEligible) {
+      status = 'pending';
+    } else {
+      status = 'future';
+    }
+
+    if (hasLedger || isEligible || seatObj || isRevalNo || isExamSkip) {
+      timeline.push({
+        session: s,
+        status: status,
+        seatNum: seatNum,
+        hasLedger: hasLedger,
+        hasSeatList: hasSeatList,
+        isEligible: isEligible
+      });
+    }
+  }
+
+  return timeline;
+}
+
+function _meAdhocRenderTimeline() {
+  const container = document.getElementById('me-adhoc-timeline-container');
+  if (!container) return;
+  const { student, timeline, currentIdx, showPicker } = meAdhocState;
+
+  if (!student || !timeline || timeline.length === 0) {
+    container.innerHTML = '';
+    container.classList.add('hidden');
+    return;
+  }
+  container.classList.remove('hidden');
+
+  const stepsHtml = timeline.map((item, idx) => {
+    const isActive = idx === currentIdx;
+    let badgeClass = 'step-badge-pending';
+    let badgeText = '🟡 Pending';
+    if (item.status === 'cleared') {
+      badgeClass = 'step-badge-cleared';
+      badgeText = '✓ Cleared';
+    } else if (isActive) {
+      badgeClass = 'step-badge-active';
+      badgeText = '🟡 Active';
+    } else if (item.status === 'skipped') {
+      badgeClass = 'step-badge-skipped';
+      badgeText = '⏭️ Skipped';
+    } else if (item.status === 'future') {
+      badgeClass = 'step-badge-skipped';
+      badgeText = '⚪ Optional';
+    }
+
+    const semLabel = `Sem ${item.session.semester}`;
+    const seatLabel = item.seatNum ? ` · Seat ${UI.esc(String(item.seatNum))}` : '';
+
+    return `
+      <div class="timeline-step-pill ${isActive ? 'step-active' : ''}"
+           onclick="_meAdhocSelectTimelineIdx(${idx})"
+           title="Click to switch to ${UI.esc(item.session.name)}">
+        <span class="step-badge ${badgeClass}">${badgeText}</span>
+        <span><strong>${semLabel}</strong>: ${UI.esc(item.session.name)}${seatLabel}</span>
+      </div>
+    `;
+  }).join('');
+
+  container.innerHTML = `
+    <div class="adhoc-timeline-card">
+      <div class="adhoc-timeline-header">
+        <div style="display:flex; align-items:center; gap:8px;">
+          <span>🗓️ <strong>Session Roadmap &amp; Queue</strong></span>
+          <span style="font-size:11px; color:var(--ink-3); font-weight:400;">(${timeline.length} sessions for ${UI.esc(student.name)})</span>
+        </div>
+        <button type="button" class="btn btn-secondary" style="padding:3px 10px; font-size:11px;" onclick="_meAdhocTogglePicker()">
+          ${showPicker ? 'Hide Full Session List ▲' : 'View Full Session List ▼'}
+        </button>
+      </div>
+      <div class="adhoc-timeline-steps">
+        ${stepsHtml}
+      </div>
+    </div>
+  `;
+}
+
+function _meAdhocTogglePicker() {
+  meAdhocState.showPicker = !meAdhocState.showPicker;
+  _meAdhocRenderTimeline();
+  const picker = document.getElementById('me-adhoc-session-picker');
+  if (picker) {
+    if (meAdhocState.showPicker) {
+      _meAdhocShowSessionPicker(meAdhocState.timeline.map(t => t.session));
+      picker.classList.remove('hidden');
+    } else {
+      picker.innerHTML = '';
+      picker.classList.add('hidden');
+    }
+  }
+}
+
+function _meAdhocSelectTimelineIdx(idx) {
+  if (!meAdhocState.timeline || idx < 0 || idx >= meAdhocState.timeline.length) return;
+  meAdhocState.currentIdx = idx;
+  const item = meAdhocState.timeline[idx];
+  meAdhocState.session = item.session;
+
+  _meAdhocRenderTimeline();
+  _meAdhocRenderGrid();
+
+  const prevBtn = document.getElementById('me-adhoc-prev-btn');
+  const skipBtn = document.getElementById('me-adhoc-skip-btn');
+  const submitBtn = document.getElementById('me-adhoc-submit-btn');
+
+  if (prevBtn) prevBtn.style.display = idx > 0 ? 'inline-block' : 'none';
+  if (skipBtn) skipBtn.style.display = idx < meAdhocState.timeline.length - 1 ? 'inline-block' : 'none';
+  if (submitBtn) submitBtn.textContent = 'Save & Next Session →';
+
+  const student = meAdhocState.student;
+  _pdfFindStudentCrop(null, student.uin, item.seatNum, student.name, 'adhoc');
+}
+
+function _meAdhocSkipSession() {
+  if (!meAdhocState.timeline || meAdhocState.timeline.length === 0) return;
+  const nextIdx = meAdhocState.currentIdx + 1;
+  if (nextIdx < meAdhocState.timeline.length) {
+    _meAdhocSelectTimelineIdx(nextIdx);
+  } else {
+    _meAdhocShowCompletionSummary();
+  }
+}
+
+function _meAdhocPrevSession() {
+  if (!meAdhocState.timeline || meAdhocState.timeline.length === 0) return;
+  const prevIdx = meAdhocState.currentIdx - 1;
+  if (prevIdx >= 0) {
+    _meAdhocSelectTimelineIdx(prevIdx);
+  }
+}
+
+function _meAdhocShowCompletionSummary() {
+  const student = meAdhocState.student;
+  const grid = document.getElementById('me-adhoc-grid');
+  const footer = document.getElementById('me-adhoc-footer');
+  if (footer) footer.classList.add('hidden');
+  _pdfHideSnippetPanel('adhoc');
+
+  grid.innerHTML = `
+    <div class="card" style="text-align:center; padding:32px 20px; border-color:var(--pass);">
+      <div style="font-size:40px; margin-bottom:12px;">🎉</div>
+      <h3 style="margin-bottom:8px; color:var(--pass); font-size:18px;">All Sessions Completed for ${UI.esc(student.name)}!</h3>
+      <p style="font-size:13px; color:var(--ink-2); margin-bottom:20px;">All active exam sessions for this student have been processed and saved to the ledger.</p>
+      <div style="display:flex; justify-content:center; gap:12px; flex-wrap:wrap;">
+        <button type="button" class="btn btn-primary" onclick="document.getElementById('me-adhoc-search').focus(); document.getElementById('me-adhoc-search').value='';">🔍 Search Next Student</button>
+        <button type="button" class="btn btn-secondary" onclick="document.querySelector('[data-tab=\\'progress\\']')?.click(); _pvShowStudent('${UI.esc(student.uin)}');">📊 View Student Progress</button>
+      </div>
+    </div>
+  `;
+}
+
 function _meAdhocSelectStudent(uin, matchedSeat) {
   const student = State.getStudent(uin);
   if (!student) return;
   _pdfHideSnippetPanel('adhoc');
   meAdhocState.student = student;
   meAdhocState.openedFromRoster = false;
+  meAdhocState.showPicker = false;
   document.getElementById('me-adhoc-results').innerHTML = '';
   document.getElementById('me-adhoc-search').value = student.name;
 
-  // Find eligible active sessions for this student
-  const eligibleSessions = sortSessions(State.getSessions().filter(s =>
-    s.status === 'Active' &&
-    _isStudentEligibleForSession(student, s) &&
-    (s.entryType !== 'Revaluation_Gazette' || Auth.isAdmin())
-  ));
+  const timeline = _meAdhocBuildTimeline(student);
+  meAdhocState.timeline = timeline;
 
-  if (eligibleSessions.length === 0) {
+  if (timeline.length === 0) {
     UI.toast('No active sessions found for this student.', 'error');
     return;
   }
 
-  // If came via seat number and exactly one session → auto-select
+  let startIdx = -1;
   if (matchedSeat) {
-    // Find which session(s) this seat belongs to for this student
-    const seatSessions = State.getSessions().filter(sess => {
-      const seats = State.getSeatsForSession(sess.id);
-      return seats.some(s => s.uin === uin && String(s.seatNumber) === String(matchedSeat));
-    }).filter(s => s.status === 'Active');
-
-    if (seatSessions.length === 1) {
-      meAdhocState.session = seatSessions[0];
-      _meAdhocShowAutoSession(seatSessions[0], matchedSeat);
-      _meAdhocRenderGrid();
-      document.getElementById('me-adhoc-student-panel').classList.remove('hidden');
-      return;
-    }
+    startIdx = timeline.findIndex(t => t.seatNum && String(t.seatNum) === String(matchedSeat));
+  }
+  if (startIdx === -1) {
+    startIdx = timeline.findIndex(t => t.status === 'pending');
+  }
+  if (startIdx === -1) {
+    startIdx = 0;
   }
 
-  // Multiple or no seat match → show session picker
-  _meAdhocShowSessionPicker(eligibleSessions);
   document.getElementById('me-adhoc-student-panel').classList.remove('hidden');
-  document.getElementById('me-adhoc-grid').innerHTML = '';
   document.getElementById('me-adhoc-student-info').innerHTML = _meStudentInfoHtml(student, null);
-  const adhocFooter = document.getElementById('me-adhoc-footer');
-  if (adhocFooter) adhocFooter.classList.add('hidden');
-  const compBar = document.getElementById('me-adhoc-computed-bar');
-  if (compBar) compBar.innerHTML = '';
+  document.getElementById('me-adhoc-session-picker').innerHTML = '';
+  document.getElementById('me-adhoc-session-picker').classList.add('hidden');
+
+  _meAdhocSelectTimelineIdx(startIdx);
 }
 
 function _meAdhocShowAutoSession(session, seatNum) {
@@ -1123,8 +1301,16 @@ function _meAdhocRenderGrid() {
         <button id="me-adhoc-save-progress-btn" class="btn btn-secondary" onclick="_meAdhocSubmit('progress')">Save &amp; See Progress</button>
       `;
     } else {
+      const showPrev = meAdhocState.currentIdx > 0;
+      const showSkip = meAdhocState.timeline && meAdhocState.currentIdx < meAdhocState.timeline.length - 1;
       actionBtnsBox.innerHTML = `
-        <button id="me-adhoc-submit-btn" class="btn btn-primary" onclick="_meAdhocSubmit('progress')">Save marks →</button>
+        <div style="display:flex; gap:8px;">
+          ${showPrev ? '<button id="me-adhoc-prev-btn" class="btn btn-secondary" onclick="_meAdhocPrevSession()">← Previous Session</button>' : ''}
+        </div>
+        <div style="display:flex; gap:8px; align-items:center;">
+          ${showSkip ? '<button id="me-adhoc-skip-btn" class="btn btn-secondary" onclick="_meAdhocSkipSession()">Skip Session ⏭</button>' : ''}
+          <button id="me-adhoc-submit-btn" class="btn btn-primary" onclick="_meAdhocSubmit('next')">Save &amp; Next Session →</button>
+        </div>
       `;
     }
   }
@@ -1543,6 +1729,22 @@ async function _meAdhocSubmit(actionTarget = 'progress') {
       UI.toast('✓ All pending students in this roster completed!', 'success', 4000);
       _meSetMode('roster');
       _meRosterLoad();
+    } else if (actionTarget === 'next') {
+      // Chronological Single Student Queue navigation!
+      const timeline = _meAdhocBuildTimeline(student);
+      meAdhocState.timeline = timeline;
+
+      let nextIdx = timeline.findIndex((t, i) => i > meAdhocState.currentIdx && t.status === 'pending');
+      if (nextIdx === -1) {
+        nextIdx = timeline.findIndex(t => t.status === 'pending');
+      }
+
+      if (nextIdx !== -1) {
+        _meAdhocSelectTimelineIdx(nextIdx);
+        document.getElementById('me-adhoc-student-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      } else {
+        _meAdhocShowCompletionSummary();
+      }
     } else if (actionTarget === 'roster') {
       _meSetMode('roster');
       _meRosterLoad();
