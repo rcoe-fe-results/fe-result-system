@@ -1723,7 +1723,12 @@ async function _meAdhocSubmit(actionTarget = 'progress') {
         if (statusObj.status === 'pending' || statusObj.status === 'partial') {
           meAdhocState.student   = candStudent;
           meAdhocState.rosterIdx = i;
+          const timeline = _meAdhocBuildTimeline(candStudent);
+          meAdhocState.timeline = timeline;
+          const sessIdx = timeline.findIndex(t => t.session.id === session.id);
+          meAdhocState.currentIdx = sessIdx !== -1 ? sessIdx : 0;
           document.getElementById('me-adhoc-search').value = candStudent.name;
+          _meAdhocRenderTimeline();
           _meAdhocRenderGrid();
           document.getElementById('me-adhoc-student-panel').scrollIntoView({ behavior: 'smooth', block: 'start' });
           return;
@@ -2550,9 +2555,14 @@ function _meRosterOpenAdhoc(uin, sessionId) {
     : [];
   const rosterIdx = rosterUINs.indexOf(uin);
 
-  // Manually set adhoc state
+  // Manually set adhoc state & rebuild timeline for new student
   meAdhocState.student = student;
   meAdhocState.session = session;
+  const timeline = _meAdhocBuildTimeline(student);
+  meAdhocState.timeline = timeline;
+  const sessIdx = timeline.findIndex(t => t.session.id === session.id);
+  meAdhocState.currentIdx = sessIdx !== -1 ? sessIdx : 0;
+  meAdhocState.showPicker = false;
   meAdhocState.openedFromRoster = rosterIdx !== -1;
   meAdhocState.rosterList = rosterUINs;
   meAdhocState.rosterIdx  = rosterIdx;
@@ -2561,8 +2571,8 @@ function _meRosterOpenAdhoc(uin, sessionId) {
   document.getElementById('me-adhoc-search').value = student.name;
   document.getElementById('me-adhoc-results').innerHTML = '';
 
-  // Show the auto-session indicator (same as seat-based auto-select)
-  _meAdhocShowAutoSession(session, null);
+  // Render updated session timeline roadmap
+  _meAdhocRenderTimeline();
 
   // Show student info + render grid & save footer
   _meAdhocRenderGrid();
