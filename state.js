@@ -1835,8 +1835,8 @@ const State = (() => {
       return { prelim, gazette };
     }
 
-    const sem1Sess = (tabMode === 'sem1' || tabMode === 'fy') ? _resolveSession(1) : { prelim: null, gazette: null };
-    const sem2Sess = (tabMode === 'sem2' || tabMode === 'fy') ? _resolveSession(2) : { prelim: null, gazette: null };
+    const sem1Sess = _resolveSession(1);
+    const sem2Sess = _resolveSession(2);
 
     // Build per-student academics for all relevant students
     const allStudents = students.filter(s =>
@@ -1868,8 +1868,7 @@ const State = (() => {
       return marksMap;
     }
 
-    function _semStats(uin, studentBranch, sess) {
-      const sem = sess.prelim ? sess.prelim.semester : (tabMode === 'sem2' ? 2 : 1);
+    function _semStats(uin, studentBranch, sess, sem) {
       const acad = _getAcad(uin);
       if (!acad) return null;
 
@@ -1916,8 +1915,8 @@ const State = (() => {
       for (const student of allStudents) {
         if (genderFilter && student.gender !== genderFilter) continue;
 
-        const sem1Stats = _semStats(student.uin, student.branch, sem1Sess);
-        const sem2Stats = _semStats(student.uin, student.branch, sem2Sess);
+        const sem1Stats = (tabMode === 'sem1' || tabMode === 'fy') ? _semStats(student.uin, student.branch, sem1Sess, 1) : null;
+        const sem2Stats = (tabMode === 'sem2' || tabMode === 'fy') ? _semStats(student.uin, student.branch, sem2Sess, 2) : null;
 
         if (tabMode === 'sem1' && !sem1Stats) continue;
         if (tabMode === 'sem2' && !sem2Stats) continue;
