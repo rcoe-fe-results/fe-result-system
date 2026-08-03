@@ -1853,50 +1853,51 @@ const State = (() => {
       return _acadCache[uin];
     }
 
+    function _getMergedMarksMap(studentUin, subjCode) {
+      const studentSubjRows = ledger.filter(r =>
+        r.uin === studentUin && r.subjectCode === subjCode
+      ).sort((a, b) => a.entryDateTime.localeCompare(b.entryDateTime));
+
+      const marksMap = {};
+      for (const r of studentSubjRows) {
+        if (r.iatMarks  !== '') marksMap.IAT  = r.iatMarks;
+        if (r.eseMarks  !== '') marksMap.ESE  = r.eseMarks;
+        if (r.twMarks   !== '') marksMap.TW   = r.twMarks;
+        if (r.oralMarks !== '') marksMap.Oral = r.oralMarks;
+      }
+      return marksMap;
+    }
+
     function _semStats(uin, studentBranch, sess) {
-      if (!sess.prelim) return null;
+      const sem = sess.prelim ? sess.prelim.semester : (tabMode === 'sem2' ? 2 : 1);
       const acad = _getAcad(uin);
       if (!acad) return null;
 
-      // Use the gazette session result if available, else prelim
-      const sessId = sess.gazette ? sess.gazette.id : sess.prelim.id;
-      const sessRes = acad.sessionResults.find(sr => sr.session.id === sessId)
-                   || acad.sessionResults.find(sr => sr.session.id === sess.prelim.id);
-      
-      const isRegularPass = sessRes && sessRes.pendingCount === 0 &&
-        !sessRes.subjects.some(s => !s.pending && (s.dr?.result === 'Fail' || s.dr?.result === 'AB'));
+      // Check if student passed in Regular / Reval gazette session
+      if (sess.prelim) {
+        const sessId = sess.gazette ? sess.gazette.id : sess.prelim.id;
+        const sessRes = acad.sessionResults.find(sr => sr.session.id === sessId)
+                     || acad.sessionResults.find(sr => sr.session.id === sess.prelim.id);
+        
+        const isRegularPass = sessRes && sessRes.pendingCount === 0 &&
+          !sessRes.subjects.some(s => !s.pending && (s.dr?.result === 'Fail' || s.dr?.result === 'AB'));
 
-      if (isRegularPass) {
-        const totalMarks = sessRes.subjects.reduce((sum, s) => sum + (s.dr?.total || 0), 0);
-        const sgpa = sessRes.sgpa;
-        return { totalMarks, sgpa, isKt: false };
+        if (isRegularPass) {
+          const totalMarks = sessRes.subjects.reduce((sum, s) => sum + (s.dr?.total || 0), 0);
+          const sgpa = sessRes.sgpa;
+          return { totalMarks, sgpa, isKt: false };
+        }
       }
 
       if (includeKtAttempts) {
-        const sem = sess.prelim.semester;
         if (acad.semCredits[sem] && acad.semCredits[sem].earned >= acad.semCredits[sem].max && acad.semCredits[sem].max > 0) {
           const sgpa = acad.consolidatedSGPA[sem];
           if (sgpa == null) return null;
-          const allSemSubjects = getSubjectsForSem(sem, studentBranch, sess.prelim);
+          const refSess = sess.prelim || sessions.find(s => s.semester === sem);
+          const allSemSubjects = getSubjectsForSem(sem, studentBranch, refSess);
           let totalMarks = 0;
           for (const subj of allSemSubjects) {
-            const r = acad?.latestPerSubject?.[subj.code];
-            if (!r) return null;
-            const sessObj = getSession(r.examSession);
-            let marksMap = {};
-            if (r.iatMarks  !== '') marksMap.IAT  = r.iatMarks;
-            if (r.eseMarks  !== '') marksMap.ESE  = r.eseMarks;
-            if (r.twMarks   !== '') marksMap.TW   = r.twMarks;
-            if (r.oralMarks !== '') marksMap.Oral = r.oralMarks;
-            if (sessObj?.entryType === 'Revaluation_Gazette' && sessObj.linkedPrelimSessionId) {
-              const prelimKey = sessObj.linkedPrelimSessionId + '||' + r.subjectCode;
-              const prelimRow = acad?.latestPerSessionSubject?.[prelimKey];
-              if (prelimRow) {
-                if (!marksMap.IAT  && prelimRow.iatMarks)  marksMap.IAT  = prelimRow.iatMarks;
-                if (!marksMap.TW   && prelimRow.twMarks)   marksMap.TW   = prelimRow.twMarks;
-                if (!marksMap.Oral && prelimRow.oralMarks) marksMap.Oral = prelimRow.oralMarks;
-              }
-            }
+            const marksMap = _getMergedMarksMap(uin, subj.code);
             const dr = computeDisplayResult(subj, marksMap);
             if (dr.pending || dr.result === 'Fail' || dr.result === 'AB') return null;
             totalMarks += (dr.total || 0);
@@ -1964,13 +1965,14 @@ const State = (() => {
     function _rankSubject(genderFilter) {
       const sem = tabMode === 'sem2' ? 2 : 1;
       const sess = sem === 1 ? sem1Sess : sem2Sess;
-      if (!sess.prelim) return [];
+      if (!sess.prelim && !includeKtAttempts) return [];
 
-      const sessId = sess.gazette ? sess.gazette.id : sess.prelim.id;
-      const prelimId = sess.prelim.id;
+      const sessId = sess.gazette ? sess.gazette.id : sess.prelim?.id;
+      const prelimId = sess.prelim?.id;
 
       const subjectMaxMap = {};
-      const canonicalList = getSubjectsForSem(sem, branch || 'Computer', sess.prelim);
+      const refSess = sess.prelim || sessions.find(s => s.semester === sem);
+      const canonicalList = getSubjectsForSem(sem, branch || 'Computer', refSess);
       for (const s of canonicalList) {
         subjectMaxMap[s.code] = Object.values(s.marks).reduce((a, b) => a + b, 0);
       }
@@ -2006,21 +2008,7 @@ const State = (() => {
             if (subjectCode && subj.code !== subjectCode) continue;
             const r = acad?.latestPerSubject?.[subj.code];
             if (!r) continue;
-            const sessObj = getSession(r.examSession);
-            let marksMap = {};
-            if (r.iatMarks  !== '') marksMap.IAT  = r.iatMarks;
-            if (r.eseMarks  !== '') marksMap.ESE  = r.eseMarks;
-            if (r.twMarks   !== '') marksMap.TW   = r.twMarks;
-            if (r.oralMarks !== '') marksMap.Oral = r.oralMarks;
-            if (sessObj?.entryType === 'Revaluation_Gazette' && sessObj.linkedPrelimSessionId) {
-              const prelimKey = sessObj.linkedPrelimSessionId + '||' + r.subjectCode;
-              const prelimRow = acad?.latestPerSessionSubject?.[prelimKey];
-              if (prelimRow) {
-                if (!marksMap.IAT  && prelimRow.iatMarks)  marksMap.IAT  = prelimRow.iatMarks;
-                if (!marksMap.TW   && prelimRow.twMarks)   marksMap.TW   = prelimRow.twMarks;
-                if (!marksMap.Oral && prelimRow.oralMarks) marksMap.Oral = prelimRow.oralMarks;
-              }
-            }
+            const marksMap = _getMergedMarksMap(student.uin, subj.code);
             const dr = computeDisplayResult(subj, marksMap);
             if (dr.pending || dr.result === 'Fail' || dr.result === 'AB') continue;
             const isKt = (r.examSession !== prelimId && r.examSession !== sessId);
