@@ -2,12 +2,19 @@
 // auth.js — Google Identity Services auth + role management
 // Uses a single combined OAuth flow to avoid double-popup issue
 // caused by GitHub Pages COOP headers.
+// Supports persistent sessions via localStorage & silent token renewal.
 // ============================================================
 
 const Auth = (() => {
-  let _user        = null;   // { email, name, picture, role }
-  let _accessToken = null;
-  let _onAuthChange = null;
+  let _user                 = null;   // { email, name, picture, role }
+  let _accessToken          = null;
+  let _tokenExpiry          = 0;      // Epoch timestamp (ms) when access token expires
+  let _tokenClient          = null;
+  let _onAuthChange         = null;
+  let _pendingTokenResolver = null;
+
+  const STORAGE_USER  = 'fe_auth_user';
+  const STORAGE_TOKEN = 'fe_auth_token_info';
 
   // ── Public ────────────────────────────────────────────────
   function init(onAuthChange) {
@@ -16,15 +23,19 @@ const Auth = (() => {
     // Single token client that handles BOTH identity + Sheets scope.
     // include_granted_scopes: true tells Google to remember previously
     // granted scopes so it doesn't re-prompt on every login.
-    const tokenClient = google.accounts.oauth2.initTokenClient({
+    _tokenClient = google.accounts.oauth2.initTokenClient({
       client_id: CONFIG.CLIENT_ID,
       scope: 'openid email profile https://www.googleapis.com/auth/drive.readonly ' + CONFIG.SCOPES,
       include_granted_scopes: true,
       callback: _handleToken,
       error_callback: (err) => {
         console.error('OAuth error:', err);
+        if (_pendingTokenResolver) {
+          _pendingTokenResolver.reject(err);
+          _pendingTokenResolver = null;
+        }
         if (err.type === 'access_denied') {
-          localStorage.removeItem('gsi_consented');
+          _clearStorage();
         }
         UI.toast('Sign-in failed: ' + (err.message || err.type), 'error', 6000);
       },
@@ -46,22 +57,65 @@ const Auth = (() => {
         </button>`;
 
       document.getElementById('gsi-custom-btn').onclick = () => {
-      const hasConsented = localStorage.getItem('gsi_consented');
-      tokenClient.requestAccessToken({
-        prompt: hasConsented ? '' : 'select_account consent',
-      });
-    };
+        const hasConsented = localStorage.getItem('gsi_consented');
+        _tokenClient.requestAccessToken({
+          prompt: hasConsented ? '' : 'select_account consent',
+        });
+      };
+    }
+
+    // Try restoring user session from localStorage
+    _restoreSession();
+  }
+
+  function _clearStorage() {
+    try {
+      localStorage.removeItem(STORAGE_USER);
+      localStorage.removeItem(STORAGE_TOKEN);
+      localStorage.removeItem('gsi_consented');
+    } catch (e) {}
+  }
+
+  function _restoreSession() {
+    try {
+      const savedUser = localStorage.getItem(STORAGE_USER);
+      const savedToken = localStorage.getItem(STORAGE_TOKEN);
+
+      if (savedUser) {
+        _user = JSON.parse(savedUser);
+      }
+
+      if (savedToken) {
+        const info = JSON.parse(savedToken);
+        if (info.expiry && info.expiry > Date.now()) {
+          _accessToken = info.token;
+          _tokenExpiry = info.expiry;
+        }
+      }
+
+      if (_user) {
+        _onAuthChange && _onAuthChange(_user);
+      }
+    } catch (e) {
+      console.warn('Failed to restore auth session:', e);
+      _clearStorage();
     }
   }
 
   function signOut() {
     if (_accessToken) {
-      google.accounts.oauth2.revoke(_accessToken, () => {});
+      try {
+        google.accounts.oauth2.revoke(_accessToken, () => {});
+      } catch (e) {}
     }
-    _user        = null;
-    _accessToken = null;
-    localStorage.removeItem('gsi_consented');
-    google.accounts.id.disableAutoSelect();
+    _user                 = null;
+    _accessToken          = null;
+    _tokenExpiry          = 0;
+    _pendingTokenResolver = null;
+    _clearStorage();
+    if (window.google?.accounts?.id?.disableAutoSelect) {
+      google.accounts.id.disableAutoSelect();
+    }
     _onAuthChange && _onAuthChange(null);
   }
 
@@ -70,10 +124,35 @@ const Auth = (() => {
   function isAdmin()         { return _user && _user.role === 'admin'; }
   function isAuthenticated() { return !!_user; }
 
-  // requestToken — used by sheets.js before every write API call
+  // requestToken — used by sheets.js before API calls
   async function requestToken() {
-    if (_accessToken) return _accessToken;
-    _onAuthChange && _onAuthChange(null);
+    // 1. If valid cached token exists, return it
+    if (_accessToken && _tokenExpiry > Date.now() + 60000) {
+      return _accessToken;
+    }
+
+    // 2. If logged in but token expired, silently request a new token
+    if (_user && _tokenClient) {
+      try {
+        const freshToken = await new Promise((resolve, reject) => {
+          _pendingTokenResolver = { resolve, reject };
+          _tokenClient.requestAccessToken({ prompt: '' });
+
+          setTimeout(() => {
+            if (_pendingTokenResolver) {
+              _pendingTokenResolver.reject(new Error('Token refresh timeout'));
+              _pendingTokenResolver = null;
+            }
+          }, 10000);
+        });
+        return freshToken;
+      } catch (err) {
+        console.warn('Silent token refresh failed:', err);
+      }
+    }
+
+    // 3. Fallback: session expired
+    signOut();
     throw new Error('Session expired. Please sign in again.');
   }
 
@@ -81,13 +160,35 @@ const Auth = (() => {
   async function _handleToken(tokenResponse) {
     if (tokenResponse.error) {
       console.error('Token error:', tokenResponse);
-      UI.toast('Sign-in error: ' + tokenResponse.error, 'error', 6000);
+      if (_pendingTokenResolver) {
+        _pendingTokenResolver.reject(new Error(tokenResponse.error));
+        _pendingTokenResolver = null;
+      } else {
+        UI.toast('Sign-in error: ' + tokenResponse.error, 'error', 6000);
+      }
       return;
     }
 
     _accessToken = tokenResponse.access_token;
+    const expiresIn = (tokenResponse.expires_in || 3600) * 1000;
+    _tokenExpiry = Date.now() + expiresIn;
 
-    // Decode identity by calling userinfo endpoint
+    try {
+      localStorage.setItem(STORAGE_TOKEN, JSON.stringify({
+        token: _accessToken,
+        expiry: _tokenExpiry
+      }));
+    } catch (e) {}
+
+    // If resolving a silent background refresh, notify pending promise
+    if (_pendingTokenResolver) {
+      const resolver = _pendingTokenResolver;
+      _pendingTokenResolver = null;
+      resolver.resolve(_accessToken);
+      return;
+    }
+
+    // Decode identity by calling userinfo endpoint (first sign-in)
     try {
       const resp = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
         headers: { 'Authorization': 'Bearer ' + _accessToken }
@@ -97,7 +198,7 @@ const Auth = (() => {
       // Domain check
       if (!info.email || !info.email.endsWith('@' + CONFIG.DOMAIN)) {
         UI.toast(`Access denied: ${info.email} is not an @${CONFIG.DOMAIN} account.`, 'error', 8000);
-        _accessToken = null;
+        signOut();
         return;
       }
 
@@ -108,19 +209,18 @@ const Auth = (() => {
         role:    CONFIG.ADMINS.includes(info.email) ? 'admin' : 'faculty',
       };
 
-      // Mark consent as given — future logins skip the consent screen
-      localStorage.setItem('gsi_consented', '1');
+      try {
+        localStorage.setItem(STORAGE_USER, JSON.stringify(_user));
+      } catch (e) {}
 
-      // Auto-clear token before expiry so writes fail gracefully
-      const expiresIn = (tokenResponse.expires_in || 3600) * 1000;
-      setTimeout(() => { _accessToken = null; }, expiresIn - 60000);
+      localStorage.setItem('gsi_consented', '1');
 
       _onAuthChange && _onAuthChange(_user);
 
     } catch (err) {
       console.error('Userinfo fetch failed:', err);
       UI.toast('Could not verify your account. Please try again.', 'error', 6000);
-      _accessToken = null;
+      signOut();
     }
   }
 
