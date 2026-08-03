@@ -1355,8 +1355,8 @@ const State = (() => {
     // ── Per-semester credit tracking ───────────────────────────
     // For each semester, compute earned vs max using LATEST result per subject
     // across ALL sessions. KT result overwrites Regular for same subject.
-    const semCredits   = { 1: { earned: 0, max: 0, completedInSession: null },
-                           2: { earned: 0, max: 0, completedInSession: null } };
+    const semCredits   = { 1: { earned: 0, earnedEligibility: 0, max: 0, completedInSession: null },
+                           2: { earned: 0, earnedEligibility: 0, max: 0, completedInSession: null } };
     const semSubjects  = { 1: new Set(), 2: new Set() };
 
     // Compute max credits per semester for this student's branch
@@ -1459,19 +1459,72 @@ const State = (() => {
       }
     }
 
-    // Final earned credits per semester
+    // Final earned credits per semester (both Gazette and Eligibility)
     for (const sem of [1, 2]) {
       const semSess = sessions.find(s => s.semester === sem &&
         Object.values(latestPerSessionSubject).some(r => r.examSession === s.id));
       if (!semSess) continue;
       const allSemSubjects = getSubjectsForSem(sem, student.branch, semSess);
-      semCredits[sem].earned = allSemSubjects
-        .filter(sub => semSubjects[sem].has(sub.code))
-        .reduce((s, sub) => s + sub.credits, 0);
+
+      let earnedGazette = 0;
+      let earnedEligibility = 0;
+
+      for (const sub of allSemSubjects) {
+        const r = latestPerSubject[sub.code];
+        if (!r) continue;
+        const sess = getSession(r.examSession);
+        let marksMap = _marksMapFromRow(r);
+        if (sess?.entryType === 'Revaluation_Gazette' && sess.linkedPrelimSessionId) {
+          const prelimKey = sess.linkedPrelimSessionId + '||' + r.subjectCode;
+          const prelimRow = latestPerSessionSubject[prelimKey];
+          if (prelimRow) {
+            if (!marksMap.IAT  && prelimRow.iatMarks)  marksMap.IAT  = prelimRow.iatMarks;
+            if (!marksMap.TW   && prelimRow.twMarks)   marksMap.TW   = prelimRow.twMarks;
+            if (!marksMap.Oral && prelimRow.oralMarks) marksMap.Oral = prelimRow.oralMarks;
+          }
+        }
+
+        const priorSessRows = Object.values(latestPerSessionSubject).filter(pr =>
+          pr.subjectCode === r.subjectCode &&
+          pr.examSession !== r.examSession &&
+          Number(pr.semester) === Number(r.semester)
+        ).sort((a, b) => a.entryDateTime.localeCompare(b.entryDateTime));
+
+        if (priorSessRows.length > 0) {
+          const priorMarks = {};
+          for (const pr of priorSessRows) {
+            if (pr.iatMarks  !== '') priorMarks.IAT  = pr.iatMarks;
+            if (pr.eseMarks  !== '') priorMarks.ESE  = pr.eseMarks;
+            if (pr.twMarks   !== '') priorMarks.TW   = pr.twMarks;
+            if (pr.oralMarks !== '') priorMarks.Oral = pr.oralMarks;
+          }
+          for (const [comp, priorVal] of Object.entries(priorMarks)) {
+            if (marksMap[comp]) continue;
+            const max = sub?.marks[comp];
+            const parsed = parseMarkValue(priorVal, max);
+            const priorPassed = parsed.valid && !parsed.absent &&
+              (parsed.grace || (max && parsed.value / max >= 0.40));
+            if (priorPassed) marksMap[comp] = priorVal;
+          }
+        }
+
+        const dr = computeDisplayResult(sub, marksMap);
+        if (!dr.pending) {
+          earnedGazette     += dr.creditsEarned || 0;
+          earnedEligibility += dr.eligibilityCreditsEarned !== undefined ? dr.eligibilityCreditsEarned : (dr.creditsEarned || 0);
+        } else if (dr.eligibilityCreditsEarned > 0) {
+          earnedEligibility += dr.eligibilityCreditsEarned;
+        }
+      }
+
+      semCredits[sem].earned            = earnedGazette;
+      semCredits[sem].earnedEligibility = earnedEligibility;
     }
 
-    const totalEarned = semCredits[1].earned + semCredits[2].earned;
-    const totalMax    = semCredits[1].max    + semCredits[2].max;
+    const totalEarned            = semCredits[1].earned + semCredits[2].earned;
+    const totalEarnedEligibility = semCredits[1].earnedEligibility + semCredits[2].earnedEligibility;
+    const totalMax               = semCredits[1].max + semCredits[2].max;
+    const eligibleForSE          = totalEarnedEligibility >= 32;
 
     // ── Consolidated Semester SGPA ─────────────────────────────
     // Computed once all credits for that semester are earned.
@@ -1558,7 +1611,8 @@ const State = (() => {
       semCredits,
       consolidatedSGPA,
       cgpa,
-      totalCredits: { earned: totalEarned, max: totalMax },
+      totalCredits: { earned: totalEarned, earnedEligibility: totalEarnedEligibility, max: totalMax },
+      eligibleForSE,
       feCompleted:  { done: feCompleted, session: feSession },
       latestPerSubject,
       latestPerSessionSubject,

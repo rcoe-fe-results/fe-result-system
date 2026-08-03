@@ -1756,6 +1756,7 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
                 <button class="col-pill" onclick="_tcSetThreshold(10)">10</button>
                 <button class="col-pill" onclick="_tcSetThreshold(20)">20</button>
                 <button class="col-pill" onclick="_tcSetThreshold(30)">30</button>
+                <button class="col-pill" onclick="_tcSetThreshold(32)">32 (SE Elig)</button>
                 <button class="col-pill" onclick="_tcSetThreshold(40)">40</button>
               </div>
             </div>
@@ -2298,6 +2299,18 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
               <input type="text" id="admin-seat-number-input" placeholder="e.g. 1023" style="width:140px;">
             </div>
             <button id="admin-seat-manual-save" class="btn btn-primary btn-sm" disabled>Save Seat Number</button>
+          </div>
+        </div>
+
+        <!-- System Settings -->
+        <div class="admin-section" style="grid-column:1/-1;">
+          <h3>System & Eligibility Settings</h3>
+          <div style="display:flex; align-items:center; gap:12px; background:var(--surface-2); padding:12px 16px; border-radius:8px; border:1px solid var(--border);">
+            <label style="display:flex; align-items:center; gap:10px; cursor:pointer; font-weight:600; font-size:13px; color:var(--ink-1); margin:0;">
+              <input type="checkbox" id="admin-maths-split-toggle" style="width:16px; height:16px; cursor:pointer;" checked>
+              <span>Apply Maths Credit Split (1 TW + 2 Theory) for Eligibility & ATKT Progression</span>
+            </label>
+            <span style="font-size:11px; color:var(--ink-3);">(University notification: splits AM-I / AM-II 3 credits into 1 TW + 2 Theory for student eligibility calculations only. Gazette layout remains unchanged.)</span>
           </div>
         </div>
 

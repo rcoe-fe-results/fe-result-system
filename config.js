@@ -256,11 +256,21 @@ function computeGrade(pct) {
   return            { grade: 'F',  gradePoint:  0 };
 }
 
+// ── Maths Credit Split setting ──────────────────────────────
+function isMathsCreditSplitEnabled() {
+  const v = localStorage.getItem('fe_maths_credit_split');
+  return v === null ? true : v === 'true';
+}
+
+function setMathsCreditSplitEnabled(enabled) {
+  localStorage.setItem('fe_maths_credit_split', String(enabled));
+}
+
 // computeDisplayResult — used for DISPLAY only (progress view, reports)
 // Uses grace-adjusted values (componentMax × 0.40) for totals, %, grade, GP, SGPA, CGPA
 // Takes a subject object and a marks map built from ledger strings:
 //   marksMap = { IAT: '21*', ESE: '40', TW: '8*', Oral: '20' }  (raw ledger strings)
-// Returns: { total, totalMax, pct, grade, gradePoint, GxC, result, creditsEarned, pending, grace }
+// Returns: { total, totalMax, pct, grade, gradePoint, GxC, result, creditsEarned, eligibilityCreditsEarned, pending, grace }
 function computeDisplayResult(subject, marksMap) {
   const components = Object.keys(subject.marks);
   let totalObtained = 0;
@@ -269,6 +279,7 @@ function computeDisplayResult(subject, marksMap) {
   let anyGrace      = false;
   let anyPending    = false;
   let pass          = true;
+  const compPassed  = {};
 
   for (const comp of components) {
     const compMax = subject.marks[comp];
@@ -277,46 +288,77 @@ function computeDisplayResult(subject, marksMap) {
 
     if (raw === undefined || raw === null || raw === '') {
       anyPending = true;
+      compPassed[comp] = false;
       continue;
     }
 
     const parsed = parseMarkValue(raw, compMax);
 
-    if (!parsed.valid) { anyPending = true; continue; }
+    if (!parsed.valid) {
+      anyPending = true;
+      compPassed[comp] = false;
+      continue;
+    }
 
     if (parsed.absent) {
       anyAbsent = true;
+      compPassed[comp] = false;
       // AB component contributes 0 — don't add to total
       continue;
     }
 
     if (parsed.grace) {
       anyGrace = true;
+      compPassed[comp] = true;
       // Grace: use adjusted value (compMax × 0.40) for all display calculations
       totalObtained += parsed.adjustedValue;
     } else {
       totalObtained += parsed.value;
       // Check component pass threshold
-      if (parsed.value / compMax < 0.40) pass = false;
+      if (parsed.value / compMax < 0.40) {
+        pass = false;
+        compPassed[comp] = false;
+      } else {
+        compPassed[comp] = true;
+      }
     }
+  }
+
+  const isMaths      = subject.code === 'BSC101' || subject.code === 'BSC201';
+  const twPassed     = !!compPassed['TW'];
+  const theoryPassed = !!(compPassed['IAT'] && compPassed['ESE']);
+  const splitEnabled = isMathsCreditSplitEnabled();
+
+  let mathsEligibilityCredits = 0;
+  if (isMaths && splitEnabled) {
+    if (twPassed)     mathsEligibilityCredits += 1;
+    if (theoryPassed) mathsEligibilityCredits += 2;
   }
 
   // If any component still pending → result is pending
   if (anyPending && !anyAbsent) {
-    return { pending: true, grade: '—', gradePoint: 0, GxC: 0, creditsEarned: 0, result: 'Pending' };
+    const defaultPendingCredits = (isMaths && splitEnabled) ? mathsEligibilityCredits : 0;
+    return {
+      pending: true, grade: '—', gradePoint: 0, GxC: 0,
+      creditsEarned: 0, eligibilityCreditsEarned: defaultPendingCredits,
+      result: 'Pending', twPassed, theoryPassed,
+    };
   }
 
   if (anyAbsent) {
+    const defaultABCredits = (isMaths && splitEnabled) ? mathsEligibilityCredits : 0;
     return {
       total: 0, totalMax, pct: 0,
       grade: 'F', gradePoint: 0, GxC: 0,
-      result: 'AB', creditsEarned: 0, grace: anyGrace, pending: false,
+      result: 'AB', creditsEarned: 0, eligibilityCreditsEarned: defaultABCredits,
+      grace: anyGrace, pending: false, twPassed, theoryPassed,
     };
   }
 
   const pct = totalMax > 0 ? (totalObtained / totalMax) * 100 : 0;
   const { grade, gradePoint } = pass ? computeGrade(pct) : { grade: 'F', gradePoint: 0 };
   const creditsEarned = (pass && grade !== 'F') ? subject.credits : 0;
+  const eligibilityCreditsEarned = (isMaths && splitEnabled) ? mathsEligibilityCredits : creditsEarned;
 
   return {
     total:    totalObtained,
@@ -327,8 +369,11 @@ function computeDisplayResult(subject, marksMap) {
     GxC:          gradePoint * subject.credits,
     result:        pass ? 'Pass' : 'Fail',
     creditsEarned,
+    eligibilityCreditsEarned,
     grace:         anyGrace,
     pending:       false,
+    twPassed,
+    theoryPassed,
   };
 }
 

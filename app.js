@@ -3547,7 +3547,7 @@ function _pvShowStudent(uin) {
 
   // ── Academics summary ─────────────────────────────────────────
   if (academics) {
-    const { semCredits, consolidatedSGPA, cgpa, totalCredits, feCompleted } = academics;
+    const { semCredits, consolidatedSGPA, cgpa, totalCredits, feCompleted, eligibleForSE } = academics;
     html += `<div class="academics-summary">
       <div class="acad-title">Academic Summary</div>
       <div class="acad-grid">`;
@@ -3557,13 +3557,20 @@ function _pvShowStudent(uin) {
       const cSGPA = consolidatedSGPA[sem];
       const pct   = sc.max > 0 ? Math.round((sc.earned / sc.max) * 100) : 0;
       const done  = sc.earned >= sc.max && sc.max > 0;
+      const hasEligBonus = (sc.earnedEligibility || 0) > sc.earned;
+
       html += `
         <div class="acad-sem-card${done ? ' acad-sem-done' : ''}">
           <div class="acad-sem-title">Semester ${sem}</div>
           <div class="acad-credits">
             <span class="acad-credits-val">${sc.earned} <span class="acad-credits-max">/ ${sc.max}</span></span>
-            <span class="acad-credits-lbl">credits</span>
+            <span class="acad-credits-lbl">Gazette Cr</span>
           </div>
+          ${hasEligBonus ? `
+            <div style="font-size:11px; font-weight:600; color:var(--brand); margin-top:-2px; margin-bottom:6px;">
+              🟢 ${sc.earnedEligibility} / ${sc.max} Eligibility Cr (+${sc.earnedEligibility - sc.earned} Maths TW)
+            </div>
+          ` : ''}
           <div class="acad-progress-bar">
             <div class="acad-progress-fill" style="width:${pct}%"></div>
           </div>
@@ -3576,15 +3583,28 @@ function _pvShowStudent(uin) {
         </div>`;
     }
 
+    const hasOverallEligBonus = (totalCredits.earnedEligibility || 0) > totalCredits.earned;
+    const isEligibleSE = eligibleForSE || feCompleted.done;
+
     html += `
         <div class="acad-totals-card">
           <div class="acad-sem-title">Overall</div>
           <div class="acad-cgpa-big">${cgpa != null ? cgpa.toFixed(2) : '—'}</div>
           <div class="acad-cgpa-lbl">CGPA</div>
-          <div class="acad-total-credits">${totalCredits.earned} / ${totalCredits.max} total credits</div>
+          <div class="acad-total-credits">${totalCredits.earned} / ${totalCredits.max} Gazette Credits</div>
+          ${hasOverallEligBonus ? `
+            <div style="font-size:11px; font-weight:600; color:var(--brand); margin-top:2px;">
+              🟢 ${totalCredits.earnedEligibility} / ${totalCredits.max} Eligibility Credits
+            </div>
+          ` : ''}
           ${feCompleted.done
             ? `<div class="fe-completed-badge" style="margin-top:10px;">🎓 FE Completed<br><small>${UI.esc(feCompleted.session || '')}</small></div>`
-            : ''}
+            : `<div style="margin-top:10px; padding:6px 8px; border-radius:6px; font-size:11px; font-weight:600; text-align:center;
+                background:${isEligibleSE ? 'rgba(16,185,129,0.12)' : 'rgba(239,68,68,0.12)'};
+                color:${isEligibleSE ? '#059669' : '#DC2626'};
+                border:1px solid ${isEligibleSE ? '#A7F3D0' : '#FECACA'};">
+                ${isEligibleSE ? '💡 Eligible for SE (Higher Sem)' : '⚠️ Ineligible for SE (< 32 Elig. Cr)'}
+               </div>`}
         </div>`;
     html += `</div></div>`;
   }
@@ -5066,13 +5086,15 @@ function _rptCreditFilterRun() {
 
   const students = State.getStudents({ branch: branch || undefined, gender: gender || undefined });
   const rows = [];
+  const splitActive = isMathsCreditSplitEnabled();
 
   for (const s of students) {
     const acad = State.computeStudentAcademics(s.uin);
     if (!acad) continue;
     const sc = acad.semCredits[sem];
     if (!sc || sc.max === 0) continue;
-    if (sc.earned >= sc.max) continue;
+    const checkEarned = splitActive ? (sc.earnedEligibility || sc.earned) : sc.earned;
+    if (checkEarned >= sc.max) continue;
 
     rows.push({
       uin:        s.uin,
@@ -5083,8 +5105,9 @@ function _rptCreditFilterRun() {
       batchYear:  s.batchYear,
       gender:     s.gender || '',
       semEarned:  sc.earned,
+      semEarnedEligibility: sc.earnedEligibility || sc.earned,
       semMax:     sc.max,
-      semPending: sc.max - sc.earned,
+      semPending: sc.max - checkEarned,
       cgpa:       acad.cgpa != null ? acad.cgpa.toFixed(2) : '—',
     });
   }
@@ -5145,6 +5168,7 @@ function _rptRenderCreditFilterTable(rows, sem) {
     let va, vb;
     if (_creditSortCol === 'pending')   { return _creditSortDir * (b.semPending - a.semPending); }
     if (_creditSortCol === 'earned')    { return _creditSortDir * (b.semEarned  - a.semEarned); }
+    if (_creditSortCol === 'elig')      { return _creditSortDir * (b.semEarnedEligibility - a.semEarnedEligibility); }
     if (_creditSortCol === 'cgpa')      { return _creditSortDir * (parseFloat(b.cgpa) - parseFloat(a.cgpa)); }
     if (_creditSortCol === 'name')      { va = a.name;     vb = b.name; }
     else if (_creditSortCol === 'uin')  { va = a.uin;      vb = b.uin; }
@@ -5171,7 +5195,8 @@ function _rptRenderCreditFilterTable(rows, sem) {
         ${_th('Branch','branch')}
         ${_th('Batch','batch')}
         ${_th('Gender','gender')}
-        ${_th(`Sem ${sem} Credits`,'earned')}
+        ${_th(`Gazette Cr`,'earned')}
+        ${_th(`Elig Cr`,'elig')}
         ${_th('Pending','pending')}
         ${_th('CGPA','cgpa')}
       </tr></thead>
@@ -5183,6 +5208,7 @@ function _rptRenderCreditFilterTable(rows, sem) {
           <td>${UI.esc(r.batchYear)}</td>
           <td>${UI.esc(r.gender || '—')}</td>
           <td>${r.semEarned} / ${r.semMax}</td>
+          <td><strong style="${r.semEarnedEligibility > r.semEarned ? 'color:var(--brand);' : ''}">${r.semEarnedEligibility} / ${r.semMax}</strong></td>
           <td class="credit-zero" style="font-weight:700;">${r.semPending}</td>
           <td><strong>${UI.esc(r.cgpa)}</strong></td>
         </tr>`).join('')}
@@ -5194,8 +5220,8 @@ function _rptCreditFilterExport() {
   if (!_creditFilterLastResult.length) { UI.toast('Run the filter first.', 'error'); return; }
   const { sem } = _creditFilterLastMeta;
   UI.exportCSV(`Sem${sem}_IncompleteCredits`,
-    ['UIN','PRN/ERN','Name','Branch','Division','Batch Year','Gender',`Sem ${sem} Earned`,`Sem ${sem} Max`,'Pending Credits','CGPA'],
-    _creditFilterLastResult.map(r => [r.uin, r.prn, r.name, r.branch, r.division, r.batchYear, r.gender, r.semEarned, r.semMax, r.semPending, r.cgpa])
+    ['UIN','PRN/ERN','Name','Branch','Division','Batch Year','Gender',`Sem ${sem} Gazette Earned`,`Sem ${sem} Eligibility Earned`,`Sem ${sem} Max`,'Pending Credits','CGPA'],
+    _creditFilterLastResult.map(r => [r.uin, r.prn, r.name, r.branch, r.division, r.batchYear, r.gender, r.semEarned, r.semEarnedEligibility, r.semMax, r.semPending, r.cgpa])
   );
   UI.toast(`${_creditFilterLastResult.length} students exported.`, 'success');
 }
@@ -5203,7 +5229,7 @@ function _rptCreditFilterExport() {
 // Filter 2: Students with total cumulative credits < X
 let _totalCreditLastResult = [];
 let _totalCreditLastMeta   = {};
-let _totalCreditSortCol    = 'totalEarned';
+let _totalCreditSortCol    = 'totalEarnedEligibility';
 let _totalCreditSortDir    = 1;
 
 function _tcSetThreshold(val) {
@@ -5219,12 +5245,14 @@ function _rptTotalCreditFilterRun() {
 
   const students = State.getStudents({ branch: branch || undefined, gender: gender || undefined });
   const rows = [];
+  const splitActive = isMathsCreditSplitEnabled();
 
   for (const s of students) {
     const acad = State.computeStudentAcademics(s.uin);
     if (!acad) continue;
-    const { earned, max } = acad.totalCredits;
-    if (earned >= threshold) continue;
+    const { earned, earnedEligibility, max } = acad.totalCredits;
+    const checkEarned = splitActive ? (earnedEligibility || earned) : earned;
+    if (checkEarned >= threshold) continue;
 
     rows.push({
       uin:         s.uin,
@@ -5235,18 +5263,22 @@ function _rptTotalCreditFilterRun() {
       batchYear:   s.batchYear,
       gender:      s.gender || '',
       sem1Earned:  acad.semCredits[1].earned,
+      sem1EarnedEligibility: acad.semCredits[1].earnedEligibility || acad.semCredits[1].earned,
       sem1Max:     acad.semCredits[1].max,
       sem2Earned:  acad.semCredits[2].earned,
+      sem2EarnedEligibility: acad.semCredits[2].earnedEligibility || acad.semCredits[2].earned,
       sem2Max:     acad.semCredits[2].max,
       totalEarned: earned,
+      totalEarnedEligibility: earnedEligibility || earned,
       totalMax:    max,
+      eligibleForSE: acad.eligibleForSE,
       cgpa:        acad.cgpa != null ? acad.cgpa.toFixed(2) : '—',
     });
   }
 
   _totalCreditLastResult = rows;
   _totalCreditLastMeta   = { threshold };
-  _totalCreditSortCol    = 'totalEarned';
+  _totalCreditSortCol    = 'totalEarnedEligibility';
   _totalCreditSortDir    = 1;
 
   const btn = document.getElementById('rpt-total-credit-run');
@@ -5277,7 +5309,7 @@ function _rptRenderTotalCreditBranchSummary(rows, threshold) {
         </span>`).join('')}
       <span style="background:var(--surface-2);color:var(--ink-3);border:1px solid var(--border);
         border-radius:20px;padding:2px 10px;font-size:11px;font-weight:600;">
-        Total: ${rows.length} · below ${threshold} credits
+        Total: ${rows.length} · below ${threshold} eligibility credits
       </span>
     </div>`;
 }
@@ -5296,9 +5328,10 @@ function _rptRenderTotalCreditFilterTable(rows, threshold) {
 
   const sorted = [...rows].sort((a, b) => {
     const col = _totalCreditSortCol;
+    if (col === 'totalEarnedEligibility') return _totalCreditSortDir * (a.totalEarnedEligibility - b.totalEarnedEligibility);
     if (col === 'totalEarned') return _totalCreditSortDir * (a.totalEarned - b.totalEarned);
-    if (col === 'sem1')        return _totalCreditSortDir * (a.sem1Earned  - b.sem1Earned);
-    if (col === 'sem2')        return _totalCreditSortDir * (a.sem2Earned  - b.sem2Earned);
+    if (col === 'sem1')        return _totalCreditSortDir * (a.sem1EarnedEligibility - b.sem1EarnedEligibility);
+    if (col === 'sem2')        return _totalCreditSortDir * (a.sem2EarnedEligibility - b.sem2EarnedEligibility);
     if (col === 'cgpa')        return _totalCreditSortDir * (parseFloat(a.cgpa) - parseFloat(b.cgpa));
     let va, vb;
     if (col === 'name')   { va = a.name;      vb = b.name; }
@@ -5326,9 +5359,11 @@ function _rptRenderTotalCreditFilterTable(rows, threshold) {
         ${_th('Branch','branch')}
         ${_th('Batch','batch')}
         ${_th('Gender','gender')}
-        ${_th('Sem I','sem1')}
-        ${_th('Sem II','sem2')}
-        ${_th('Total Credits','totalEarned')}
+        ${_th('Sem I (Elig)','sem1')}
+        ${_th('Sem II (Elig)','sem2')}
+        ${_th('Gazette Cr','totalEarned')}
+        ${_th('Elig Cr','totalEarnedEligibility')}
+        ${_th('SE Status','eligibleForSE')}
         ${_th('CGPA','cgpa')}
       </tr></thead>
       <tbody>
@@ -5338,10 +5373,18 @@ function _rptRenderTotalCreditFilterTable(rows, threshold) {
           <td>${UI.esc(r.branch)}</td>
           <td>${UI.esc(r.batchYear)}</td>
           <td>${UI.esc(r.gender || '—')}</td>
-          <td>${r.sem1Earned}/${r.sem1Max}</td>
-          <td>${r.sem2Earned}/${r.sem2Max}</td>
-          <td class="${r.totalEarned < threshold ? 'credit-zero' : 'credit-earned'}" style="font-weight:700;">
-            ${r.totalEarned} / ${r.totalMax}
+          <td>${r.sem1EarnedEligibility}/${r.sem1Max}</td>
+          <td>${r.sem2EarnedEligibility}/${r.sem2Max}</td>
+          <td>${r.totalEarned}/${r.totalMax}</td>
+          <td class="${r.totalEarnedEligibility < threshold ? 'credit-zero' : 'credit-earned'}" style="font-weight:700;">
+            ${r.totalEarnedEligibility} / ${r.totalMax}
+          </td>
+          <td>
+            <span style="padding:2px 8px; border-radius:12px; font-size:10px; font-weight:700;
+              background:${r.eligibleForSE ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)'};
+              color:${r.eligibleForSE ? '#059669' : '#DC2626'};">
+              ${r.eligibleForSE ? 'Eligible' : 'Ineligible'}
+            </span>
           </td>
           <td><strong>${UI.esc(r.cgpa)}</strong></td>
         </tr>`).join('')}
@@ -5353,8 +5396,15 @@ function _rptTotalCreditFilterExport() {
   if (!_totalCreditLastResult.length) { UI.toast('Run the filter first.', 'error'); return; }
   const { threshold } = _totalCreditLastMeta;
   UI.exportCSV(`TotalCredits_lt${threshold}`,
-    ['UIN','PRN/ERN','Name','Branch','Division','Batch Year','Gender','Sem 1 Earned','Sem 1 Max','Sem 2 Earned','Sem 2 Max','Total Earned','Total Max','CGPA'],
-    _totalCreditLastResult.map(r => [r.uin, r.prn, r.name, r.branch, r.division, r.batchYear, r.gender, r.sem1Earned, r.sem1Max, r.sem2Earned, r.sem2Max, r.totalEarned, r.totalMax, r.cgpa])
+    ['UIN','PRN/ERN','Name','Branch','Division','Batch Year','Gender','Sem 1 Gazette','Sem 1 Eligibility','Sem 1 Max','Sem 2 Gazette','Sem 2 Eligibility','Sem 2 Max','Total Gazette','Total Eligibility','Total Max','SE Status','CGPA'],
+    _totalCreditLastResult.map(r => [
+      r.uin, r.prn, r.name, r.branch, r.division, r.batchYear, r.gender,
+      r.sem1Earned, r.sem1EarnedEligibility, r.sem1Max,
+      r.sem2Earned, r.sem2EarnedEligibility, r.sem2Max,
+      r.totalEarned, r.totalEarnedEligibility, r.totalMax,
+      r.eligibleForSE ? 'Eligible' : 'Ineligible',
+      r.cgpa
+    ])
   );
   UI.toast(`${_totalCreditLastResult.length} students exported.`, 'success');
 }
@@ -6136,6 +6186,15 @@ function initAdmin() {
   if (!Auth.isAdmin()) {
     document.getElementById('tab-admin').innerHTML = '<div class="access-denied">Admin access only.</div>';
     return;
+  }
+
+  const splitToggle = document.getElementById('admin-maths-split-toggle');
+  if (splitToggle) {
+    splitToggle.checked = isMathsCreditSplitEnabled();
+    splitToggle.onchange = (e) => {
+      setMathsCreditSplitEnabled(e.target.checked);
+      UI.toast(`Maths Credit Split for Eligibility ${e.target.checked ? 'Enabled' : 'Disabled'}.`, 'info');
+    };
   }
 
   document.getElementById('admin-add-session').onclick  = _adminAddSession;
