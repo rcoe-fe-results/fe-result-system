@@ -1990,6 +1990,13 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
                 <option value="45">Clear Pass Only (45/45 Credits)</option>
               </select>
             </div>
+            <div>
+              <label class="form-label" style="font-size:11px; margin-bottom:2px;">Credit Basis</label>
+              <select id="nba-basis-select" class="form-control" style="width:215px;">
+                <option value="eligibility">Eligibility Credits (With Maths Split)</option>
+                <option value="gazette">Strict Gazette Credits (Without Split)</option>
+              </select>
+            </div>
             <div style="align-self:flex-end;">
               <button id="nba-export-btn" class="btn btn-secondary" style="height:36px;">
                 📥 Export CSV

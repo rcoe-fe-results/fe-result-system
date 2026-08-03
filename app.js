@@ -8760,6 +8760,7 @@ function initNBA() {
   const batchSel = document.getElementById('nba-batch-select');
   const branchSel = document.getElementById('nba-branch-select');
   const ruleSel = document.getElementById('nba-rule-select');
+  const basisSel = document.getElementById('nba-basis-select');
   const statusFilter = document.getElementById('nba-status-filter');
   const exportBtn = document.getElementById('nba-export-btn');
 
@@ -8788,6 +8789,7 @@ function initNBA() {
     batchSel.addEventListener('change', renderNBATab);
     branchSel?.addEventListener('change', renderNBATab);
     ruleSel?.addEventListener('change', renderNBATab);
+    basisSel?.addEventListener('change', renderNBATab);
     statusFilter?.addEventListener('change', _renderNBARosterOnly);
     exportBtn?.addEventListener('click', exportNBACriterion8_3CSV);
     batchSel._bound = true;
@@ -8796,7 +8798,7 @@ function initNBA() {
   renderNBATab();
 }
 
-function calculateNBA_8_3(batchYear, branchFilter = null, minCreditsThreshold = 32) {
+function calculateNBA_8_3(batchYear, branchFilter = null, minCreditsThreshold = 32, creditBasis = 'eligibility') {
   if (!batchYear) return { available: false, Z: 0, Y: 0, successRatio: 0, X: 0, API: 0, score: 0, students: [] };
 
   let allStudents = State.getStudents({ batchYear: String(batchYear) });
@@ -8823,7 +8825,11 @@ function calculateNBA_8_3(batchYear, branchFilter = null, minCreditsThreshold = 
 
     Z++; // Appeared student
 
-    const earnedCredits = academics.totalCredits ? academics.totalCredits.earned : 0;
+    const earnedCredits = academics.totalCredits
+      ? (creditBasis === 'gazette'
+          ? academics.totalCredits.earned
+          : (academics.totalCredits.earnedEligibility !== undefined ? academics.totalCredits.earnedEligibility : academics.totalCredits.earned))
+      : 0;
     const maxCredits = academics.totalCredits ? academics.totalCredits.max : 45;
     const cgpa = academics.cgpa;
     const isNEP = Number(batchYear) >= 2024;
@@ -8894,10 +8900,12 @@ function renderNBATab() {
   const batchSel = document.getElementById('nba-batch-select');
   const branchSel = document.getElementById('nba-branch-select');
   const ruleSel = document.getElementById('nba-rule-select');
+  const basisSel = document.getElementById('nba-basis-select');
 
   const cayBatch = batchSel ? batchSel.value : '';
   const selectedBranch = branchSel ? branchSel.value : '';
   const minCredits = ruleSel ? Number(ruleSel.value) : 32;
+  const creditBasis = basisSel ? basisSel.value : 'eligibility';
 
   if (!cayBatch) {
     document.getElementById('nba-kpi-container').innerHTML = '<div class="muted">No batch selected or no data available.</div>';
@@ -8912,9 +8920,9 @@ function renderNBATab() {
   const caym2Year = cayYear - 2;
 
   // Calculate 8.3 for CAY, CAYm1, CAYm2
-  const cayData = calculateNBA_8_3(cayYear, selectedBranch || null, minCredits);
-  const caym1Data = calculateNBA_8_3(caym1Year, selectedBranch || null, minCredits);
-  const caym2Data = calculateNBA_8_3(caym2Year, selectedBranch || null, minCredits);
+  const cayData = calculateNBA_8_3(cayYear, selectedBranch || null, minCredits, creditBasis);
+  const caym1Data = calculateNBA_8_3(caym1Year, selectedBranch || null, minCredits, creditBasis);
+  const caym2Data = calculateNBA_8_3(caym2Year, selectedBranch || null, minCredits, creditBasis);
 
   // 1. Render KPI Cards for Selected CAY Batch
   const kpiEl = document.getElementById('nba-kpi-container');
@@ -9056,7 +9064,7 @@ function renderNBATab() {
   `;
 
   for (const b of branches) {
-    const bData = calculateNBA_8_3(cayYear, b, minCredits);
+    const bData = calculateNBA_8_3(cayYear, b, minCredits, creditBasis);
     const detained = bData.Z - bData.Y;
     branchHtml += `
       <tr>
