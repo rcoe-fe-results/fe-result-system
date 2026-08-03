@@ -8830,11 +8830,20 @@ function calculateNBA_8_3(batchYear, branchFilter = null, minCreditsThreshold = 
 
     // Promotion rule evaluation
     let isPromoted = false;
-    if (minCreditsThreshold === 45) {
-      isPromoted = (earnedCredits >= maxCredits && maxCredits > 0);
+    if (isNEP) {
+      // NEP 2020 (2024+): Clear Pass requires full 45 credits; >= 32 requires at least 32 earned credits
+      if (minCreditsThreshold === 45) {
+        isPromoted = (earnedCredits >= maxCredits && maxCredits >= 45);
+      } else {
+        isPromoted = (earnedCredits >= Number(minCreditsThreshold));
+      }
     } else {
-      // Default: NEP 2020 >= 32 credits for 2024+, or feCompleted for pre-NEP
-      isPromoted = isNEP ? (earnedCredits >= Number(minCreditsThreshold)) : (academics.feCompleted && academics.feCompleted.done);
+      // Pre-NEP:
+      if (minCreditsThreshold === 45) {
+        isPromoted = !!(academics.feCompleted && academics.feCompleted.done);
+      } else {
+        isPromoted = (earnedCredits >= Number(minCreditsThreshold));
+      }
     }
 
     if (isPromoted) {
