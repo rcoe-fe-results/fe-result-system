@@ -1560,6 +1560,8 @@ const State = (() => {
       cgpa,
       totalCredits: { earned: totalEarned, max: totalMax },
       feCompleted:  { done: feCompleted, session: feSession },
+      latestPerSubject,
+      latestPerSessionSubject,
     };
   }
 
@@ -1878,7 +1880,7 @@ const State = (() => {
           const allSemSubjects = getSubjectsForSem(sem, studentBranch, sess.prelim);
           let totalMarks = 0;
           for (const subj of allSemSubjects) {
-            const r = acad.latestPerSubject[subj.code];
+            const r = acad?.latestPerSubject?.[subj.code];
             if (!r) return null;
             const sessObj = getSession(r.examSession);
             let marksMap = {};
@@ -1888,7 +1890,7 @@ const State = (() => {
             if (r.oralMarks !== '') marksMap.Oral = r.oralMarks;
             if (sessObj?.entryType === 'Revaluation_Gazette' && sessObj.linkedPrelimSessionId) {
               const prelimKey = sessObj.linkedPrelimSessionId + '||' + r.subjectCode;
-              const prelimRow = acad.latestPerSessionSubject[prelimKey];
+              const prelimRow = acad?.latestPerSessionSubject?.[prelimKey];
               if (prelimRow) {
                 if (!marksMap.IAT  && prelimRow.iatMarks)  marksMap.IAT  = prelimRow.iatMarks;
                 if (!marksMap.TW   && prelimRow.twMarks)   marksMap.TW   = prelimRow.twMarks;
@@ -2002,7 +2004,7 @@ const State = (() => {
           if (!acad) continue;
           for (const subj of canonicalList) {
             if (subjectCode && subj.code !== subjectCode) continue;
-            const r = acad.latestPerSubject[subj.code];
+            const r = acad?.latestPerSubject?.[subj.code];
             if (!r) continue;
             const sessObj = getSession(r.examSession);
             let marksMap = {};
@@ -2012,7 +2014,7 @@ const State = (() => {
             if (r.oralMarks !== '') marksMap.Oral = r.oralMarks;
             if (sessObj?.entryType === 'Revaluation_Gazette' && sessObj.linkedPrelimSessionId) {
               const prelimKey = sessObj.linkedPrelimSessionId + '||' + r.subjectCode;
-              const prelimRow = acad.latestPerSessionSubject[prelimKey];
+              const prelimRow = acad?.latestPerSessionSubject?.[prelimKey];
               if (prelimRow) {
                 if (!marksMap.IAT  && prelimRow.iatMarks)  marksMap.IAT  = prelimRow.iatMarks;
                 if (!marksMap.TW   && prelimRow.twMarks)   marksMap.TW   = prelimRow.twMarks;
