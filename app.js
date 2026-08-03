@@ -3677,6 +3677,13 @@ function initReports() {
     document.getElementById(id)?.addEventListener('change', _rptLiveToppers);
     document.getElementById(id)?.addEventListener('input', _rptLiveToppers);
   });
+  document.querySelectorAll('#rpt-topper-kt-toggle .mode-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#rpt-topper-kt-toggle .mode-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      _rptLiveToppers();
+    });
+  });
   document.querySelectorAll('.topper-tab-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       _topperActiveTab = btn.dataset.tab;
@@ -4625,6 +4632,7 @@ function _rptLiveToppers() {
   const subjectCode = document.getElementById('rpt-topper-subject').value || null;
   const topN        = Number(document.getElementById('rpt-topper-n').value || 10);
   const gender      = document.getElementById('rpt-shared-gender').value || null;
+  const includeKtAttempts = document.getElementById('rpt-topper-kt-on')?.classList.contains('active') || false;
 
   // Disable subject-wise for FY
   const modeEl = document.getElementById('rpt-topper-mode');
@@ -4642,7 +4650,7 @@ function _rptLiveToppers() {
 
   let data;
   try {
-    data = State.reportToppers({ tabMode, mode, branch, batchYear, subjectCode, topN, gender });
+    data = State.reportToppers({ tabMode, mode, branch, batchYear, subjectCode, topN, gender, includeKtAttempts });
   } catch(e) {
     console.error('[_rptLiveToppers]', e);
     toppersWrap.innerHTML = '<div style="text-align:center;color:var(--fail);padding:16px;font-size:12px;">Error loading toppers: ' + UI.esc(e.message) + '</div>';
@@ -4666,10 +4674,11 @@ function _rptLiveToppers() {
       const sem2Total = d.sem2Total != null ? d.sem2Total : '—';
       const sem2Sgpa  = d.sem2Sgpa  != null ? d.sem2Sgpa.toFixed(2)  : '—';
       const cgpa      = d.cgpa      != null ? d.cgpa.toFixed(2)      : '—';
+      const ktBadge   = d.isKt ? `<span class="badge-kt-subtle" title="Cleared via KT attempt" style="font-size:10px;padding:1px 5px;border-radius:3px;background:#FFFBEB;color:#D97706;border:1px solid #FCD34D;margin-left:6px;font-weight:600;">KT</span>` : '';
       rows += `<tr>
         <td style="font-weight:700;color:var(--brand);">#${d.rank}</td>
         <td><span class="subj-code-small">${UI.esc(d.uin)}</span></td>
-        <td>${UI.esc(d.name)}</td>
+        <td>${UI.esc(d.name)}${ktBadge}</td>
         <td>${UI.esc(d.gender || '—')}</td>
         <td style="text-align:center;">${UI.esc(String(sem1Total))}</td>
         <td style="text-align:center;font-weight:600;color:var(--brand);">${UI.esc(String(sem1Sgpa))}</td>
@@ -4714,11 +4723,12 @@ function _rptLiveToppers() {
           letter-spacing:.05em;padding:6px 10px;color:var(--ink-2);">${UI.esc(d.branchGroup)}</td></tr>`;
         lastBranch = d.branchGroup;
       }
-      const maxStr = d.subjectMax != null ? `<small style="color:var(--ink-3);">/${d.subjectMax}</small>` : '';
+      const maxStr  = d.subjectMax != null ? `<small style="color:var(--ink-3);">/${d.subjectMax}</small>` : '';
+      const ktBadge = d.isKt ? `<span class="badge-kt-subtle" title="Cleared via KT attempt" style="font-size:10px;padding:1px 5px;border-radius:3px;background:#FFFBEB;color:#D97706;border:1px solid #FCD34D;margin-left:6px;font-weight:600;">KT</span>` : '';
       rows += `<tr>
         <td style="font-weight:700;color:var(--brand);">#${d.rank}</td>
         <td><span class="subj-code-small">${UI.esc(d.uin)}</span></td>
-        <td>${UI.esc(d.name)}</td>
+        <td>${UI.esc(d.name)}${ktBadge}</td>
         <td>${UI.esc(d.branch)}</td>
         <td>${UI.esc(d.gender || '—')}</td>
         <td style="font-weight:600;">${d.totalMarks}${maxStr}</td>
@@ -4741,13 +4751,18 @@ function _rptExportToppers() {
   const batchYear   = document.getElementById('rpt-topper-batch').value  || null;
   const subjectCode = document.getElementById('rpt-topper-subject').value || null;
   const topN        = Number(document.getElementById('rpt-topper-n').value || 10);
+  const gender      = document.getElementById('rpt-shared-gender').value || null;
+  const includeKtAttempts = document.getElementById('rpt-topper-kt-on')?.classList.contains('active') || false;
+
+  const toppersWrap = document.getElementById('rpt-toppers-wrap');
+
   if (!batchYear) {
     toppersWrap.innerHTML = '<div style="text-align:center;color:var(--ink-4);padding:16px;font-size:12px;">Select a batch year to view toppers.</div>';
     return;
   }
   let data;
   try {
-    data = State.reportToppers({ tabMode, mode, branch, batchYear, subjectCode, topN, gender });
+    data = State.reportToppers({ tabMode, mode, branch, batchYear, subjectCode, topN, gender, includeKtAttempts });
   } catch(e) {
     console.error('[_rptLiveToppers]', e);
     toppersWrap.innerHTML = '<div style="text-align:center;color:var(--fail);padding:16px;font-size:12px;">Error: ' + UI.esc(e.message) + '</div>';
@@ -4763,20 +4778,20 @@ function _rptExportToppers() {
   if (mode === 'branch') {
     UI.exportCSV(`Toppers_${tabMode.toUpperCase()}_Branch`,
       ['Gender Group','Rank','UIN','PRN','Name','Branch','Gender',
-       'Sem I Total','Sem I SGPA','Sem II Total','Sem II SGPA','CGPA'],
+       'Sem I Total','Sem I SGPA','Sem II Total','Sem II SGPA','CGPA','KT Attempt'],
       allRows.map(d => [
         d.genderGroup, d.rank, d.uin, d.prn, d.name, d.branch, d.gender||'',
         d.sem1Total??'', d.sem1Sgpa!=null?d.sem1Sgpa.toFixed(2):'',
         d.sem2Total??'', d.sem2Sgpa!=null?d.sem2Sgpa.toFixed(2):'',
-        d.cgpa!=null?d.cgpa.toFixed(2):'',
+        d.cgpa!=null?d.cgpa.toFixed(2):'', d.isKt ? 'Yes' : 'No',
       ])
     );
   } else {
     UI.exportCSV(`Toppers_${tabMode.toUpperCase()}_Subject`,
-      ['Gender Group','Rank','UIN','PRN','Name','Branch','Gender','Subject Code','Subject Name','Total Marks','Subject Max'],
+      ['Gender Group','Rank','UIN','PRN','Name','Branch','Gender','Subject Code','Subject Name','Total Marks','Subject Max','KT Attempt'],
       allRows.map(d => [
         d.genderGroup, d.rank, d.uin, d.prn, d.name, d.branch, d.gender||'',
-        d.subjectCode, d.subjectName, d.totalMarks, d.subjectMax??'',
+        d.subjectCode, d.subjectName, d.totalMarks, d.subjectMax??'', d.isKt ? 'Yes' : 'No',
       ])
     );
   }

@@ -1580,6 +1580,13 @@ select:disabled { background:var(--surface-2); color:var(--ink-4); cursor:not-al
             <label>Top N</label>
             <input type="number" id="rpt-topper-n" value="10" min="1" max="240" style="width:70px; min-width:unset;">
           </div>
+          <div class="filter-group" id="rpt-topper-kt-row">
+            <label>KT Attempts</label>
+            <div class="mode-toggle" id="rpt-topper-kt-toggle" style="height:32px;">
+              <button type="button" class="mode-btn active" id="rpt-topper-kt-off" data-include-kt="false">Regular Only</button>
+              <button type="button" class="mode-btn" id="rpt-topper-kt-on" data-include-kt="true">Include KT</button>
+            </div>
+          </div>
           <div class="filter-group" style="justify-content:flex-end;">
             <label>&nbsp;</label>
             <button id="rpt-toppers-csv" class="btn btn-secondary btn-sm">⬇ Export CSV</button>

@@ -1814,7 +1814,7 @@ const State = (() => {
   }
 
   // Toppers — branch-wise (top N by total marks) or subject-wise (top 3 per branch)
-  function reportToppers({ tabMode = 'sem1', mode = 'branch', branch, subjectCode, topN = 10, batchYear, gender } = {}) {
+  function reportToppers({ tabMode = 'sem1', mode = 'branch', branch, subjectCode, topN = 10, batchYear, gender, includeKtAttempts = false } = {}) {
     // Resolve sessions for the requested tab
     // tabMode: 'sem1' | 'sem2' | 'fy'
     // For each semester, find the first (regular) preliminary session for the given batchYear
@@ -1860,16 +1860,50 @@ const State = (() => {
       const sessId = sess.gazette ? sess.gazette.id : sess.prelim.id;
       const sessRes = acad.sessionResults.find(sr => sr.session.id === sessId)
                    || acad.sessionResults.find(sr => sr.session.id === sess.prelim.id);
-      if (!sessRes) return null;
+      
+      const isRegularPass = sessRes && sessRes.pendingCount === 0 &&
+        !sessRes.subjects.some(s => !s.pending && (s.dr?.result === 'Fail' || s.dr?.result === 'AB'));
 
-      // Exclude students with pending subjects
-      if (sessRes.pendingCount > 0) return null;
-      // Exclude students with any Fail/AB
-      if (sessRes.subjects.some(s => !s.pending && (s.dr?.result === 'Fail' || s.dr?.result === 'AB'))) return null;
+      if (isRegularPass) {
+        const totalMarks = sessRes.subjects.reduce((sum, s) => sum + (s.dr?.total || 0), 0);
+        const sgpa = sessRes.sgpa;
+        return { totalMarks, sgpa, isKt: false };
+      }
 
-      const totalMarks = sessRes.subjects.reduce((sum, s) => sum + (s.dr?.total || 0), 0);
-      const sgpa = sessRes.sgpa;
-      return { totalMarks, sgpa };
+      if (includeKtAttempts) {
+        const sem = sess.prelim.semester;
+        if (acad.semCredits[sem] && acad.semCredits[sem].earned >= acad.semCredits[sem].max && acad.semCredits[sem].max > 0) {
+          const sgpa = acad.consolidatedSGPA[sem];
+          if (sgpa == null) return null;
+          const allSemSubjects = getSubjectsForSem(sem, studentBranch, sess.prelim);
+          let totalMarks = 0;
+          for (const subj of allSemSubjects) {
+            const r = acad.latestPerSubject[subj.code];
+            if (!r) return null;
+            const sessObj = getSession(r.examSession);
+            let marksMap = {};
+            if (r.iatMarks  !== '') marksMap.IAT  = r.iatMarks;
+            if (r.eseMarks  !== '') marksMap.ESE  = r.eseMarks;
+            if (r.twMarks   !== '') marksMap.TW   = r.twMarks;
+            if (r.oralMarks !== '') marksMap.Oral = r.oralMarks;
+            if (sessObj?.entryType === 'Revaluation_Gazette' && sessObj.linkedPrelimSessionId) {
+              const prelimKey = sessObj.linkedPrelimSessionId + '||' + r.subjectCode;
+              const prelimRow = acad.latestPerSessionSubject[prelimKey];
+              if (prelimRow) {
+                if (!marksMap.IAT  && prelimRow.iatMarks)  marksMap.IAT  = prelimRow.iatMarks;
+                if (!marksMap.TW   && prelimRow.twMarks)   marksMap.TW   = prelimRow.twMarks;
+                if (!marksMap.Oral && prelimRow.oralMarks) marksMap.Oral = prelimRow.oralMarks;
+              }
+            }
+            const dr = computeDisplayResult(subj, marksMap);
+            if (dr.pending || dr.result === 'Fail' || dr.result === 'AB') return null;
+            totalMarks += (dr.total || 0);
+          }
+          return { totalMarks, sgpa, isKt: true };
+        }
+      }
+
+      return null;
     }
 
     // Build ranked list for branch-wise mode
@@ -1888,6 +1922,9 @@ const State = (() => {
 
         // CGPA from cached academics
         const cgpa = _getAcad(student.uin)?.cgpa ?? null;
+        const isKt = tabMode === 'sem1' ? sem1Stats?.isKt
+                   : tabMode === 'sem2' ? sem2Stats?.isKt
+                   : (sem1Stats?.isKt || sem2Stats?.isKt);
 
         byStudent[student.uin] = {
           uin:          student.uin,
@@ -1900,6 +1937,7 @@ const State = (() => {
           sem2Total:    sem2Stats?.totalMarks ?? null,
           sem2Sgpa:     sem2Stats?.sgpa       ?? null,
           cgpa,
+          isKt:         !!isKt,
           // Sort key depending on tab
           _sortKey: tabMode === 'sem1' ? (sem1Stats?.sgpa ?? 0)
                   : tabMode === 'sem2' ? (sem2Stats?.sgpa ?? 0)
@@ -1929,22 +1967,6 @@ const State = (() => {
       const sessId = sess.gazette ? sess.gazette.id : sess.prelim.id;
       const prelimId = sess.prelim.id;
 
-      // Collect ledger rows for this session (gazette overrides prelim per subject)
-      const prelimRows  = ledger.filter(r => r.examSession === prelimId);
-      const gazetteRows = sess.gazette ? ledger.filter(r => r.examSession === sessId) : [];
-      const gazetteMap  = {};
-      for (const r of gazetteRows) gazetteMap[r.uin + '||' + r.subjectCode] = r;
-      const mergedRows  = prelimRows.map(r => gazetteMap[r.uin + '||' + r.subjectCode] || r);
-      const passRows    = mergedRows.filter(r => r.result === 'Pass');
-
-      const filtered = passRows.filter(r =>
-        (!subjectCode || r.subjectCode === subjectCode) &&
-        (!branch      || r.branch      === branch)      &&
-        (!batchYear   || r.batchYear   === batchYear)   &&
-        (!genderFilter || r.gender     === genderFilter)
-      );
-
-      // Compute subject max marks
       const subjectMaxMap = {};
       const canonicalList = getSubjectsForSem(sem, branch || 'Computer', sess.prelim);
       for (const s of canonicalList) {
@@ -1953,18 +1975,79 @@ const State = (() => {
       const subjOrder = {};
       canonicalList.forEach((s, i) => { subjOrder[s.code] = i; });
 
+      const candidateRows = [];
+
+      if (!includeKtAttempts) {
+        const prelimRows  = ledger.filter(r => r.examSession === prelimId);
+        const gazetteRows = sess.gazette ? ledger.filter(r => r.examSession === sessId) : [];
+        const gazetteMap  = {};
+        for (const r of gazetteRows) gazetteMap[r.uin + '||' + r.subjectCode] = r;
+        const mergedRows  = prelimRows.map(r => gazetteMap[r.uin + '||' + r.subjectCode] || r);
+        const passRows    = mergedRows.filter(r => r.result === 'Pass');
+
+        for (const r of passRows) {
+          candidateRows.push({
+            uin: r.uin, prn: r.prn, name: r.name, branch: r.branch, gender: r.gender || '',
+            subjectCode: r.subjectCode, subjectName: r.subjectName,
+            subjectMax: subjectMaxMap[r.subjectCode] ?? null,
+            totalMarks: Number(r.totalMarks) || 0,
+            batchYear: r.batchYear,
+            isKt: false,
+          });
+        }
+      } else {
+        for (const student of allStudents) {
+          if (genderFilter && student.gender !== genderFilter) continue;
+          const acad = _getAcad(student.uin);
+          if (!acad) continue;
+          for (const subj of canonicalList) {
+            if (subjectCode && subj.code !== subjectCode) continue;
+            const r = acad.latestPerSubject[subj.code];
+            if (!r) continue;
+            const sessObj = getSession(r.examSession);
+            let marksMap = {};
+            if (r.iatMarks  !== '') marksMap.IAT  = r.iatMarks;
+            if (r.eseMarks  !== '') marksMap.ESE  = r.eseMarks;
+            if (r.twMarks   !== '') marksMap.TW   = r.twMarks;
+            if (r.oralMarks !== '') marksMap.Oral = r.oralMarks;
+            if (sessObj?.entryType === 'Revaluation_Gazette' && sessObj.linkedPrelimSessionId) {
+              const prelimKey = sessObj.linkedPrelimSessionId + '||' + r.subjectCode;
+              const prelimRow = acad.latestPerSessionSubject[prelimKey];
+              if (prelimRow) {
+                if (!marksMap.IAT  && prelimRow.iatMarks)  marksMap.IAT  = prelimRow.iatMarks;
+                if (!marksMap.TW   && prelimRow.twMarks)   marksMap.TW   = prelimRow.twMarks;
+                if (!marksMap.Oral && prelimRow.oralMarks) marksMap.Oral = prelimRow.oralMarks;
+              }
+            }
+            const dr = computeDisplayResult(subj, marksMap);
+            if (dr.pending || dr.result === 'Fail' || dr.result === 'AB') continue;
+            const isKt = (r.examSession !== prelimId && r.examSession !== sessId);
+            candidateRows.push({
+              uin: student.uin, prn: student.prn, name: student.name, branch: student.branch, gender: student.gender || '',
+              subjectCode: subj.code, subjectName: subj.name,
+              subjectMax: subjectMaxMap[subj.code] ?? null,
+              totalMarks: Number(dr.total) || 0,
+              batchYear: student.batchYear,
+              isKt,
+            });
+          }
+        }
+      }
+
+      const filtered = candidateRows.filter(r =>
+        (!subjectCode || r.subjectCode === subjectCode) &&
+        (!branch      || r.branch      === branch)      &&
+        (!batchYear   || r.batchYear   === batchYear)   &&
+        (!genderFilter || r.gender     === genderFilter)
+      );
+
       const bySubjBranch = {};
       for (const r of filtered) {
         const sk = r.subjectCode;
         const bk = r.branch;
         if (!bySubjBranch[sk]) bySubjBranch[sk] = {};
         if (!bySubjBranch[sk][bk]) bySubjBranch[sk][bk] = [];
-        bySubjBranch[sk][bk].push({
-          uin: r.uin, prn: r.prn, name: r.name, branch: r.branch, gender: r.gender || '',
-          subjectCode: r.subjectCode, subjectName: r.subjectName,
-          subjectMax: subjectMaxMap[r.subjectCode] ?? null,
-          totalMarks: Number(r.totalMarks) || 0,
-        });
+        bySubjBranch[sk][bk].push(r);
       }
 
       const result = [];
