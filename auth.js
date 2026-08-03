@@ -73,6 +73,7 @@ const Auth = (() => {
       localStorage.removeItem(STORAGE_USER);
       localStorage.removeItem(STORAGE_TOKEN);
       localStorage.removeItem('gsi_consented');
+      localStorage.removeItem('fe_active_tab');
     } catch (e) {}
   }
 

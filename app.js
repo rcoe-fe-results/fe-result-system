@@ -21,7 +21,14 @@ function _onAuthChange(user) {
     UI.hideSpinner();
     _buildNav(user);
     _showScreen('app');
-    showTab('mark-entry');
+    
+    const hashTab = window.location.hash ? window.location.hash.replace('#', '') : null;
+    const savedTab = localStorage.getItem('fe_active_tab');
+    const initialTab = (hashTab && TAB_INIT[hashTab]) 
+      ? hashTab 
+      : (savedTab && TAB_INIT[savedTab] ? savedTab : 'mark-entry');
+
+    showTab(initialTab);
   }).catch(err => {
     UI.hideSpinner();
     UI.toast('Failed to load data: ' + err.message, 'error', 8000);
@@ -61,8 +68,17 @@ function _bindNav() {
 }
 
 function showTab(tabId) {
+  if (!TAB_INIT[tabId]) tabId = 'mark-entry';
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tabId));
   document.querySelectorAll('.tab-pane').forEach(p => p.classList.toggle('hidden', p.id !== 'tab-' + tabId));
+
+  try {
+    localStorage.setItem('fe_active_tab', tabId);
+    if (window.location.hash !== '#' + tabId) {
+      history.replaceState(null, '', '#' + tabId);
+    }
+  } catch (e) {}
+
   const init = TAB_INIT[tabId];
   if (init) init();
 }
