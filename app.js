@@ -50,7 +50,7 @@ function _buildNav(user) {
 }
 
 function _bindNav() {
-  document.querySelectorAll('[data-tab]').forEach(btn => {
+  document.querySelectorAll('.tab-btn[data-tab]').forEach(btn => {
     btn.addEventListener('click', () => showTab(btn.dataset.tab));
   });
   document.getElementById('sign-out-btn')?.addEventListener('click', () => {
@@ -3686,12 +3686,14 @@ function initReports() {
   });
   document.querySelectorAll('.topper-tab-btn').forEach(btn => {
     btn.addEventListener('click', () => {
-      _topperActiveTab = btn.dataset.tab;
+      _topperActiveTab = btn.dataset.topperTab || btn.dataset.tab;
       document.querySelectorAll('.topper-tab-btn').forEach(b => {
+        b.classList.remove('active');
         b.style.color        = 'var(--ink-3)';
         b.style.fontWeight   = '500';
         b.style.borderBottom = '2px solid transparent';
       });
+      btn.classList.add('active');
       btn.style.color        = 'var(--brand)';
       btn.style.fontWeight   = '600';
       btn.style.borderBottom = '2px solid var(--brand)';
@@ -4607,8 +4609,8 @@ function _rptExportRevalImpact() {
 function _rptToggleTopperMode() {
   const mode   = document.getElementById('rpt-topper-mode').value;
   const tabBtn = document.querySelector('.topper-tab-btn.active') ||
-                 document.querySelector('.topper-tab-btn[data-tab="sem1"]');
-  const tabMode = tabBtn?.dataset.tab || 'sem1';
+                 document.querySelector('.topper-tab-btn[data-topper-tab="sem1"]');
+  const tabMode = tabBtn?.dataset.topperTab || _topperActiveTab || 'sem1';
   // Subject-wise disabled for FY tab
   const isFY = tabMode === 'fy';
   document.getElementById('rpt-topper-subject-row').style.display = (mode === 'subject' && !isFY) ? '' : 'none';
