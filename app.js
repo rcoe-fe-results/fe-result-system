@@ -18,6 +18,7 @@ window.addEventListener('hashchange', () => {
 
 const TAB_INIT = {
   'mark-entry':   initMarkEntry,
+  'verify-marks': initVerifyMarks,
   'progress':     initProgress,
   'reports':      initReports,
   'nba':          initNBA,
@@ -3185,6 +3186,378 @@ function _queueUpdateHeader() {
   document.getElementById('se-q-done').textContent    = `${done} done`;
   document.getElementById('se-q-pending').textContent = ` · ${pending} pending`;
   document.getElementById('se-q-student-name').textContent = student ? student.name : '';
+}
+
+// ═══════════════════════════════════════════════════════════════
+// TAB — VERIFY MARKS LAYER
+// ═══════════════════════════════════════════════════════════════
+
+let _vmCurrentSessionId = '';
+let _vmCurrentBranch    = 'ALL';
+let _vmCurrentStatus    = 'PENDING';
+let _vmSearchQuery      = '';
+
+function initVerifyMarks() {
+  const sessSel   = document.getElementById('vm-session-select');
+  const branchSel = document.getElementById('vm-branch-select');
+  const statusSel = document.getElementById('vm-status-filter');
+  const searchInp = document.getElementById('vm-search-input');
+  const batchBtn  = document.getElementById('vm-batch-verify-btn');
+
+  if (!sessSel) return;
+
+  // Build Session Select options
+  const sessions = State.getSessions();
+  UI.buildSelect('vm-session-select', sessions, '— Select Exam Session —', 'id', 'name');
+
+  // Build Branch Select options
+  const branches = CONFIG.BRANCHES || ['AIDS', 'Civil', 'Computer', 'ECSE', 'Mechanical'];
+  branchSel.innerHTML = '<option value="ALL">All Branches</option>' + 
+    branches.map(b => `<option value="${b}">${b}</option>`).join('');
+
+  if (!sessSel._vmBound) {
+    sessSel._vmBound = true;
+    sessSel.addEventListener('change', () => {
+      _vmCurrentSessionId = sessSel.value;
+      _renderVerificationView();
+    });
+    branchSel.addEventListener('change', () => {
+      _vmCurrentBranch = branchSel.value;
+      _renderVerificationView();
+    });
+    statusSel.addEventListener('change', () => {
+      _vmCurrentStatus = statusSel.value;
+      _renderVerificationView();
+    });
+    searchInp.addEventListener('input', _debounce(() => {
+      _vmSearchQuery = searchInp.value.trim().toLowerCase();
+      _renderVerificationGrid();
+    }, 250));
+    batchBtn.addEventListener('click', _handleBatchVerify);
+  }
+
+  // Pre-select active session if available
+  if (!_vmCurrentSessionId && sessions.length > 0) {
+    const active = sessions.find(s => s.status === 'Active') || sessions[0];
+    if (active) {
+      sessSel.value = active.id;
+      _vmCurrentSessionId = active.id;
+    }
+  }
+
+  _renderVerificationView();
+}
+
+function _renderVerificationView() {
+  _renderVerificationStats();
+  _renderVerificationGrid();
+}
+
+function _renderVerificationStats() {
+  const statsContainer = document.getElementById('vm-stats-container');
+  const batchBtn       = document.getElementById('vm-batch-verify-btn');
+  if (!statsContainer) return;
+
+  if (!_vmCurrentSessionId) {
+    statsContainer.style.display = 'none';
+    if (batchBtn) batchBtn.style.display = 'none';
+    return;
+  }
+
+  const stats = State.getSessionVerificationStats(_vmCurrentSessionId);
+  const session = State.getSession(_vmCurrentSessionId);
+  const isLocked = session && session.status === 'Locked';
+
+  let html = `<div class="v-stats-grid">
+    <div class="v-stat-card">
+      <div class="v-stat-val">${stats.totalEntries}</div>
+      <div class="v-stat-lbl">Total Ledger Entries</div>
+    </div>
+    <div class="v-stat-card" style="border-left:3px solid #10B981;">
+      <div class="v-stat-val" style="color:#059669;">${stats.verifiedCount}</div>
+      <div class="v-stat-lbl">Verified OK</div>
+    </div>
+    <div class="v-stat-card" style="border-left:3px solid #8B5CF6;">
+      <div class="v-stat-val" style="color:#6D28D9;">${stats.correctedCount}</div>
+      <div class="v-stat-lbl">Discrepancies Corrected</div>
+    </div>
+    <div class="v-stat-card" style="border-left:3px solid #F59E0B;">
+      <div class="v-stat-val" style="color:#D97706;">${stats.pendingCount}</div>
+      <div class="v-stat-lbl">Pending Verification</div>
+    </div>
+  </div>`;
+
+  statsContainer.innerHTML = html;
+  statsContainer.style.display = 'block';
+
+  if (batchBtn) {
+    batchBtn.style.display = (!isLocked && stats.pendingCount > 0) ? 'inline-block' : 'none';
+  }
+}
+
+function _renderVerificationGrid() {
+  const outputEl = document.getElementById('vm-grid-output');
+  if (!outputEl) return;
+
+  if (!_vmCurrentSessionId) {
+    outputEl.innerHTML = `<div class="muted" style="text-align:center; padding:32px;">Select an Exam Session above to load student marks for verification.</div>`;
+    return;
+  }
+
+  const session = State.getSession(_vmCurrentSessionId);
+  const isLocked = session && session.status === 'Locked';
+  const user = Auth.getUser();
+  const currentEmail = (user && user.email) ? user.email.toLowerCase() : '';
+
+  let entries = State.ledger.filter(r => r.examSession === _vmCurrentSessionId);
+
+  if (_vmCurrentBranch && _vmCurrentBranch !== 'ALL') {
+    entries = entries.filter(r => r.branch === _vmCurrentBranch);
+  }
+
+  if (_vmCurrentStatus && _vmCurrentStatus !== 'ALL') {
+    entries = entries.filter(r => {
+      const status = r.verificationStatus || (isLocked ? 'Verified' : 'Pending');
+      const isSelf = r.enteredBy && r.enteredBy.toLowerCase() === currentEmail;
+      if (_vmCurrentStatus === 'PENDING')   return status === 'Pending';
+      if (_vmCurrentStatus === 'VERIFIED')  return status === 'Verified';
+      if (_vmCurrentStatus === 'CORRECTED') return status === 'Corrected';
+      if (_vmCurrentStatus === 'SELF')      return isSelf;
+      return true;
+    });
+  }
+
+  if (_vmSearchQuery) {
+    entries = entries.filter(r =>
+      r.uin.toLowerCase().includes(_vmSearchQuery) ||
+      r.prn.toLowerCase().includes(_vmSearchQuery) ||
+      r.name.toLowerCase().includes(_vmSearchQuery) ||
+      r.subjectCode.toLowerCase().includes(_vmSearchQuery) ||
+      r.subjectName.toLowerCase().includes(_vmSearchQuery)
+    );
+  }
+
+  if (entries.length === 0) {
+    outputEl.innerHTML = `<div class="muted" style="text-align:center; padding:32px;">No matching ledger entries found for the selected filters.</div>`;
+    return;
+  }
+
+  const studentMap = {};
+  entries.forEach(r => {
+    if (!studentMap[r.uin]) {
+      studentMap[r.uin] = {
+        uin: r.uin,
+        prn: r.prn,
+        name: r.name,
+        branch: r.branch,
+        division: r.division,
+        batchYear: r.batchYear,
+        seatNumber: State.getSeatNumber(r.uin, _vmCurrentSessionId),
+        records: []
+      };
+    }
+    studentMap[r.uin].records.push(r);
+  });
+
+  const studentsList = Object.values(studentMap).sort((a, b) => {
+    const seatA = parseInt(a.seatNumber, 10) || 999999;
+    const seatB = parseInt(b.seatNumber, 10) || 999999;
+    return seatA !== seatB ? seatA - seatB : a.name.localeCompare(b.name);
+  });
+
+  let html = `<div style="display:flex; flex-direction:column; gap:16px;">`;
+
+  studentsList.forEach(st => {
+    html += `
+    <div class="subj-card" style="border:1px solid var(--border); border-radius:var(--radius); overflow:hidden;">
+      <div class="subj-card-header" style="padding:10px 14px; background:var(--surface-2); border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+        <div style="display:flex; align-items:baseline; gap:10px;">
+          <span style="font-weight:700; font-size:14px;">${UI.esc(st.name)}</span>
+          <span style="font-family:'DM Mono',monospace; font-size:12px; color:var(--ink-3);">UIN: ${UI.esc(st.uin)} · PRN: ${UI.esc(st.prn)}</span>
+          <span style="font-size:11px; font-weight:600; color:var(--brand); background:var(--brand-light); padding:2px 6px; border-radius:4px;">${UI.esc(st.branch)} ${UI.esc(st.division || '')}</span>
+        </div>
+        <div style="font-size:12px; color:var(--ink-3);">
+          Seat No: <strong>${UI.esc(st.seatNumber)}</strong>
+        </div>
+      </div>
+      <div style="overflow-x:auto;">
+        <table class="report-table" style="width:100%; margin:0; border:none;">
+          <thead>
+            <tr>
+              <th style="text-align:left; width:25%;">Subject</th>
+              <th style="text-align:center; width:10%;">IAT</th>
+              <th style="text-align:center; width:10%;">ESE</th>
+              <th style="text-align:center; width:10%;">TW</th>
+              <th style="text-align:center; width:10%;">Oral</th>
+              <th style="text-align:center; width:8%;">Total</th>
+              <th style="text-align:center; width:8%;">Result</th>
+              <th style="text-align:center; width:12%;">Verification Status</th>
+              <th style="text-align:center; width:15%;">Action</th>
+            </tr>
+          </thead>
+          <tbody>`;
+
+    st.records.forEach(r => {
+      const status = r.verificationStatus || (isLocked ? 'Verified' : 'Pending');
+      const isSelf = r.enteredBy && r.enteredBy.toLowerCase() === currentEmail;
+
+      let origMarksTooltip = '';
+      if (r.originalMarks) {
+        try {
+          const parsed = JSON.parse(r.originalMarks);
+          origMarksTooltip = `Original Entry: IAT:${parsed.IAT||'—'}, ESE:${parsed.ESE||'—'}, TW:${parsed.TW||'—'}, Oral:${parsed.Oral||'—'}`;
+        } catch(_) {
+          origMarksTooltip = `Original: ${r.originalMarks}`;
+        }
+      }
+
+      let badgeHtml = '';
+      if (isSelf) {
+        badgeHtml = `<span class="v-badge v-badge-self" title="Entered by ${UI.esc(r.enteredBy)} — Cannot self-verify">⛔ Entered by You</span>`;
+      } else if (status === 'Verified') {
+        badgeHtml = `<span class="v-badge v-badge-verified" title="Verified by ${UI.esc(r.verifiedBy || 'Faculty')} on ${r.verificationDateTime ? new Date(r.verificationDateTime).toLocaleString() : '—'}">✓ Verified</span>`;
+      } else if (status === 'Corrected') {
+        badgeHtml = `<span class="v-badge v-badge-corrected" title="Corrected by ${UI.esc(r.verifiedBy)} · ${origMarksTooltip}">✏ Corrected</span><span class="v-orig-tooltip" title="${UI.esc(origMarksTooltip)}">ℹ</span>`;
+      } else {
+        badgeHtml = `<span class="v-badge v-badge-pending">⏳ Pending</span>`;
+      }
+
+      const isEditable = !isLocked && !isSelf;
+
+      html += `<tr data-entryid="${UI.esc(r.entryId)}" data-enteredby="${UI.esc(r.enteredBy)}">
+        <td style="font-size:12px;">
+          <strong>${UI.esc(r.subjectCode)}</strong> — ${UI.esc(r.subjectName)}<br>
+          <small class="muted">Entry by ${UI.esc(r.enteredBy || 'Faculty')}</small>
+        </td>
+        <td style="text-align:center;">
+          ${isEditable ? `<input type="text" class="mark-input-single vm-input-iat" value="${UI.esc(r.iatMarks)}" style="width:50px; text-align:center;">` : `<span>${UI.esc(r.iatMarks || '—')}</span>`}
+        </td>
+        <td style="text-align:center;">
+          ${isEditable ? `<input type="text" class="mark-input-single vm-input-ese" value="${UI.esc(r.eseMarks)}" style="width:50px; text-align:center;">` : `<span>${UI.esc(r.eseMarks || '—')}</span>`}
+        </td>
+        <td style="text-align:center;">
+          ${isEditable ? `<input type="text" class="mark-input-single vm-input-tw" value="${UI.esc(r.twMarks)}" style="width:50px; text-align:center;">` : `<span>${UI.esc(r.twMarks || '—')}</span>`}
+        </td>
+        <td style="text-align:center;">
+          ${isEditable ? `<input type="text" class="mark-input-single vm-input-oral" value="${UI.esc(r.oralMarks)}" style="width:50px; text-align:center;">` : `<span>${UI.esc(r.oralMarks || '—')}</span>`}
+        </td>
+        <td style="text-align:center; font-weight:600;">${UI.esc(r.totalMarks || '—')}</td>
+        <td style="text-align:center;">${r.result === 'Pass' ? '<span style="color:#059669; font-weight:600;">Pass</span>' : r.result === 'Fail' ? '<span style="color:#DC2626; font-weight:600;">Fail</span>' : '—'}</td>
+        <td style="text-align:center;">${badgeHtml}</td>
+        <td style="text-align:center;">`;
+
+      if (isLocked) {
+        html += `<span class="muted" style="font-size:11px;">Locked</span>`;
+      } else if (isSelf) {
+        html += `<span class="muted" style="font-size:11px;" title="Another faculty must verify this entry">Requires 2nd Verifier</span>`;
+      } else if (status === 'Verified' || status === 'Corrected') {
+        html += `<button class="btn btn-sm btn-secondary vm-reverify-btn" data-entryid="${UI.esc(r.entryId)}" style="font-size:11px; padding:3px 8px;">Re-verify</button>`;
+      } else {
+        html += `<button class="btn btn-sm btn-primary vm-verify-row-btn" data-entryid="${UI.esc(r.entryId)}" style="font-size:11px; padding:3px 8px;">✓ Approve / Save</button>`;
+      }
+
+      html += `</td></tr>`;
+    });
+
+    html += `</tbody></table></div></div>`;
+  });
+
+  html += `</div>`;
+  outputEl.innerHTML = html;
+
+  outputEl.querySelectorAll('.vm-verify-row-btn, .vm-reverify-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const entryId = btn.dataset.entryid;
+      _handleRowVerify(entryId);
+    });
+  });
+}
+
+async function _handleRowVerify(entryId) {
+  const tr = document.querySelector(`tr[data-entryid="${entryId}"]`);
+  if (!tr) return;
+
+  const row = State.ledger.find(r => r.entryId === entryId);
+  if (!row) return;
+
+  const iatInp  = tr.querySelector('.vm-input-iat');
+  const eseInp  = tr.querySelector('.vm-input-ese');
+  const twInp   = tr.querySelector('.vm-input-tw');
+  const oralInp = tr.querySelector('.vm-input-oral');
+
+  const newIat  = iatInp  ? iatInp.value.trim()  : row.iatMarks;
+  const newEse  = eseInp  ? eseInp.value.trim()  : row.eseMarks;
+  const newTw   = twInp   ? twInp.value.trim()   : row.twMarks;
+  const newOral = oralInp ? oralInp.value.trim() : row.oralMarks;
+
+  const isChanged = (newIat !== row.iatMarks) || (newEse !== row.eseMarks) || (newTw !== row.twMarks) || (newOral !== row.oralMarks);
+
+  const verificationItems = [{
+    entryId: entryId,
+    action: isChanged ? 'correct' : 'verify',
+    correctedMarks: isChanged ? { IAT: newIat, ESE: newEse, TW: newTw, Oral: newOral } : null
+  }];
+
+  UI.showSpinner('Saving verification…');
+  try {
+    await State.verifyLedgerEntries(_vmCurrentSessionId, verificationItems);
+    UI.hideSpinner();
+    UI.toast(isChanged ? 'Discrepancy corrected and verified!' : 'Entry verified OK!', 'success');
+    _renderVerificationView();
+  } catch (e) {
+    UI.hideSpinner();
+    UI.toast('Verification failed: ' + e.message, 'error');
+  }
+}
+
+async function _handleBatchVerify() {
+  if (!_vmCurrentSessionId) return;
+  const user = Auth.getUser();
+  const currentEmail = (user && user.email) ? user.email.toLowerCase() : '';
+
+  const isLocked = State.getSession(_vmCurrentSessionId)?.status === 'Locked';
+  if (isLocked) {
+    UI.toast('Session is locked.', 'error');
+    return;
+  }
+
+  const pendingRows = State.ledger.filter(r => {
+    if (r.examSession !== _vmCurrentSessionId) return false;
+    if (_vmCurrentBranch && _vmCurrentBranch !== 'ALL' && r.branch !== _vmCurrentBranch) return false;
+    const status = r.verificationStatus || 'Pending';
+    if (status !== 'Pending') return false;
+    if (r.enteredBy && r.enteredBy.toLowerCase() === currentEmail) return false;
+    return true;
+  });
+
+  if (pendingRows.length === 0) {
+    UI.toast('No pending entries available for you to verify in this view.', 'warning');
+    return;
+  }
+
+  UI.showModal(
+    'Batch Verify Entries',
+    `Verify all <strong>${pendingRows.length}</strong> pending entries in current view?<br><br>
+     <span style="font-size:12px; color:var(--ink-3);">
+       This confirms you have cross-checked these entries against physical marksheets. Your ID (${UI.esc(user.email)}) will be logged as the verifier.
+     </span>`,
+    {
+      confirmLabel: `✓ Verify ${pendingRows.length} Entries`,
+      onConfirm: async () => {
+        UI.showSpinner(`Verifying ${pendingRows.length} entries…`);
+        try {
+          const items = pendingRows.map(r => ({ entryId: r.entryId, action: 'verify' }));
+          await State.verifyLedgerEntries(_vmCurrentSessionId, items);
+          UI.hideSpinner();
+          UI.toast(`Successfully verified ${pendingRows.length} entries!`, 'success');
+          _renderVerificationView();
+        } catch(e) {
+          UI.hideSpinner();
+          UI.toast('Batch verification failed: ' + e.message, 'error');
+        }
+      }
+    }
+  );
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -6594,11 +6967,44 @@ async function _adminLockSession() {
   const id = document.getElementById('admin-session-lock-select').value;
   if (!id) { UI.toast('Select a session to lock.', 'error'); return; }
   const session = State.getSession(id);
+
+  // Verification Gatekeeping Check
+  const stats = State.getSessionVerificationStats(id);
+  if (!stats.is100PercentVerified) {
+    let pendingMsg = `Session <strong>${UI.esc(session.name)}</strong> cannot be locked.<br><br>`;
+    pendingMsg += `<strong>Verification Status: ${stats.verifiedCount + stats.correctedCount} / ${stats.totalEntries} entries verified.</strong><br>`;
+    pendingMsg += `<span style="color:var(--fail); font-weight:600;">${stats.pendingCount} entries are still pending verification.</span><br><br>`;
+    pendingMsg += `<strong>Branch Breakdown:</strong><ul style="margin:6px 0; padding-left:20px; font-size:12px;">`;
+    Object.entries(stats.branchStats).forEach(([br, bStats]) => {
+      if (bStats.total > 0) {
+        pendingMsg += `<li>${br}: ${bStats.verified + bStats.corrected}/${bStats.total} verified (${bStats.pending} pending)</li>`;
+      }
+    });
+    pendingMsg += `</ul><br><span style="font-size:12px; color:var(--ink-3);">Please go to the <strong>Verify Marks</strong> tab to complete verification.</span>`;
+
+    UI.showModal(
+      '🔒 Session Lock Blocked',
+      pendingMsg,
+      {
+        confirmLabel: 'Go to Verify Marks',
+        onConfirm: () => {
+          showTab('verify-marks');
+          const sessSel = document.getElementById('vm-session-select');
+          if (sessSel) {
+            sessSel.value = id;
+            sessSel.dispatchEvent(new Event('change'));
+          }
+        }
+      }
+    );
+    return;
+  }
+
   UI.showModal(
     'Lock session',
     `Lock <strong>${UI.esc(session.name)}</strong>? No further entries will be accepted.<br><br>
      <span style="font-size:12px; color:var(--ink-3);">
-       The gazette Excel file will be generated and downloaded automatically on lock.
+       All entries are 100% verified. The gazette Excel file will be generated and downloaded automatically on lock.
      </span>`,
     {
       confirmLabel: 'Lock &amp; Export Gazette', danger: true,

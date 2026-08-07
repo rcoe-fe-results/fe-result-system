@@ -48,7 +48,7 @@ Session ID | Name | Semester | Batch Year | Status | Created By
 
 **MASTER_LEDGER** — row 1:
 ```
-Entry ID | UIN | PRN | Name | Branch | Division | Batch Year | Exam Session | Semester | Subject Code | Subject Name | Subject Type | Credits Assigned | Attempt Type | IAT Marks | ESE Marks | TW Marks | Oral Marks | Total Marks | Grade | Credits Earned | Result | Source | Entered By | Entry Date/Time
+Entry ID | UIN | PRN | Name | Branch | Division | Batch Year | Exam Session | Semester | Subject Code | Subject Name | Subject Type | Credits Assigned | Attempt Type | IAT Marks | ESE Marks | TW Marks | Oral Marks | Total Marks | Grade | Credits Earned | Result | Source | Entered By | Entry Date/Time | Gender | Verification Status | Verified By | Verification Date/Time | Original Marks
 ```
 
 **Note the Sheet ID** from the URL:  
@@ -155,10 +155,19 @@ Branches must match exactly: `AIDS` · `Civil` · `Computer` · `ECSE` · `Mecha
 
 | Role | Access |
 |---|---|
-| **Admin** | All tabs including Admin; session create/lock; student upload |
-| **Faculty** | Bulk Entry, Single Student, Progress View, Reports (My Entries only) |
+| **Admin** | All tabs including Admin; session create/lock (hard-blocked until 100% verified); student upload |
+| **Faculty / Verifier** | Bulk Entry, Single Student, Verify Marks (cannot self-verify own entries), Progress View, Reports |
 
 Admin emails are hardcoded in `config.js`. All other `@eng.rizvi.edu.in` accounts = Faculty.
+
+---
+
+## Verification Layer
+
+- **Mandatory Verification**: Admin cannot lock a session until 100% of ledger entries in that session are verified.
+- **Non-Self Verification**: Faculty who performed data entry for a student cannot verify those entries (`enteredBy !== currentUser`).
+- **Hybrid Verification**: Verifiers can approve rows directly or edit discrepancies inline. Original marks and verifier audit details are logged.
+- **Re-Verification**: Any re-submission of data entry automatically resets verification status back to `Pending`.
 
 ---
 

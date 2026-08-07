@@ -139,34 +139,38 @@ const Sheets = (() => {
 
   // ── MASTER_LEDGER ────────────────────────────────────────
   async function getLedger() {
-    const rows = await getRange(CONFIG.TABS.LEDGER, 'A2:Z');
+    const rows = await getRange(CONFIG.TABS.LEDGER, 'A2:AD');
     return rows.map(r => ({
-      entryId:       r[0]  || '',
-      uin:           r[1]  || '',
-      prn:           r[2]  || '',
-      name:          r[3]  || '',
-      branch:        r[4]  || '',
-      division:      r[5]  || '',
-      batchYear:     r[6]  || '',
-      examSession:   r[7]  || '',
-      semester:      r[8]  || '',
-      subjectCode:   r[9]  || '',
-      subjectName:   r[10] || '',
-      subjectType:   r[11] || '',
-      creditsAssigned:r[12]|| '',
-      attemptType:   r[13] || '',
-      iatMarks:      r[14] || '',
-      eseMarks:      r[15] || '',
-      twMarks:       r[16] || '',
-      oralMarks:     r[17] || '',
-      totalMarks:    r[18] || '',
-      grade:         r[19] || '',
-      creditsEarned: r[20] || '',
-      result:        r[21] || '',
-      source:        r[22] || '',
-      enteredBy:     r[23] || '',
-      entryDateTime: r[24] || '',
-      gender:        r[25] || '',
+      entryId:              r[0]  || '',
+      uin:                  r[1]  || '',
+      prn:                  r[2]  || '',
+      name:                 r[3]  || '',
+      branch:               r[4]  || '',
+      division:             r[5]  || '',
+      batchYear:            r[6]  || '',
+      examSession:          r[7]  || '',
+      semester:             r[8]  || '',
+      subjectCode:          r[9]  || '',
+      subjectName:          r[10] || '',
+      subjectType:          r[11] || '',
+      creditsAssigned:       r[12] || '',
+      attemptType:          r[13] || '',
+      iatMarks:             r[14] || '',
+      eseMarks:             r[15] || '',
+      twMarks:              r[16] || '',
+      oralMarks:            r[17] || '',
+      totalMarks:           r[18] || '',
+      grade:                r[19] || '',
+      creditsEarned:        r[20] || '',
+      result:               r[21] || '',
+      source:               r[22] || '',
+      enteredBy:            r[23] || '',
+      entryDateTime:        r[24] || '',
+      gender:               r[25] || '',
+      verificationStatus:   r[26] || '',
+      verifiedBy:           r[27] || '',
+      verificationDateTime: r[28] || '',
+      originalMarks:        r[29] || '',
     })).filter(r => r.entryId);
   }
 
@@ -176,9 +180,60 @@ const Sheets = (() => {
       e.examSession, e.semester, e.subjectCode, e.subjectName, e.subjectType,
       e.creditsAssigned, e.attemptType, e.iatMarks, e.eseMarks, e.twMarks,
       e.oralMarks, e.totalMarks, e.grade, e.creditsEarned, e.result,
-      e.source, e.enteredBy, e.entryDateTime, e.gender || ''
+      e.source, e.enteredBy, e.entryDateTime, e.gender || '',
+      e.verificationStatus || 'Pending', e.verifiedBy || '', e.verificationDateTime || '', e.originalMarks || ''
     ]);
     return appendRows(CONFIG.TABS.LEDGER, rows);
+  }
+
+  async function updateLedgerVerifications(updates) {
+    if (!updates || updates.length === 0) return;
+    const rows = await getRange(CONFIG.TABS.LEDGER, 'A2:AD');
+    const data = [];
+    for (const up of updates) {
+      for (let i = 0; i < rows.length; i++) {
+        if ((rows[i][0] || '') === up.entryId) {
+          const rowNum = i + 2;
+          if (up.isCorrection) {
+            data.push({
+              range: `${CONFIG.TABS.LEDGER}!O${rowNum}:V${rowNum}`,
+              values: [[
+                up.iatMarks !== undefined ? up.iatMarks : (rows[i][14] || ''),
+                up.eseMarks !== undefined ? up.eseMarks : (rows[i][15] || ''),
+                up.twMarks !== undefined ? up.twMarks : (rows[i][16] || ''),
+                up.oralMarks !== undefined ? up.oralMarks : (rows[i][17] || ''),
+                up.totalMarks !== undefined ? up.totalMarks : (rows[i][18] || ''),
+                up.grade !== undefined ? up.grade : (rows[i][19] || ''),
+                up.creditsEarned !== undefined ? up.creditsEarned : (rows[i][20] || ''),
+                up.result !== undefined ? up.result : (rows[i][21] || '')
+              ]]
+            });
+          }
+          data.push({
+            range: `${CONFIG.TABS.LEDGER}!AA${rowNum}:AD${rowNum}`,
+            values: [[
+              up.verificationStatus || 'Verified',
+              up.verifiedBy || '',
+              up.verificationDateTime || '',
+              up.originalMarks || ''
+            ]]
+          });
+          break;
+        }
+      }
+    }
+    if (data.length === 0) return;
+    const url = `${BASE}/${CONFIG.SHEET_ID}/values:batchUpdate`;
+    const r = await fetch(url, {
+      method: 'POST',
+      headers: await _headers(),
+      body: JSON.stringify({
+        valueInputOption: 'USER_ENTERED',
+        data: data
+      })
+    });
+    if (!r.ok) throw new Error(`Batch verification update failed: ${r.status}`);
+    return r.json();
   }
 
   // ── SUBJECT_MASTER (optional sync — curriculum can be hardcoded) ──
@@ -338,7 +393,7 @@ const Sheets = (() => {
   return {
     getStudents, uploadStudents,
     getSessions, addSession, updateSessionStatus, updateSessionLinkedPrelim,
-    getLedger, appendLedgerRows,
+    getLedger, appendLedgerRows, updateLedgerVerifications,
     getSubjectMaster,
     getSeats, uploadSeats, updateSeatNumber,
     getRevalSkips, appendRevalSkip, updateRevalSkip,

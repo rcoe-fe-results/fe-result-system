@@ -324,6 +324,15 @@ const State = (() => {
       Sheets.getExamSkips(),
       Sheets.getGazetteManifest(),
     ]);
+
+    // Fallback logic for legacy ledger rows missing verification status
+    ledger.forEach(r => {
+      if (!r.verificationStatus) {
+        const s = sessions.find(sess => sess.id === r.examSession);
+        r.verificationStatus = (s && s.status === 'Locked') ? 'Verified' : 'Pending';
+      }
+    });
+
     _buildKTCache();
     _loaded = true;
   }
@@ -419,6 +428,10 @@ const State = (() => {
   }
 
   async function lockSession(sessionId) {
+    const stats = getSessionVerificationStats(sessionId);
+    if (!stats.is100PercentVerified) {
+      throw new Error(`Verification incomplete. ${stats.pendingCount} pending entries out of ${stats.totalEntries} total entries must be verified before locking.`);
+    }
     await Sheets.updateSessionStatus(sessionId, 'Locked');
     const s = sessions.find(s => s.id === sessionId);
     if (s) s.status = 'Locked';
@@ -1029,7 +1042,11 @@ const State = (() => {
         source:          'WebApp',
         enteredBy:       user.email,
         entryDateTime:   now,
-        gender:          student.gender || '',
+        gender:               student.gender || '',
+        verificationStatus:   'Pending',
+        verifiedBy:           '',
+        verificationDateTime: '',
+        originalMarks:        '',
       };
 
       // ── Deduplication guard ──────────────────────────────────
@@ -1072,6 +1089,182 @@ const State = (() => {
     if (m.absent) return 'AB';
     if (m.grace)  return m.value + '*';
     return m.value !== null ? String(m.value) : '';
+  }
+
+  // ── Verification Layer ─────────────────────────────────────
+  function getSessionVerificationStats(sessionId) {
+    const session = getSession(sessionId);
+    if (!session) return { totalEntries: 0, verifiedCount: 0, correctedCount: 0, pendingCount: 0, is100PercentVerified: false, branchStats: {} };
+
+    const sessionLedger = ledger.filter(r => r.examSession === sessionId);
+    const totalEntries = sessionLedger.length;
+    let verifiedCount = 0;
+    let correctedCount = 0;
+    let pendingCount = 0;
+    const branchStats = {};
+
+    const allBranches = CONFIG.BRANCHES || ['AIDS', 'Civil', 'Computer', 'ECSE', 'Mechanical'];
+    allBranches.forEach(b => {
+      branchStats[b] = { total: 0, verified: 0, corrected: 0, pending: 0, selfEntered: 0 };
+    });
+
+    const user = Auth.getUser();
+    const currentEmail = (user && user.email) ? user.email.toLowerCase() : '';
+
+    sessionLedger.forEach(r => {
+      const br = r.branch || 'Unknown';
+      if (!branchStats[br]) branchStats[br] = { total: 0, verified: 0, corrected: 0, pending: 0, selfEntered: 0 };
+      
+      branchStats[br].total++;
+      const status = r.verificationStatus || (session.status === 'Locked' ? 'Verified' : 'Pending');
+
+      if (r.enteredBy && r.enteredBy.toLowerCase() === currentEmail) {
+        branchStats[br].selfEntered++;
+      }
+
+      if (status === 'Verified') {
+        verifiedCount++;
+        branchStats[br].verified++;
+      } else if (status === 'Corrected') {
+        correctedCount++;
+        branchStats[br].corrected++;
+      } else {
+        pendingCount++;
+        branchStats[br].pending++;
+      }
+    });
+
+    const is100PercentVerified = totalEntries > 0 && pendingCount === 0;
+
+    return {
+      totalEntries,
+      verifiedCount,
+      correctedCount,
+      pendingCount,
+      is100PercentVerified,
+      branchStats
+    };
+  }
+
+  async function verifyLedgerEntries(sessionId, verificationItems) {
+    const user = Auth.getUser();
+    if (!user || !user.email) throw new Error("Authentication required for verification.");
+    const session = getSession(sessionId);
+    if (!session) throw new Error("Invalid session.");
+    if (session.status === 'Locked') throw new Error("Session is locked and cannot be edited.");
+
+    const now = new Date().toISOString();
+    const updatesForSheets = [];
+
+    for (const item of verificationItems) {
+      const row = ledger.find(r => r.entryId === item.entryId);
+      if (!row) continue;
+
+      // Non-self verification rule
+      if (row.enteredBy && row.enteredBy.toLowerCase() === user.email.toLowerCase()) {
+        throw new Error(`Self-verification blocked for UIN ${row.uin} (${row.subjectCode}). Data entry was performed by you.`);
+      }
+
+      if (item.action === 'correct' && item.correctedMarks) {
+        const origMarksObj = {
+          IAT: row.iatMarks,
+          ESE: row.eseMarks,
+          TW: row.twMarks,
+          Oral: row.oralMarks
+        };
+
+        const semester = session.semester;
+        const student = getStudent(row.uin);
+        const subjects = getSubjectsForSem(semester, student ? student.branch : row.branch, session);
+        const subject = subjects.find(s => s.code === row.subjectCode);
+        const isFinal = session.entryType === 'Revaluation_Gazette';
+
+        const parseComp = (val) => {
+          if (val === undefined || val === null || val === '') return null;
+          if (typeof val === 'object') return val;
+          const str = String(val).trim();
+          if (str.toUpperCase() === 'AB') return { value: null, absent: true, grace: false };
+          if (str.endsWith('*')) return { value: parseFloat(str.slice(0, -1)) || 0, absent: false, grace: true };
+          const num = parseFloat(str);
+          return isNaN(num) ? null : { value: num, absent: false, grace: false };
+        };
+
+        const newMarks = {};
+        if (item.correctedMarks.IAT  !== undefined) newMarks.IAT  = parseComp(item.correctedMarks.IAT);
+        if (item.correctedMarks.ESE  !== undefined) newMarks.ESE  = parseComp(item.correctedMarks.ESE);
+        if (item.correctedMarks.TW   !== undefined) newMarks.TW   = parseComp(item.correctedMarks.TW);
+        if (item.correctedMarks.Oral !== undefined) newMarks.Oral = parseComp(item.correctedMarks.Oral);
+
+        const marksToStore = {
+          IAT:  newMarks.IAT  !== undefined ? newMarks.IAT  : parseComp(row.iatMarks),
+          ESE:  newMarks.ESE  !== undefined ? newMarks.ESE  : parseComp(row.eseMarks),
+          TW:   newMarks.TW   !== undefined ? newMarks.TW   : parseComp(row.twMarks),
+          Oral: newMarks.Oral !== undefined ? newMarks.Oral : parseComp(row.oralMarks),
+        };
+
+        let computeMarks = { ...marksToStore };
+        if (isFinal && session.linkedPrelimSessionId) {
+          const prelimEntry = getLatestEntryForSubject(row.uin, row.subjectCode, session.linkedPrelimSessionId);
+          if (prelimEntry) {
+            if (!computeMarks.IAT  || computeMarks.IAT.value  === null) computeMarks.IAT  = parseComp(prelimEntry.iatMarks);
+            if (!computeMarks.TW   || computeMarks.TW.value   === null) computeMarks.TW   = parseComp(prelimEntry.twMarks);
+            if (!computeMarks.Oral || computeMarks.Oral.value === null) computeMarks.Oral = parseComp(prelimEntry.oralMarks);
+          }
+        }
+
+        const allComps = subject ? Object.keys(subject.marks) : [];
+        const hasAllComps = subject && allComps.every(c => computeMarks[c] && computeMarks[c].value !== null);
+        const resultObj = (subject && hasAllComps) ? computeResult(subject, computeMarks) : { total: null, result: '', creditsEarned: 0 };
+
+        row.iatMarks = isFinal ? '' : _markStr(marksToStore.IAT);
+        row.eseMarks = _markStr(marksToStore.ESE);
+        row.twMarks  = isFinal ? '' : _markStr(marksToStore.TW);
+        row.oralMarks= isFinal ? '' : _markStr(marksToStore.Oral);
+        row.totalMarks = resultObj.total !== null ? String(resultObj.total) : '';
+        row.creditsEarned = resultObj.creditsEarned !== undefined ? String(resultObj.creditsEarned) : '0';
+        row.result = resultObj.result || '';
+
+        row.verificationStatus = 'Corrected';
+        row.verifiedBy = user.email;
+        row.verificationDateTime = now;
+        row.originalMarks = JSON.stringify(origMarksObj);
+
+        updatesForSheets.push({
+          entryId: row.entryId,
+          isCorrection: true,
+          iatMarks: row.iatMarks,
+          eseMarks: row.eseMarks,
+          twMarks: row.twMarks,
+          oralMarks: row.oralMarks,
+          totalMarks: row.totalMarks,
+          grade: row.grade,
+          creditsEarned: row.creditsEarned,
+          result: row.result,
+          verificationStatus: 'Corrected',
+          verifiedBy: user.email,
+          verificationDateTime: now,
+          originalMarks: row.originalMarks
+        });
+      } else {
+        row.verificationStatus = 'Verified';
+        row.verifiedBy = user.email;
+        row.verificationDateTime = now;
+
+        updatesForSheets.push({
+          entryId: row.entryId,
+          isCorrection: false,
+          verificationStatus: 'Verified',
+          verifiedBy: user.email,
+          verificationDateTime: now,
+          originalMarks: row.originalMarks || ''
+        });
+      }
+    }
+
+    if (updatesForSheets.length > 0) {
+      await Sheets.updateLedgerVerifications(updatesForSheets);
+      _buildKTCache();
+    }
   }
 
   // ── Academic computation (grades, SGPA, CGPA, credits) ───
@@ -2896,6 +3089,7 @@ const State = (() => {
     getLatestEntryForSubject, getLedgerForStudent,
     getSessionStatus, getExpectedSubjectCount,
     submitEntries,
+    getSessionVerificationStats, verifyLedgerEntries,
     getSeatNumber, getSeatsForSession, uploadSeats, updateSeatNumber, getSeatsForSessionWithFallback,
     computeAttemptTag,
     getRevalDecision, setRevalSkip, getUnresolvedRevalStudents,
